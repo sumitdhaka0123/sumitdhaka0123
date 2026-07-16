@@ -18,10 +18,11 @@ let firebaseApp: any = null;
 let firebaseDb: any = null;
 try {
   const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-  if (fs.existsSync(configPath)) {
+  // ONLY connect to Firebase if running on the live Render server
+  if (fs.existsSync(configPath) && process.env.RENDER === 'true') {
     const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
     firebaseApp = initializeApp(firebaseConfig);
-    firebaseDb = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+    firebaseDb = getFirestore(firebaseApp);
     console.log('Firebase initialized successfully with project ID:', firebaseConfig.projectId);
   } else {
     console.warn('Firebase configuration file not found at:', configPath);
