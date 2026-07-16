@@ -1523,6 +1523,7 @@ export default function App() {
   if (currentUser.role === 'salesperson') {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="terminal-layout">
+        <AutoUpdater />
         <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -1538,7 +1539,15 @@ export default function App() {
                   {roleDetails.text}
                 </span>
               </div>
-              
+
+              <button
+                onClick={() => setShowAttendance(true)}
+                title="Open Location & Attendance"
+                className="p-2 text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl cursor-pointer transition-colors"
+              >
+                <MapPin className="h-4 w-4" />
+              </button>
+
               <button
                 onClick={fetchAllData}
                 disabled={loading}
@@ -1637,6 +1646,28 @@ export default function App() {
           </AnimatePresence>
         </main>
 
+        {/* --- ATTENDANCE & TRACKING MODAL (Salesperson) --- */}
+        <AnimatePresence>
+          {showAttendance && (
+            <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="relative bg-transparent max-w-6xl w-full"
+              >
+                <button
+                  onClick={() => setShowAttendance(false)}
+                  className="absolute -top-12 right-0 p-2 text-white hover:text-rose-400 bg-white/10 rounded-full"
+                >
+                  <X size={24} />
+                </button>
+                <AttendanceScreen currentUser={currentUser} />
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
         <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">
           ✨ Senzo Warehouse Manager — Sales Terminal — {new Date().getFullYear()}
         </footer>
@@ -1647,6 +1678,7 @@ export default function App() {
   // --- 4. Admin / Owner Layout (Standard tabs switcher) ---
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="terminal-layout">
+      <AutoUpdater />
       {/* 1. Header / Navigation bar */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
@@ -1742,7 +1774,15 @@ export default function App() {
                 {roleDetails.text}
               </span>
             </div>
-            
+
+            <button
+              onClick={() => setShowAttendance(true)}
+              title="Open Location & Tracking Map"
+              className="p-2 text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl cursor-pointer transition-colors"
+            >
+              <MapPin className="h-4 w-4" />
+            </button>
+
             <button
               onClick={fetchAllData}
               disabled={loading}
@@ -1938,6 +1978,28 @@ export default function App() {
           </motion.div>
         </AnimatePresence>
       </main>
+
+      {/* --- ATTENDANCE & TRACKING MODAL (Admin) --- */}
+      <AnimatePresence>
+        {showAttendance && (
+          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="relative bg-transparent max-w-6xl w-full"
+            >
+              <button
+                onClick={() => setShowAttendance(false)}
+                className="absolute -top-12 right-0 p-2 text-white hover:text-rose-400 bg-white/10 rounded-full"
+              >
+                <X size={24} />
+              </button>
+              <AdminAttendanceMap />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* 4. Footer */}
       <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">
