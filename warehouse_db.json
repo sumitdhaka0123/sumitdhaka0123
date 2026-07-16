@@ -1,0 +1,57 @@
+{
+  "users": {
+    "admin": {
+      "role": "admin",
+      "passwordHash": "admin",
+      "failedAttempts": 0,
+      "name": "Owner / Admin",
+      "username": "admin",
+      "id": "u-admin",
+      "approved": true
+    },
+    "sales": {
+      "role": "salesperson",
+      "passwordHash": "sales123",
+      "failedAttempts": 0,
+      "username": "sales",
+      "name": "Sales Representative (POS)",
+      "id": "u-sales",
+      "approved": true
+    },
+    "sumit": {
+      "id": "u-manu",
+      "approved": true,
+      "name": "Production Specialist (MFR)",
+      "username": "sumit",
+      "failedAttempts": 0,
+      "locked": false,
+      "passwordHash": "sumit123",
+      "role": "manufacturer"
+    }
+  },
+  "products": [],
+  "buyers": [],
+  "scooterUnits": [],
+  "stockLogs": [],
+  "sheetConfig": {
+    "enabled": false,
+    "webhookUrl": ""
+  },
+  "batterySales": [],
+  "batteryImports": [],
+  "chargerSales": [],
+  "chargerImports": [],
+  "batterySeriesList": [
+    "Alpha Series",
+    "Beta Series",
+    "Delta Series",
+    "Omega Series",
+    "Pro-Pack Series"
+  ],
+  "chargerTypeList": [
+    "48V Charger",
+    "60V Charger",
+    "72V Charger"
+  ],
+  "auditLogs": []
+}

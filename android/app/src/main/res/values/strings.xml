@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Senzo Warehouse</string>
+    <string name="title_activity_main">Senzo Warehouse</string>
+    <string name="package_name">com.senzo.warehouse</string>
+    <string name="custom_url_scheme">com.senzo.warehouse</string>
+</resources>

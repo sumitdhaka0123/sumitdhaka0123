@@ -1,0 +1,202 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User account schema including credentials and access control parameters",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manufacturer", "salesperson"] },
+        "name": { "type": "string" },
+        "passwordHash": { "type": "string" },
+        "locked": { "type": "boolean" },
+        "failedAttempts": { "type": "integer" }
+      },
+      "required": ["id", "username", "role", "name", "passwordHash"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Scooter models tracked in the warehouse",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "colors": { "type": "array" }
+      },
+      "required": ["id", "name", "colors"]
+    },
+    "Buyer": {
+      "title": "Buyer",
+      "description": "Registered buyer / wholesale clients",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "contact": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "ScooterUnit": {
+      "title": "ScooterUnit",
+      "description": "Physical assembled scooter unit spec sheet and lifecycle stages",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "modelName": { "type": "string" },
+        "color": { "type": "string" },
+        "chassisNo": { "type": "string" },
+        "motorNo": { "type": "string" },
+        "controllerNo": { "type": "string" },
+        "frontTireSize": { "type": "string", "enum": ["10-inch", "12-inch"] },
+        "rearTireSize": { "type": "string", "enum": ["10-inch", "12-inch"] },
+        "tireSize": { "type": "string", "enum": ["10-inch", "12-inch"] },
+        "customizationNotes": { "type": "string" },
+        "buyerName": { "type": "string" },
+        "buyerContact": { "type": "string" },
+        "batterySerials": { "type": "array" },
+        "batteryWarrantyFlags": { "type": "array" },
+        "batteryWarrantyMonths": { "type": "array" },
+        "status": { "type": "string", "enum": ["available", "sold", "hold"] },
+        "saleDate": { "type": "string" },
+        "salesPrice": { "type": "number" },
+        "heldFor": { "type": "string" },
+        "heldBy": { "type": "string" },
+        "holdDate": { "type": "string" },
+        "scooterWarrantyStatus": { "type": "string", "enum": ["Active", "Expired", "None"] },
+        "scooterWarrantyExpiry": { "type": "string" },
+        "batteryWarrantyStatus": { "type": "string", "enum": ["Active", "Expired", "None"] },
+        "batteryWarrantyExpiry": { "type": "string" },
+        "warrantyNotes": { "type": "string" },
+        "createdOperator": { "type": "string" },
+        "createdTimestamp": { "type": "string" },
+        "lastUpdatedBy": { "type": "string" },
+        "lastUpdatedTimestamp": { "type": "string" }
+      },
+      "required": ["id", "modelName", "color", "chassisNo", "motorNo", "controllerNo", "tireSize", "batterySerials", "status", "scooterWarrantyStatus", "batteryWarrantyStatus", "createdOperator", "createdTimestamp", "lastUpdatedTimestamp"]
+    },
+    "StockLog": {
+      "title": "StockLog",
+      "description": "Raw stock receipt or adjustment entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "modelName": { "type": "string" },
+        "color": { "type": "string" },
+        "type": { "type": "string", "enum": ["in", "out"] },
+        "sourceChannel": { "type": "string" },
+        "quantity": { "type": "number" },
+        "buyerName": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "operator": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "modelName", "color", "type", "sourceChannel", "quantity", "timestamp", "operator"]
+    },
+    "SheetConfig": {
+      "title": "SheetConfig",
+      "description": "Google Sheet webhook settings for real-time synchronization",
+      "type": "object",
+      "properties": {
+        "webhookUrl": { "type": "string" },
+        "enabled": { "type": "boolean" }
+      },
+      "required": ["webhookUrl", "enabled"]
+    },
+    "BatterySale": {
+      "title": "BatterySale",
+      "description": "Standalone battery packs allocation, sales, or reserved hold log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "buyerName": { "type": "string" },
+        "batterySeries": { "type": "string" },
+        "startNo": { "type": "string" },
+        "endNo": { "type": "string" },
+        "quantity": { "type": "number" },
+        "saleDate": { "type": "string" },
+        "operator": { "type": "string" },
+        "notes": { "type": "string" },
+        "isUnderWarranty": { "type": "boolean" },
+        "warrantyDurationMonths": { "type": "number" },
+        "status": { "type": "string", "enum": ["sold", "hold"] },
+        "heldFor": { "type": "string" },
+        "heldBy": { "type": "string" },
+        "holdDate": { "type": "string" }
+      },
+      "required": ["id", "buyerName", "batterySeries", "quantity", "saleDate", "operator"]
+    },
+    "BatteryImport": {
+      "title": "BatteryImport",
+      "description": "Bulk import registration log of raw battery Series",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "batterySeries": { "type": "string" },
+        "startNo": { "type": "string" },
+        "endNo": { "type": "string" },
+        "quantity": { "type": "number" },
+        "importDate": { "type": "string" },
+        "operator": { "type": "string" },
+        "supplierName": { "type": "string" },
+        "containerId": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "batterySeries", "quantity", "importDate", "operator"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "System-wide activity and authentication trail logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "operatorName": { "type": "string" },
+        "action": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "details": { "type": "string" },
+        "operator": { "type": "string" },
+        "operatorRole": { "type": "string" }
+      },
+      "required": ["id", "username", "operatorName", "action", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/users/{username}": {
+      "schema": "User",
+      "description": "User credentials mapping where key is the lowercase username"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Vespa/Scooty model definitions and available paint colors"
+    },
+    "/buyers/{buyerId}": {
+      "schema": "Buyer",
+      "description": "Client distributors or local dealership buyers"
+    },
+    "/scooterUnits/{scooterId}": {
+      "schema": "ScooterUnit",
+      "description": "Active physical products mapped in sequential assembly line states"
+    },
+    "/stockLogs/{logId}": {
+      "schema": "StockLog",
+      "description": "Record tracking history of incoming freight or manual inventory count corrections"
+    },
+    "/config/sheetConfig": {
+      "schema": "SheetConfig",
+      "description": "Single document holding sheet replication webhook config"
+    },
+    "/batterySales/{saleId}": {
+      "schema": "BatterySale",
+      "description": "Individual battery sales, dispatches, or holds"
+    },
+    "/batteryImports/{importId}": {
+      "schema": "BatteryImport",
+      "description": "Receipt registry of bulk generic high-voltage batteries"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Full chronological security and task assignment logs"
+    }
+  }
+}
