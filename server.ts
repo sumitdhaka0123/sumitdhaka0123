@@ -2862,3 +2862,4 @@ async function startServer() {
 }
 
 startServer();
+// Trigger restart to pull products
