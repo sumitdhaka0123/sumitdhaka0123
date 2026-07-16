@@ -3,9 +3,9 @@ import { AutoUpdater } from './components/AutoUpdater';
 import { AttendanceScreen } from './components/AttendanceScreen';
 import { AdminAttendanceMap } from './components/AdminAttendanceMap';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
+import {  
   Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap
-} from 'lucide-react';
+, MapPin, X } from 'lucide-react';
 
 import { User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport } from './types';
 import LoginScreen from './components/LoginScreen';
@@ -39,6 +39,7 @@ export default function App() {
   // Navigation tab states
   const [activeTab, setActiveTab] = useState<'dashboard' | 'assembly' | 'stock' | 'catalog' | 'battery' | 'charger' | 'settings'>('dashboard');
   const [loading, setLoading] = useState(false);
+  const [showAttendance, setShowAttendance] = useState(false);
   const [workerTab, setWorkerTab] = useState<'workspace' | 'charger' | 'dashboard'>('workspace');
 
   // Salesperson add buyer form state
@@ -1182,6 +1183,15 @@ export default function App() {
                 </span>
               </div>
               
+              
+              <button
+                onClick={() => setShowAttendance(true)}
+                title="Open Location & Attendance"
+                className="p-2 text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl cursor-pointer transition-colors"
+              >
+                <MapPin className="h-4 w-4" />
+              </button>
+
               <button
                 onClick={fetchAllData}
                 disabled={loading}
@@ -1278,6 +1288,33 @@ export default function App() {
             )}
           </AnimatePresence>
         </main>
+
+        
+        {/* --- ATTENDANCE & TRACKING MODAL --- */}
+        <AnimatePresence>
+          {showAttendance && (
+            <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="relative bg-transparent max-w-6xl w-full"
+              >
+                <button
+                  onClick={() => setShowAttendance(false)}
+                  className="absolute -top-12 right-0 p-2 text-white hover:text-rose-400 bg-white/10 rounded-full"
+                >
+                  <X size={24} />
+                </button>
+                {currentUser.role === 'admin' ? (
+                  <AdminAttendanceMap />
+                ) : (
+                  <AttendanceScreen currentUser={currentUser} />
+                )}
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
 
         {/* --- SCOOTER UNIT SPECIFICATION MODAL --- */}
         <AnimatePresence>
