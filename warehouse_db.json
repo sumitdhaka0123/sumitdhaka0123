@@ -29,7 +29,345 @@
       "role": "manufacturer"
     }
   },
-  "products": [],
+  "products": [
+    {
+      "id": "624ba478-8d21-4d0f-9129-b4a8bd546451",
+      "name": "ESSENATIAL W/O DISK",
+      "colors": [
+        "WHITE",
+        "BLACK",
+        "GREY",
+        "RED",
+        "COFFIE",
+        "C-GREEN",
+        "SHINE BLUE",
+        "BLUE"
+      ]
+    },
+    {
+      "id": "b533d98c-fa73-4169-8712-ab2bc3dccc1b",
+      "name": "ESSENATIAL DISC",
+      "colors": [
+        "RED",
+        "BLACK",
+        "WHITE",
+        "GREY",
+        "BLUE",
+        "C-GREEN",
+        "SHINE BLUE",
+        "MEHROON",
+        "YELLOW",
+        "GOLDEN",
+        "COFFIE",
+        "SKY BLUE"
+      ]
+    },
+    {
+      "id": "40249149-ad16-47df-9ba2-68cfb4eeec83",
+      "name": "CKD",
+      "colors": [
+        "ANY OTHER"
+      ]
+    },
+    {
+      "id": "ab03ab5c-b471-40e4-9566-d15bf858b62a",
+      "name": "LODER",
+      "colors": [
+        "BLACK"
+      ]
+    },
+    {
+      "id": "6c1f30e3-7d4c-471b-b2aa-141d6de88b2d",
+      "name": "CITY XL",
+      "colors": [
+        "BLACK",
+        "RED",
+        "C-GREEN",
+        "GOLDEN",
+        "WHITE",
+        "BLUE",
+        "GREY",
+        "COFFIE"
+      ]
+    },
+    {
+      "id": "829299c7-4787-4696-8818-eb33e2a0231c",
+      "name": "UNCOMPLET",
+      "colors": [
+        "WHITE",
+        "SILVER"
+      ]
+    },
+    {
+      "id": "466a7bbf-107b-4fbb-8a6a-0b8a2f8a115e",
+      "name": "CITY R.L",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "RED",
+        "GREY",
+        "BLUE",
+        "C-GREEN",
+        "COFFIE"
+      ]
+    },
+    {
+      "id": "4ba3504e-e156-45f5-bb94-9b3756f19366",
+      "name": "CITY RL UNCOMPLET",
+      "colors": [
+        "RED",
+        "WHITE"
+      ]
+    },
+    {
+      "id": "05a797f5-805b-4f5a-8958-441fe0ca0570",
+      "name": "CITY S.Q",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "SILVER",
+        "GREY"
+      ]
+    },
+    {
+      "id": "9cf701ef-f0d4-4e40-8186-98d400b6420b",
+      "name": "POWER",
+      "colors": [
+        "WHITE",
+        "BLACK",
+        "BLUE",
+        "GREY",
+        "C-GREEN",
+        "RED",
+        "GOLDEN"
+      ]
+    },
+    {
+      "id": "d75725bb-5231-4812-819c-1c6c3e3c6da5",
+      "name": "POWER PLUS OKINAWA",
+      "colors": [
+        "WHITE",
+        "GREY",
+        "C-GREEN",
+        "RED",
+        "BLUE",
+        "BLACK"
+      ]
+    },
+    {
+      "id": "b4d7db41-dadd-4944-a6dc-1905c9fce96a",
+      "name": "POWER PLUS NEO",
+      "colors": [
+        "WHITE",
+        "BLACK",
+        "BLUE",
+        "C-GREEN",
+        "GREY",
+        "RED",
+        "GOLDEN"
+      ]
+    },
+    {
+      "id": "4fa0ffb8-06ee-4bf1-ac99-a9161c472be3",
+      "name": "CITY PLUS U LIGHT",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "GREY",
+        "RED",
+        "BLUE"
+      ]
+    },
+    {
+      "id": "9bbe01ec-8859-42b5-a091-167748149f69",
+      "name": "CITY PLUS NEO JALI",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "BLUE",
+        "GREY",
+        "RED"
+      ]
+    },
+    {
+      "id": "42730506-a3e9-4f75-ac65-387c4f95553c",
+      "name": "CITY S.Q NEW",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "RED",
+        "GREY"
+      ]
+    },
+    {
+      "id": "8de901d2-ffc9-4d91-9b93-68a1d688ec0e",
+      "name": "ESSENATIAL DISC 3W",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "C-GREEN",
+        "GREY"
+      ]
+    },
+    {
+      "id": "76ba867e-5858-4ed8-b599-8bec059a4ff8",
+      "name": "CITY XL 3W",
+      "colors": [
+        "RED"
+      ]
+    },
+    {
+      "id": "f512ffbf-7a1a-4af0-80d9-b8d840ace443",
+      "name": "POWER +NEO (STAR LIGHT)",
+      "colors": [
+        "GREY",
+        "BLACK",
+        "WHITE",
+        "C-GREEN"
+      ]
+    },
+    {
+      "id": "bb363b44-191e-48e4-88c6-91153bfd5ede",
+      "name": "POWER (HYBRID)",
+      "colors": [
+        "GREY",
+        "BLACK",
+        "WHITE",
+        "RED",
+        "C-GREEN"
+      ]
+    },
+    {
+      "id": "fec96f22-3c85-42b2-a8a0-52bdd2de3467",
+      "name": "POWER+XL",
+      "colors": [
+        "GREY",
+        "BLACK",
+        "WHITE",
+        "GOLDEN"
+      ]
+    },
+    {
+      "id": "b9c5a3c9-d56e-4a5a-b604-0204083b80c2",
+      "name": "ARCHAR",
+      "colors": [
+        "RED",
+        "BLUE",
+        "GREY",
+        "WHITE"
+      ]
+    },
+    {
+      "id": "6f8822a6-72e5-4cd2-8dc8-d5b5acbb8e58",
+      "name": "OLD SCOOTY",
+      "colors": [
+        "YELLOW"
+      ]
+    },
+    {
+      "id": "9342fbbb-0e6a-4896-aab9-5a5b7793bcdc",
+      "name": "CITY + KGF",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "RED",
+        "GREY"
+      ]
+    },
+    {
+      "id": "d73548ba-47cc-4aed-9e50-69d3652b8047",
+      "name": "CITY PLUS PRO",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "C-GREEN",
+        "GREY"
+      ]
+    },
+    {
+      "id": "e4b86773-a6c2-45c6-b890-0722812e5201",
+      "name": "LODER TWO WHEELS",
+      "colors": [
+        "BLACK"
+      ]
+    },
+    {
+      "id": "272ed0d8-36c0-4214-aeab-0d442e624b4b",
+      "name": "LODER THREE WHEELS",
+      "colors": [
+        "BLACK"
+      ]
+    },
+    {
+      "id": "24143501-4820-4324-989b-410ab5da23ba",
+      "name": "CITY MAGIC (OLA)",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "RED",
+        "BLUE",
+        "C-GREEN",
+        "GREY"
+      ]
+    },
+    {
+      "id": "a88e68d4-185d-4053-b738-c8e9cef0051e",
+      "name": "CITY PLUS PRO BMW",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "BLUE",
+        "RED",
+        "GREY"
+      ]
+    },
+    {
+      "id": "673da593-dbb8-407e-bc0d-fcc7455b10ab",
+      "name": "CITY RL SWIFT",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "GREY",
+        "C-GREEN",
+        "BLUE"
+      ]
+    },
+    {
+      "id": "19985886-4dad-4f3f-aa7a-4254ab51a342",
+      "name": "POWER PLUS PRO",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "GREY",
+        "C-GREEN",
+        "BLUE"
+      ]
+    },
+    {
+      "id": "bec299bd-2ee2-44f0-ba23-3a70d2bb92a5",
+      "name": "CITY XL PRO",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "GREY",
+        "RED",
+        "C-GREEN",
+        "BLUE"
+      ]
+    },
+    {
+      "id": "b8d17b74-cb4e-4e20-a778-c5dcaa4a4d6b",
+      "name": "POWER TURBO (E4)",
+      "colors": [
+        "BLACK",
+        "WHITE",
+        "GREY",
+        "RED",
+        "C-GREEN",
+        "BLUE"
+      ]
+    }
+  ],
   "buyers": [],
   "scooterUnits": [],
   "stockLogs": [],
