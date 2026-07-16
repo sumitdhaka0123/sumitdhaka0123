@@ -6,8 +6,10 @@ import { DBState, User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, Batt
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
 import { z } from 'zod';
+import cors from 'cors';
 
 const app = express();
+app.use(cors());
 const PORT = process.env.PORT || 3000;
 const DB_FILE = path.join(process.cwd(), 'warehouse_db.json');
 
