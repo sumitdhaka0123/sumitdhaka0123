@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { AutoUpdater } from './components/AutoUpdater';
 import { AttendanceScreen } from './components/AttendanceScreen';
 import { AdminAttendanceMap } from './components/AdminAttendanceMap';
 import { motion, AnimatePresence } from 'motion/react';
@@ -1164,6 +1165,7 @@ export default function App() {
   if (currentUser.role === 'manufacturer') {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="terminal-layout">
+      <AutoUpdater />
         <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div className="flex items-center gap-3">

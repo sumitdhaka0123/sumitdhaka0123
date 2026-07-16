@@ -2914,6 +2914,15 @@ app.post('/api/locations', validateBody(liveLocationSchema), async (req, res) =>
   res.json({ success: true });
 });
 
+    
+app.get('/api/version', (req, res) => {
+  // When you build a new APK, change the version here and upload the new app-release.apk to Render
+  res.json({
+    version: "1.0.1",
+    apkUrl: "https://sumitdhaka0123.onrender.com/app-release.apk"
+  });
+});
+
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
