@@ -12,7 +12,7 @@ export function AutoUpdater() {
 
   useEffect(() => {
     // Check the server for the latest version
-    fetch('/api/version')
+    fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/version')
       .then(res => res.json())
       .then(data => {
         if (data && data.version && data.version !== CURRENT_APP_VERSION) {
