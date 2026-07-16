@@ -3,7 +3,7 @@ import { DownloadCloud } from 'lucide-react';
 
 // Hardcode the current APK version of the app. 
 // When you build a new APK, you change this to "1.0.1", "1.0.2", etc.
-const CURRENT_APP_VERSION = "1.0.0";
+const CURRENT_APP_VERSION = "1.0.1";
 
 export function AutoUpdater() {
   const [updateAvailable, setUpdateAvailable] = useState(false);
