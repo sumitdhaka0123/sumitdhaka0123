@@ -1176,6 +1176,24 @@ const userRejectSchema = z.object({
   operator: z.string().max(150).optional(),
 });
 
+
+const attendanceLogSchema = z.object({
+  username: z.string(),
+  operatorName: z.string(),
+  clockInTime: z.string()
+});
+const clockOutSchema = z.object({
+  username: z.string(),
+  clockOutTime: z.string()
+});
+const liveLocationSchema = z.object({
+  username: z.string(),
+  operatorName: z.string(),
+  latitude: z.number(),
+  longitude: z.number(),
+  timestamp: z.string()
+});
+
 const productSchema = z.object({
   name: z.string().min(1, "Product name is required").max(150, "Product name too long").trim(),
   colors: z.array(z.string().min(1, "Color name cannot be empty").max(100, "Color name too long").trim()).min(1, "At least one color is required"),
@@ -2843,6 +2861,59 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
+    
+app.get('/api/attendance', (req, res) => {
+  const db = readDB();
+  res.json(db.attendanceLogs || []);
+});
+
+app.post('/api/attendance/clock-in', validateBody(attendanceLogSchema), async (req, res) => {
+  const db = readDB();
+  if (!db.attendanceLogs) db.attendanceLogs = [];
+  const log = { id: Date.now().toString(), ...req.body };
+  db.attendanceLogs.push(log);
+  writeDB(db);
+  if (firebaseDb) {
+    await setDoc(doc(firebaseDb, 'attendanceLogs', log.id), log);
+  }
+  res.json(log);
+});
+
+app.post('/api/attendance/clock-out', validateBody(clockOutSchema), async (req, res) => {
+  const db = readDB();
+  if (!db.attendanceLogs) db.attendanceLogs = [];
+  
+  // Find the last clock-in without a clock-out for this user
+  const userLogs = db.attendanceLogs.filter(l => l.username === req.body.username && !l.clockOutTime);
+  if (userLogs.length > 0) {
+    const lastLog = userLogs[userLogs.length - 1];
+    lastLog.clockOutTime = req.body.clockOutTime;
+    writeDB(db);
+    if (firebaseDb) {
+      await setDoc(doc(firebaseDb, 'attendanceLogs', lastLog.id), lastLog);
+    }
+    res.json(lastLog);
+  } else {
+    res.status(404).json({ error: 'No active clock-in found' });
+  }
+});
+
+app.get('/api/locations', (req, res) => {
+  const db = readDB();
+  res.json(db.liveLocations || {});
+});
+
+app.post('/api/locations', validateBody(liveLocationSchema), async (req, res) => {
+  const db = readDB();
+  if (!db.liveLocations) db.liveLocations = {};
+  db.liveLocations[req.body.username] = req.body;
+  writeDB(db);
+  if (firebaseDb) {
+    await setDoc(doc(firebaseDb, 'liveLocations', req.body.username), req.body);
+  }
+  res.json({ success: true });
+});
+
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });

@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { AttendanceScreen } from './components/AttendanceScreen';
+import { AdminAttendanceMap } from './components/AdminAttendanceMap';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap

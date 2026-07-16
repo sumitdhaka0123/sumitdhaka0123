@@ -154,6 +154,22 @@ export interface AuditLog {
   operatorRole?: string;
 }
 
+export interface AttendanceLog {
+  id: string;
+  username: string;
+  operatorName: string;
+  clockInTime: string;
+  clockOutTime?: string;
+}
+
+export interface LiveLocation {
+  username: string;
+  operatorName: string;
+  latitude: number;
+  longitude: number;
+  timestamp: string;
+}
+
 export interface DBState {
   users: { [username: string]: User & { passwordHash: string } };
   products: Product[];
@@ -168,4 +184,6 @@ export interface DBState {
   batterySeriesList?: string[];
   chargerTypeList?: string[];
   auditLogs?: AuditLog[];
+  attendanceLogs?: AttendanceLog[];
+  liveLocations?: { [username: string]: LiveLocation };
 }
