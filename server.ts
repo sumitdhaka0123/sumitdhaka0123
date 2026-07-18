@@ -37,6 +37,19 @@ let globalDBState: DBState | null = null;
 
 app.use(express.json());
 
+// ─── CORS: Allow Android APK (Capacitor) and all web origins ────────────────
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+
+
 // Helper to write to Google Sheets Webhook asynchronously (Disabled per user request)
 async function postToGoogleSheets(webhookUrl: string, payload: any) {
   console.log('Sync to Google Sheets has been intentionally disabled per user request.');
