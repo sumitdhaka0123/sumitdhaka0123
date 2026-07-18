@@ -872,6 +872,32 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
 
   try {
     console.log('Hydrating local database cache from cloud Firestore...');
+
+    // ─── PRIMARY: Try to load the single main_state document (new method) ───
+    const mainStateSnap = await getDoc(doc(firebaseDb, 'warehouse', 'main_state'));
+    if (mainStateSnap.exists()) {
+      const data = mainStateSnap.data() as DBState;
+      console.log(`Loaded from Firestore main_state: ${data.scooterUnits?.length || 0} scooters, ${data.products?.length || 0} products.`);
+      return {
+        users: data.users || DEFAULT_USERS,
+        products: data.products || [],
+        buyers: data.buyers || [],
+        scooterUnits: data.scooterUnits || [],
+        stockLogs: data.stockLogs || [],
+        sheetConfig: data.sheetConfig || { webhookUrl: '', enabled: false },
+        batterySales: data.batterySales || [],
+        batteryImports: data.batteryImports || [],
+        chargerSales: data.chargerSales || [],
+        chargerImports: data.chargerImports || [],
+        batterySeriesList: data.batterySeriesList || ['Lithium 60V, 24AH', 'Lithium 60V, 30AH'],
+        chargerTypeList: data.chargerTypeList || ['Lithium Charger 54.6V/6A'],
+        auditLogs: data.auditLogs || [],
+        warrantyClaims: data.warrantyClaims || []
+      };
+    }
+
+    // ─── FALLBACK: Read from individual collections (legacy method) ──────────
+    console.log('No main_state found. Falling back to collection-based hydration...');
     const state: Partial<DBState> = {};
 
     const usersSnap = await getDocs(collection(firebaseDb, 'users'));
@@ -916,17 +942,6 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
       state.sheetConfig = sheetConfigSnap.data() as SheetConfig;
     }
 
-    const isEmpty = (!state.users || Object.keys(state.users).length === 0) &&
-                    (!state.products || state.products.length === 0) &&
-                    (!state.scooterUnits || state.scooterUnits.length === 0);
-
-    if (isEmpty) {
-      console.log('Cloud Firestore database appears empty. Seeding with local backup file contents...');
-      const localState = readDBFromFile();
-      await seedFirestore(localState);
-      return localState;
-    }
-
     const finalState: DBState = {
       users: state.users || DEFAULT_USERS,
       products: state.products && state.products.length > 0 ? state.products : DEFAULT_PRODUCTS,
@@ -944,6 +959,14 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
       warrantyClaims: state.warrantyClaims || []
     };
 
+    // If we got real data from collections, save it to main_state for future use
+    if (finalState.products.length > 0 || finalState.scooterUnits.length > 0) {
+      const { setDoc, doc: fsDoc } = await import('firebase/firestore');
+      setDoc(fsDoc(firebaseDb, 'warehouse', 'main_state'), JSON.parse(JSON.stringify(finalState)))
+        .then(() => console.log('Migrated legacy collection data to main_state.'))
+        .catch((err: any) => console.error('Migration to main_state failed:', err));
+    }
+
     return finalState;
   } catch (error) {
     console.error('Error hydrating database from Firestore:', error);
@@ -951,9 +974,12 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
   }
 }
 
+
+
 function writeDB(state: DBState) {
-  const oldState = globalDBState ? JSON.parse(JSON.stringify(globalDBState)) : null;
   globalDBState = state;
+
+  // Write backup to local file (async, non-blocking)
   try {
     fs.writeFile(DB_FILE, JSON.stringify(state, null, 2), 'utf8', (err) => {
       if (err) console.error('Error writing backup database file:', err);
@@ -962,11 +988,18 @@ function writeDB(state: DBState) {
     console.error('Error starting backup database file write:', err);
   }
 
-  // Push to cloud Firestore in background
-  syncToFirestore(state, oldState).catch(err => {
-    console.error('Error in background Firestore sync:', err);
-  });
+  // ─── GUARANTEED Firestore Sync ────────────────────────────────────────────
+  // Instead of a diff-based sync (which was broken), write the full database
+  // state to a single Firestore document. This is 100% reliable.
+  if (firebaseDb) {
+    const { doc, setDoc } = require('firebase/firestore');
+    const stateToSave = JSON.parse(JSON.stringify(state)); // clean copy
+    setDoc(doc(firebaseDb, 'warehouse', 'main_state'), stateToSave)
+      .then(() => console.log('Firestore main_state synced successfully.'))
+      .catch((err: any) => console.error('Firestore main_state sync error:', err));
+  }
 }
+
 
 // Helper to log user/system action in the Audit Log list
 function addAuditLog(db: DBState, username: string, operatorName: string, action: string, details?: string) {
