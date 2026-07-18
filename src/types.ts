@@ -1,11 +1,21 @@
+export interface LocationHistoryEntry {
+  latitude: number;
+  longitude: number;
+  timestamp: string;
+}
+
 export interface User {
   id: string;
   username: string;
-  role: 'admin' | 'manufacturer' | 'salesperson';
+  role: 'admin' | 'manufacturer' | 'salesperson' | 'manager';
   name: string;
   locked?: boolean;
   failedAttempts?: number;
   approved?: boolean;
+  latitude?: number;
+  longitude?: number;
+  locationTimestamp?: string;
+  locationHistory?: LocationHistoryEntry[];
 }
 
 export interface Product {
@@ -18,12 +28,21 @@ export interface Buyer {
   id: string;
   name: string;
   contact?: string;
+  address?: string;
+  gstNo?: string;
+  addressProof?: string;
+  buyerType?: 'retail' | 'wholesale';
 }
 
 export interface ScooterUnit {
   id: string; // Unique system ID
   modelName: string;
   color: string;
+  sourceChannel?: 'container_freight' | 'local_seller';
+  
+  // Purchase Fields
+  billNo?: string;
+  stockInNo?: string;
   
   // Stage 1: Production Entry
   chassisNo: string;
@@ -31,6 +50,7 @@ export interface ScooterUnit {
   controllerNo: string;
   frontTireSize?: '10-inch' | '12-inch';
   rearTireSize?: '10-inch' | '12-inch';
+  brakeType?: 'Disk' | 'Drum';
   
   // Stage 2: Customization Logs
   tireSize: '10-inch' | '12-inch';
@@ -48,6 +68,18 @@ export interface ScooterUnit {
   heldFor?: string;
   heldBy?: string;
   holdDate?: string;
+
+  // Integrated Charger options
+  chargerIncluded?: boolean;
+  chargerType?: string;
+  chargerSerial?: string;
+  chargerWarrantyActive?: boolean;
+  chargerWarrantyMonths?: number;
+  chargerWarrantyStatus?: 'Active' | 'None';
+  
+  // Scooter frame warranty options
+  scooterWarrantyMonths?: number;
+  scooterWarrantyActive?: boolean;
   
   // Stage 5: Warranty Management
   scooterWarrantyStatus: 'Active' | 'Expired' | 'None';
@@ -55,6 +87,10 @@ export interface ScooterUnit {
   batteryWarrantyStatus: 'Active' | 'Expired' | 'None';
   batteryWarrantyExpiry?: string;
   warrantyNotes?: string;
+
+  // Sales Fields
+  salesBillNo?: string;
+  deliveryChallanNo?: string;
 
   // Audit Trail Metadata
   createdOperator: string;
@@ -74,6 +110,8 @@ export interface StockLog {
   timestamp: string;
   operator: string;
   notes?: string;
+  billNo?: string;
+  stockInNo?: string;
 }
 
 export interface SheetConfig {
@@ -97,6 +135,9 @@ export interface BatterySale {
   heldFor?: string;
   heldBy?: string;
   holdDate?: string;
+  billNo?: string;
+  deliveryChallanNo?: string;
+  serialNumbers?: string[];
 }
 
 export interface BatteryImport {
@@ -110,6 +151,10 @@ export interface BatteryImport {
   supplierName?: string;
   containerId?: string;
   notes?: string;
+  billNo?: string;
+  stockInNo?: string;
+  serialNumbers?: string[];
+  warrantyDurationMonths?: number;
 }
 
 export interface ChargerSale {
@@ -128,6 +173,9 @@ export interface ChargerSale {
   heldFor?: string;
   heldBy?: string;
   holdDate?: string;
+  billNo?: string;
+  deliveryChallanNo?: string;
+  serialNumbers?: string[];
 }
 
 export interface ChargerImport {
@@ -141,6 +189,10 @@ export interface ChargerImport {
   supplierName?: string;
   containerId?: string;
   notes?: string;
+  billNo?: string;
+  stockInNo?: string;
+  serialNumbers?: string[];
+  warrantyDurationMonths?: number;
 }
 
 export interface AuditLog {
@@ -154,20 +206,25 @@ export interface AuditLog {
   operatorRole?: string;
 }
 
-export interface AttendanceLog {
+export interface WarrantyClaim {
   id: string;
-  username: string;
+  claimDate: string;
+  originalSaleId: string; // Refers to scooter unit id, or battery sale id, or charger sale id
+  originalSaleType: 'scooter' | 'battery' | 'charger';
+  originalSerialNo: string; // chassis number or battery serial or charger serial
+  buyerName: string;
+  buyerContact?: string;
+  saleDate?: string;
+  warrantyDurationMonths?: number;
+  issueDescription: string;
+  status: 'under_repair' | 'repaired' | 'exchanged' | 'rejected';
+  actionTaken?: 'repaired' | 'exchanged' | 'rejected' | 'pending';
+  newSerialNo?: string; // replacement serial number if exchanged
   operatorName: string;
-  clockInTime: string;
-  clockOutTime?: string;
-}
-
-export interface LiveLocation {
-  username: string;
-  operatorName: string;
-  latitude: number;
-  longitude: number;
-  timestamp: string;
+  notes?: string;
+  lastUpdatedTimestamp: string;
+  replacementWarrantyMonths?: number;
+  isBattery?: boolean;
 }
 
 export interface DBState {
@@ -184,6 +241,5 @@ export interface DBState {
   batterySeriesList?: string[];
   chargerTypeList?: string[];
   auditLogs?: AuditLog[];
-  attendanceLogs?: AttendanceLog[];
-  liveLocations?: { [username: string]: LiveLocation };
+  warrantyClaims?: WarrantyClaim[];
 }

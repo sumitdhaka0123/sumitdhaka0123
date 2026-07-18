@@ -1,13 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { AutoUpdater } from './components/AutoUpdater';
-import { AttendanceScreen } from './components/AttendanceScreen';
-import { AdminAttendanceMap } from './components/AdminAttendanceMap';
 import { motion, AnimatePresence } from 'motion/react';
-import {  
-  Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap
-, MapPin, X } from 'lucide-react';
+import { 
+  Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap, Search, ShieldCheck, MoreHorizontal, X, MapPin
+} from 'lucide-react';
 
-import { User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport } from './types';
+import { User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim } from './types';
 import LoginScreen from './components/LoginScreen';
 import DashboardStats from './components/DashboardStats';
 import AssemblyPipeline from './components/AssemblyPipeline';
@@ -17,6 +14,11 @@ import BatterySalesManager from './components/BatterySalesManager';
 import ChargerSalesManager from './components/ChargerSalesManager';
 import SettingsPanel from './components/SettingsPanel';
 import SenzoLogo from './components/SenzoLogo';
+import SearchConsole from './components/SearchConsole';
+import WarrantyClaimsManager from './components/WarrantyClaimsManager';
+import { AutoUpdater } from './components/AutoUpdater';
+import { AttendanceScreen } from './components/AttendanceScreen';
+import { AdminAttendanceMap } from './components/AdminAttendanceMap';
 
 export default function App() {
   // Session State
@@ -35,12 +37,14 @@ export default function App() {
   const [chargerImports, setChargerImports] = useState<ChargerImport[]>([]);
   const [batteryTypes, setBatteryTypes] = useState<string[]>([]);
   const [chargerTypes, setChargerTypes] = useState<string[]>([]);
+  const [warrantyClaims, setWarrantyClaims] = useState<WarrantyClaim[]>([]);
 
   // Navigation tab states
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'assembly' | 'stock' | 'catalog' | 'battery' | 'charger' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'assembly' | 'stock' | 'catalog' | 'battery' | 'charger' | 'settings' | 'search' | 'claims'>('dashboard');
   const [loading, setLoading] = useState(false);
   const [showAttendance, setShowAttendance] = useState(false);
   const [workerTab, setWorkerTab] = useState<'workspace' | 'charger' | 'dashboard'>('workspace');
+  const [showMobileMoreMenu, setShowMobileMoreMenu] = useState(false);
 
   // Salesperson add buyer form state
   const [salespersonNewBuyerName, setSalespersonNewBuyerName] = useState('');
@@ -66,6 +70,9 @@ export default function App() {
   const [mfrSearchText, setMfrSearchText] = useState<string>('');
   const [selectedDetailScooter, setSelectedDetailScooter] = useState<ScooterUnit | null>(null);
 
+  // Active mobile section indicator popup state
+  const [mobileNotification, setMobileNotification] = useState<string | null>(null);
+
   // Restore session on mount if any
   useEffect(() => {
     const savedUser = localStorage.getItem('voltstock_user');
@@ -81,12 +88,14 @@ export default function App() {
     }
   }, []);
 
+
+
   // Fetch all domain lists when user logs in
   const fetchAllData = async () => {
     if (!currentUser) return;
     setLoading(true);
     try {
-      const [pRes, bRes, sUnitRes, sLogRes, cRes, batRes, batImpRes, chgRes, chgImpRes, batTypeRes, chgTypeRes] = await Promise.all([
+      const [pRes, bRes, sUnitRes, sLogRes, cRes, batRes, batImpRes, chgRes, chgImpRes, batTypeRes, chgTypeRes, claimsRes] = await Promise.all([
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products'),
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers'),
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units'),
@@ -97,7 +106,8 @@ export default function App() {
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales'),
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-imports'),
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-types'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-types')
+        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-types'),
+        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims')
       ]);
 
       if (pRes.ok) setProducts(await pRes.json());
@@ -111,6 +121,7 @@ export default function App() {
       if (chgImpRes.ok) setChargerImports(await chgImpRes.json());
       if (batTypeRes.ok) setBatteryTypes(await batTypeRes.json());
       if (chgTypeRes.ok) setChargerTypes(await chgTypeRes.json());
+      if (claimsRes.ok) setWarrantyClaims(await claimsRes.json());
     } catch (err) {
       console.error('Error loading data from warehouse server:', err);
     } finally {
@@ -120,6 +131,63 @@ export default function App() {
 
   useEffect(() => {
     fetchAllData();
+  }, [currentUser]);
+
+  // Silent background location reporter for salesmen and manufacturers (live 24/7 location sync)
+  useEffect(() => {
+    if (!currentUser) return;
+    if (currentUser.role !== 'manufacturer' && currentUser.role !== 'salesperson') return;
+
+    let watchId: number | null = null;
+
+    const reportLocation = async (lat: number, lng: number) => {
+      try {
+        await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            username: currentUser.username,
+            latitude: lat,
+            longitude: lng
+          })
+        });
+      } catch (err) {
+        // Silently log without disturbing the operator's workspace
+        console.error('Quiet location telemetry error:', err);
+      }
+    };
+
+    if ('geolocation' in navigator) {
+      // Fetch initial position immediately
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          reportLocation(pos.coords.latitude, pos.coords.longitude);
+        },
+        (err) => {
+          console.error('Silent initial location fetch failed:', err);
+        },
+        { enableHighAccuracy: true, timeout: 15000 }
+      );
+
+      // Setup continuous watcher
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          reportLocation(pos.coords.latitude, pos.coords.longitude);
+        },
+        (err) => {
+          console.error('Silent continuous coordinate tracker failed:', err);
+        },
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 }
+      );
+    }
+
+    return () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+      }
+    };
   }, [currentUser]);
 
   // Auto background pull from sheet whenever user changes tabs to refresh and capture live sheet edits!
@@ -246,6 +314,10 @@ export default function App() {
     supplierName?: string;
     containerId?: string;
     notes?: string;
+    billNo?: string;
+    stockInNo?: string;
+    serialNumbers?: string[];
+    warrantyDurationMonths?: number;
   }): Promise<boolean> => {
     try {
       const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-imports', {
@@ -275,12 +347,32 @@ export default function App() {
     }
   };
 
-  const handleAddBuyer = async (name: string, contact?: string): Promise<boolean> => {
+  const handleBulkSeedProducts = async (mode: 'replace' | 'append'): Promise<boolean> => {
+    try {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products/bulk-seed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode, operator: currentUser?.name || currentUser?.username || 'system' }),
+      });
+      return res.ok;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const handleAddBuyer = async (
+    name: string,
+    contact?: string,
+    address?: string,
+    gstNo?: string,
+    addressProof?: string,
+    buyerType?: 'retail' | 'wholesale'
+  ): Promise<boolean> => {
     try {
       const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, contact }),
+        body: JSON.stringify({ name, contact, address, gstNo, addressProof, buyerType }),
       });
       return res.ok;
     } catch (e) {
@@ -532,7 +624,8 @@ export default function App() {
     switch (r) {
       case 'manufacturer': return { text: '🔧 Production Specialist', color: 'bg-emerald-50 text-emerald-700 border border-emerald-200' };
       case 'salesperson': return { text: '💵 Sales Representative', color: 'bg-cyan-50 text-cyan-700 border border-cyan-200' };
-      default: return { text: '👑 Warehouse Manager / Admin', color: 'bg-amber-50 text-amber-700 border border-amber-200' };
+      case 'manager': return { text: '🛡️ Operations Manager', color: 'bg-teal-50 text-teal-700 border border-teal-200' };
+			default: return { text: '👑 Warehouse Owner / Admin', color: 'bg-amber-50 text-amber-700 border border-amber-200' };
     }
   };
 
@@ -657,38 +750,44 @@ export default function App() {
                 {products.length === 0 ? (
                   <p className="text-xs text-slate-400 py-4 text-center col-span-full">No products catalogued yet.</p>
                 ) : (
-                  products.map(p => {
-                    const remainingForModel = modelKitsRemaining[p.name] || 0;
-                    return (
-                      <div key={p.id} className="border border-slate-150 bg-slate-50/50 rounded-2xl p-4 flex flex-col justify-between">
-                        <div>
-                          <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
-                            <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wide">
-                              {p.name}
-                            </span>
-                            <span className={`px-2.5 py-0.5 text-[10px] font-extrabold rounded-full border ${remainingForModel > 0 ? 'bg-amber-50 text-amber-700 border-amber-150' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
-                              {remainingForModel} left
-                            </span>
-                          </div>
+                  [...products]
+                    .sort((a, b) => {
+                      const remA = modelKitsRemaining[a.name] || 0;
+                      const remB = modelKitsRemaining[b.name] || 0;
+                      return remB - remA;
+                    })
+                    .map(p => {
+                      const remainingForModel = modelKitsRemaining[p.name] || 0;
+                      return (
+                        <div key={p.id} className="border border-slate-150 bg-slate-50/50 rounded-2xl p-4 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
+                              <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wide">
+                                {p.name}
+                              </span>
+                              <span className={`px-2.5 py-0.5 text-[10px] font-extrabold rounded-full border ${remainingForModel > 0 ? 'bg-amber-50 text-amber-700 border-amber-150' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
+                                {remainingForModel} left
+                              </span>
+                            </div>
 
-                          {/* Color breakdown */}
-                          <div className="space-y-1.5">
-                            {p.colors.map(col => {
-                              const remainingForColor = getImportedStockRemaining(p.name, col);
-                              return (
-                                <div key={col} className="bg-white px-2.5 py-1.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
-                                  <span className="font-semibold text-slate-600">{col}</span>
-                                  <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full ${remainingForColor > 0 ? 'text-amber-800 bg-amber-50 border border-amber-100' : 'text-slate-400 bg-slate-50 border border-slate-100'}`}>
-                                    {remainingForColor} kits
-                                  </span>
-                                </div>
-                              );
-                            })}
+                            {/* Color breakdown */}
+                            <div className="space-y-1.5">
+                              {p.colors.map(col => {
+                                const remainingForColor = getImportedStockRemaining(p.name, col);
+                                return (
+                                  <div key={col} className="bg-white px-2.5 py-1.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
+                                    <span className="font-semibold text-slate-600">{col}</span>
+                                    <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full ${remainingForColor > 0 ? 'text-amber-800 bg-amber-50 border border-amber-100' : 'text-slate-400 bg-slate-50 border border-slate-100'}`}>
+                                      {remainingForColor} kits
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })
+                      );
+                    })
                 )}
               </div>
             </div>
@@ -697,9 +796,12 @@ export default function App() {
 
         {/* Build History */}
         <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
-          <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 mb-4 font-sans flex items-center gap-2">
-            📝 My Recent Build Recordings
-          </h3>
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 font-sans flex items-center gap-2">
+              📝 My Recent Build Recordings
+            </h3>
+            <span className="text-[10px] text-slate-400 font-sans">Click on any log below to view full specifications</span>
+          </div>
           {myRecentRecordings.length === 0 ? (
             <div className="text-center py-6 text-slate-400 text-xs font-semibold">
               No recent frames assembled by you yet.
@@ -719,7 +821,12 @@ export default function App() {
                 </thead>
                 <tbody className="divide-y divide-slate-50">
                   {myRecentRecordings.map((unit) => (
-                    <tr key={unit.id} className="text-slate-700 hover:bg-slate-50/50">
+                    <tr 
+                      key={unit.id} 
+                      onClick={() => setSelectedDetailScooter(unit)}
+                      className="text-slate-700 hover:bg-slate-100/70 hover:text-slate-900 cursor-pointer transition-colors"
+                      title="Click to view full detail specs"
+                    >
                       <td className="py-3.5 px-4 font-extrabold text-slate-900">{unit.modelName}</td>
                       <td className="py-3.5 px-4 font-medium">{unit.color}</td>
                       <td className="py-3.5 px-4 font-mono font-bold text-[11px] text-slate-900">{unit.chassisNo}</td>
@@ -749,178 +856,6 @@ export default function App() {
             </div>
           )}
         </div>
-
-        {/* --- LIVE WAREHOUSE STOCK LOOKUP (STOCK STANDING IN WAREHOUSE) --- */}
-        <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-6" id="warehouse-stock-lookup">
-          <div className="flex flex-col md:flex-row md:items-center justify-between pb-4 border-b border-slate-100 gap-4">
-            <div>
-              <h3 className="text-sm font-extrabold text-slate-900 font-sans tracking-tight flex items-center gap-2">
-                🔍 Live Warehouse Stock Matcher
-              </h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Scan, filter, and match active physical scooter stock standing in the warehouse.
-              </p>
-            </div>
-            
-            {/* Quick Summary Badge */}
-            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-150 px-3 py-1.5 rounded-2xl self-start md:self-auto">
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-800 font-sans">Active Warehouse Units:</span>
-              <span className="text-sm font-black text-emerald-900 font-mono">
-                {scooterUnits.filter(u => u.status !== 'sold').length} units
-              </span>
-            </div>
-          </div>
-
-          {/* Interactive Filters Block */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-150" id="stock-lookup-filters">
-            {/* Model Filter */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-sans">Model Name</label>
-              <select
-                value={mfrSearchModel}
-                onChange={(e) => {
-                  setMfrSearchModel(e.target.value);
-                  setMfrSearchColor('all'); // Reset color when model changes
-                }}
-                className="w-full bg-white border border-slate-200 text-xs font-semibold rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-500 transition-all"
-              >
-                <option value="all">All Models</option>
-                {products.map(p => (
-                  <option key={p.id} value={p.name}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Color Filter */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-sans">Color Option</label>
-              <select
-                value={mfrSearchColor}
-                onChange={(e) => setMfrSearchColor(e.target.value)}
-                className="w-full bg-white border border-slate-200 text-xs font-semibold rounded-xl px-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-500 transition-all"
-                disabled={mfrSearchModel === 'all'}
-              >
-                <option value="all">All Colors</option>
-                {mfrSearchModel !== 'all' && products.find(p => p.name === mfrSearchModel)?.colors.map(col => (
-                  <option key={col} value={col}>{col}</option>
-                ))}
-              </select>
-            </div>
-
-            {/* Search Input */}
-            <div className="space-y-1 sm:col-span-2">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider font-sans">Search Identifiers</label>
-              <div className="relative">
-                <input
-                  type="text"
-                  value={mfrSearchText}
-                  onChange={(e) => setMfrSearchText(e.target.value)}
-                  placeholder="Type Chassis, Motor, or Controller No..."
-                  className="w-full bg-white border border-slate-200 text-xs font-semibold rounded-xl pl-8 pr-3 py-2 text-slate-800 focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-400"
-                />
-                <div className="absolute left-2.5 top-2.5 text-slate-400">
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Filtered List */}
-          {(() => {
-            const filtered = scooterUnits.filter(u => {
-              // Only match warehouse stock standing (status !== 'sold')
-              if (u.status === 'sold') return false;
-
-              // Model filter
-              if (mfrSearchModel !== 'all' && u.modelName !== mfrSearchModel) return false;
-
-              // Color filter
-              if (mfrSearchColor !== 'all' && u.color !== mfrSearchColor) return false;
-
-              // Text search (Chassis No, Motor No, Controller No)
-              if (mfrSearchText.trim()) {
-                const search = mfrSearchText.toLowerCase();
-                const chassisMatch = String(u.chassisNo || '').toLowerCase().includes(search);
-                const motorMatch = String(u.motorNo || '').toLowerCase().includes(search);
-                const controllerMatch = String(u.controllerNo || '').toLowerCase().includes(search);
-                if (!chassisMatch && !motorMatch && !controllerMatch) return false;
-              }
-
-              return true;
-            });
-
-            if (filtered.length === 0) {
-              return (
-                <div className="text-center py-10 bg-slate-50 border border-dashed border-slate-200 rounded-2xl">
-                  <div className="text-slate-400 font-sans font-semibold text-xs">No matching warehouse stock found.</div>
-                  <p className="text-[10px] text-slate-400 mt-1">Try adjusting your filters or search terms.</p>
-                </div>
-              );
-            }
-
-            return (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="warehouse-matched-list">
-                {filtered.map(unit => (
-                  <div
-                    key={unit.id}
-                    onClick={() => setSelectedDetailScooter(unit)}
-                    className="group border border-slate-200 bg-white hover:border-emerald-500 rounded-2xl p-4 shadow-sm hover:shadow transition-all cursor-pointer flex flex-col justify-between hover:scale-[1.01]"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[11px] font-extrabold text-emerald-800 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-100 uppercase tracking-wide">
-                          {unit.modelName}
-                        </span>
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${
-                          unit.status === 'hold' 
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200' 
-                            : 'bg-cyan-50 text-cyan-700 border border-cyan-200'
-                        }`}>
-                          {unit.status.toUpperCase()}
-                        </span>
-                      </div>
-
-                      <h4 className="text-xs font-black text-slate-900 tracking-tight mb-2 flex items-center gap-1.5 font-mono">
-                        <span>Chassis No:</span>
-                        <span className="text-slate-700 font-bold group-hover:text-emerald-700 transition-colors">{unit.chassisNo}</span>
-                      </h4>
-
-                      <div className="space-y-1 text-[10px] text-slate-500 font-sans border-t border-slate-100 pt-2">
-                        <div className="flex justify-between">
-                          <span>Color:</span>
-                          <strong className="text-slate-700">{unit.color}</strong>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Motor No:</span>
-                          <strong className="text-slate-700 font-mono">{unit.motorNo}</strong>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Controller No:</span>
-                          <strong className="text-slate-700 font-mono">{unit.controllerNo}</strong>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Batteries Linked:</span>
-                          <span className={`font-bold ${unit.batterySerials.length > 0 ? 'text-emerald-700' : 'text-amber-700 animate-pulse'}`}>
-                            {unit.batterySerials.length > 0 ? `🔋 ${unit.batterySerials.length} linked` : '⏳ Missing'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 pt-2.5 border-t border-slate-50 flex items-center justify-between text-[10px] font-sans text-slate-400 group-hover:text-emerald-600 transition-colors">
-                      <span>Click for full specs & details</span>
-                      <svg className="h-3.5 w-3.5 transform group-hover:translate-x-0.5 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" />
-                      </svg>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            );
-          })()}
-        </div>
       </div>
     );
   };
@@ -930,9 +865,6 @@ export default function App() {
     const soldByMe = scooterUnits.filter(u => u.status === 'sold' && u.lastUpdatedBy === currentUser.username).length;
     const totalSold = scooterUnits.filter(u => u.status === 'sold').length;
     const availableStock = scooterUnits.filter(u => u.status === 'available').length;
-    const myRevenue = scooterUnits
-      .filter(u => u.status === 'sold' && u.lastUpdatedBy === currentUser.username)
-      .reduce((sum, u) => sum + (u.salesPrice || 0), 0);
 
     const myRecentRecordings = scooterUnits
       .filter(u => u.status === 'sold' && u.lastUpdatedBy === currentUser.username)
@@ -1166,7 +1098,7 @@ export default function App() {
   if (currentUser.role === 'manufacturer') {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="terminal-layout">
-      <AutoUpdater />
+        <AutoUpdater />
         <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -1182,8 +1114,7 @@ export default function App() {
                   {roleDetails.text}
                 </span>
               </div>
-              
-              
+
               <button
                 onClick={() => setShowAttendance(true)}
                 title="Open Location & Attendance"
@@ -1226,7 +1157,7 @@ export default function App() {
               }`}
             >
               <Shuffle className="h-4 w-4 text-emerald-500 shrink-0" />
-              <span>🛠️ Log stages</span>
+              <span>🛠️ Assemble Option</span>
             </button>
             <button
               onClick={() => setWorkerTab('dashboard')}
@@ -1237,7 +1168,7 @@ export default function App() {
               }`}
             >
               <LayoutDashboard className="h-4 w-4 text-cyan-500 shrink-0" />
-              <span>📊 Stats & History</span>
+              <span>📊 History of Logs</span>
             </button>
           </div>
         </div>
@@ -1273,6 +1204,7 @@ export default function App() {
                   chargerTypeList={chargerTypes}
                   onReleaseChargerHold={handleReleaseChargerHold}
                   onFinalizeChargerHold={handleFinalizeChargerHold}
+                  onSelectDetailScooter={setSelectedDetailScooter}
                 />
               </motion.div>
             ) : (
@@ -1288,33 +1220,6 @@ export default function App() {
             )}
           </AnimatePresence>
         </main>
-
-        
-        {/* --- ATTENDANCE & TRACKING MODAL --- */}
-        <AnimatePresence>
-          {showAttendance && (
-            <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="relative bg-transparent max-w-6xl w-full"
-              >
-                <button
-                  onClick={() => setShowAttendance(false)}
-                  className="absolute -top-12 right-0 p-2 text-white hover:text-rose-400 bg-white/10 rounded-full"
-                >
-                  <X size={24} />
-                </button>
-                {currentUser.role === 'admin' ? (
-                  <AdminAttendanceMap />
-                ) : (
-                  <AttendanceScreen currentUser={currentUser} />
-                )}
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
 
         {/* --- SCOOTER UNIT SPECIFICATION MODAL --- */}
         <AnimatePresence>
@@ -1513,6 +1418,28 @@ export default function App() {
           )}
         </AnimatePresence>
 
+        {/* --- ATTENDANCE & TRACKING MODAL (Manufacturer) --- */}
+        <AnimatePresence>
+          {showAttendance && (
+            <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="relative bg-transparent max-w-6xl w-full"
+              >
+                <button
+                  onClick={() => setShowAttendance(false)}
+                  className="absolute -top-12 right-0 p-2 text-white hover:text-rose-400 bg-white/10 rounded-full"
+                >
+                  <X size={24} />
+                </button>
+                <AttendanceScreen currentUser={currentUser} />
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
         <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">
           ✨ Senzo Warehouse Manager — Production Terminal — {new Date().getFullYear()}
         </footer>
@@ -1539,15 +1466,7 @@ export default function App() {
                   {roleDetails.text}
                 </span>
               </div>
-
-              <button
-                onClick={() => setShowAttendance(true)}
-                title="Open Location & Attendance"
-                className="p-2 text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl cursor-pointer transition-colors"
-              >
-                <MapPin className="h-4 w-4" />
-              </button>
-
+              
               <button
                 onClick={fetchAllData}
                 disabled={loading}
@@ -1630,6 +1549,7 @@ export default function App() {
                   chargerTypeList={chargerTypes}
                   onReleaseChargerHold={handleReleaseChargerHold}
                   onFinalizeChargerHold={handleFinalizeChargerHold}
+                  onSelectDetailScooter={setSelectedDetailScooter}
                 />
               </motion.div>
             ) : (
@@ -1705,6 +1625,18 @@ export default function App() {
               <span>📊 Dashboard</span>
             </button>
             <button
+              onClick={() => setActiveTab('search')}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
+                activeTab === 'search'
+                  ? 'bg-slate-900 text-white shadow-md'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+              id="nav-search-btn"
+            >
+              <Search className="h-4 w-4 text-pink-500" />
+              <span>🔍 Search</span>
+            </button>
+            <button
               onClick={() => setActiveTab('assembly')}
               className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
                 activeTab === 'assembly'
@@ -1714,20 +1646,22 @@ export default function App() {
               id="nav-registry-btn"
             >
               <Shuffle className="h-4 w-4 text-emerald-600" />
-              <span>🛠️ Build & Sell</span>
+              <span>🛠️ Assemble & Sell</span>
             </button>
-            <button
-              onClick={() => setActiveTab('stock')}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                activeTab === 'stock'
-                  ? 'bg-slate-900 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-              id="nav-ledger-btn"
-            >
-              <ClipboardList className="h-4 w-4 text-blue-600" />
-              <span>📦 Import Stock</span>
-            </button>
+            {(currentUser.role === 'admin' || currentUser.role === 'manager') && (
+              <button
+                onClick={() => setActiveTab('stock')}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
+                  activeTab === 'stock'
+                    ? 'bg-slate-900 text-white shadow-md'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+                id="nav-ledger-btn"
+              >
+                <ClipboardList className="h-4 w-4 text-blue-600" />
+                <span>📦 Purchase</span>
+              </button>
+            )}
             <button
               onClick={() => setActiveTab('catalog')}
               className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
@@ -1753,17 +1687,31 @@ export default function App() {
               <span>🔋 Battery Sales</span>
             </button>
             <button
-              onClick={() => setActiveTab('settings')}
+              onClick={() => setActiveTab('claims')}
               className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                activeTab === 'settings'
+                activeTab === 'claims'
                   ? 'bg-slate-900 text-white shadow-md'
                   : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
               }`}
-              id="nav-settings-btn"
+              id="nav-claims-btn"
             >
-              <Settings className="h-4 w-4 text-purple-600" />
-              <span>⚙️ Settings</span>
+              <ShieldCheck className="h-4 w-4 text-cyan-600" />
+              <span>🛡️ Claims</span>
             </button>
+            {currentUser.role === 'admin' && (
+              <button
+                onClick={() => setActiveTab('settings')}
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
+                  activeTab === 'settings'
+                    ? 'bg-slate-900 text-white shadow-md'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+                id="nav-settings-btn"
+              >
+                <Settings className="h-4 w-4 text-purple-600" />
+                <span>⚙️ Settings</span>
+              </button>
+            )}
           </nav>
 
           {/* User Profile & Actions */}
@@ -1774,15 +1722,7 @@ export default function App() {
                 {roleDetails.text}
               </span>
             </div>
-
-            <button
-              onClick={() => setShowAttendance(true)}
-              title="Open Location & Tracking Map"
-              className="p-2 text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl cursor-pointer transition-colors"
-            >
-              <MapPin className="h-4 w-4" />
-            </button>
-
+            
             <button
               onClick={fetchAllData}
               disabled={loading}
@@ -1807,50 +1747,138 @@ export default function App() {
       </header>
 
       {/* 2. Mobile Tab Bar */}
-      <div className="md:hidden bg-white border-b border-slate-200 flex items-center justify-around py-2.5 px-2">
+      <div className="md:hidden bg-white border-b border-slate-200 flex items-center justify-around py-2.5 px-3 relative z-40">
         <button
-          onClick={() => setActiveTab('dashboard')}
-          className={`flex flex-col items-center gap-1 p-1 cursor-pointer ${activeTab === 'dashboard' ? 'text-slate-900' : 'text-slate-400'}`}
+          onClick={() => { setActiveTab('dashboard'); setShowMobileMoreMenu(false); }}
+          className={`flex flex-col items-center gap-1 p-1 cursor-pointer transition-all active:scale-95 ${activeTab === 'dashboard' ? 'text-slate-900 font-bold scale-105' : 'text-slate-400'}`}
         >
           <LayoutDashboard className="h-4.5 w-4.5 text-cyan-600" />
-          <span className="text-[10px] font-bold font-sans">📊 Dashboard</span>
+          <span className="text-[10px] font-sans font-bold">Dashboard</span>
         </button>
         <button
-          onClick={() => setActiveTab('assembly')}
-          className={`flex flex-col items-center gap-1 p-1 cursor-pointer ${activeTab === 'assembly' ? 'text-slate-900' : 'text-slate-400'}`}
+          onClick={() => { setActiveTab('search'); setShowMobileMoreMenu(false); }}
+          className={`flex flex-col items-center gap-1 p-1 cursor-pointer transition-all active:scale-95 ${activeTab === 'search' ? 'text-slate-900 font-bold scale-105' : 'text-slate-400'}`}
+        >
+          <Search className="h-4.5 w-4.5 text-pink-500" />
+          <span className="text-[10px] font-sans font-bold">Search</span>
+        </button>
+        <button
+          onClick={() => { setActiveTab('assembly'); setShowMobileMoreMenu(false); }}
+          className={`flex flex-col items-center gap-1 p-1 cursor-pointer transition-all active:scale-95 ${activeTab === 'assembly' ? 'text-slate-900 font-bold scale-105' : 'text-slate-400'}`}
         >
           <Shuffle className="h-4.5 w-4.5 text-emerald-600" />
-          <span className="text-[10px] font-bold font-sans">🛠️ Build & Sell</span>
+          <span className="text-[10px] font-sans font-bold">Assemble</span>
         </button>
+        {(currentUser.role === 'admin' || currentUser.role === 'manager') && (
+          <button
+            onClick={() => { setActiveTab('stock'); setShowMobileMoreMenu(false); }}
+            className={`flex flex-col items-center gap-1 p-1 cursor-pointer transition-all active:scale-95 ${activeTab === 'stock' ? 'text-slate-900 font-bold scale-105' : 'text-slate-400'}`}
+          >
+            <ClipboardList className="h-4.5 w-4.5 text-blue-600" />
+            <span className="text-[10px] font-sans font-bold">Purchase</span>
+          </button>
+        )}
         <button
-          onClick={() => setActiveTab('stock')}
-          className={`flex flex-col items-center gap-1 p-1 cursor-pointer ${activeTab === 'stock' ? 'text-slate-900' : 'text-slate-400'}`}
+          onClick={() => setShowMobileMoreMenu(!showMobileMoreMenu)}
+          className={`flex flex-col items-center gap-1 p-1 cursor-pointer transition-all active:scale-95 ${showMobileMoreMenu ? 'text-slate-900 font-bold' : 'text-slate-400'}`}
         >
-          <ClipboardList className="h-4.5 w-4.5 text-blue-600" />
-          <span className="text-[10px] font-bold font-sans">📦 Import</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('catalog')}
-          className={`flex flex-col items-center gap-1 p-1 cursor-pointer ${activeTab === 'catalog' ? 'text-slate-900' : 'text-slate-400'}`}
-        >
-          <BookOpen className="h-4.5 w-4.5 text-amber-600" />
-          <span className="text-[10px] font-bold font-sans">🎨 Models</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('battery')}
-          className={`flex flex-col items-center gap-1 p-1 cursor-pointer ${activeTab === 'battery' ? 'text-slate-900' : 'text-slate-400'}`}
-        >
-          <Battery className="h-4.5 w-4.5 text-emerald-500" />
-          <span className="text-[10px] font-bold font-sans">🔋 Batteries</span>
-        </button>
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`flex flex-col items-center gap-1 p-1 cursor-pointer ${activeTab === 'settings' ? 'text-slate-900' : 'text-slate-400'}`}
-        >
-          <Settings className="h-4.5 w-4.5 text-purple-600" />
-          <span className="text-[10px] font-bold font-sans">⚙️ Settings</span>
+          <MoreHorizontal className={`h-4.5 w-4.5 text-indigo-500 transition-transform ${showMobileMoreMenu ? 'rotate-90' : ''}`} />
+          <span className="text-[10px] font-sans font-bold">More</span>
         </button>
       </div>
+
+      {/* Elegant Mobile More Menu Overlay Drawer */}
+      <AnimatePresence>
+        {showMobileMoreMenu && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowMobileMoreMenu(false)}
+              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 md:hidden"
+            />
+            {/* Slide-up bottom card */}
+            <motion.div
+              initial={{ y: "100%", opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: "100%", opacity: 0 }}
+              transition={{ type: "spring", damping: 25, stiffness: 220 }}
+              className="fixed bottom-0 left-0 right-0 bg-white rounded-t-[32px] shadow-2xl z-50 border-t border-slate-100 p-6 md:hidden pb-10"
+            >
+              <div className="flex items-center justify-between mb-5 border-b border-slate-100 pb-3">
+                <div className="space-y-0.5">
+                  <h3 className="text-sm font-black text-slate-900">More Operations</h3>
+                  <p className="text-[11px] text-slate-500">Secondary management workflows</p>
+                </div>
+                <button
+                  onClick={() => setShowMobileMoreMenu(false)}
+                  className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 text-slate-500 active:scale-90 transition-all cursor-pointer"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3.5">
+                <button
+                  onClick={() => { setActiveTab('catalog'); setShowMobileMoreMenu(false); }}
+                  className={`flex flex-col items-start gap-2 p-4 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.97] ${
+                    activeTab === 'catalog' ? 'bg-amber-50/50 border-amber-300 text-amber-950' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <BookOpen className="h-5 w-5 text-amber-600" />
+                  <div>
+                    <p className="text-xs font-bold">🎨 Models</p>
+                    <p className="text-[9px] text-slate-500 mt-0.5">Scooters & buyers catalog</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('battery'); setShowMobileMoreMenu(false); }}
+                  className={`flex flex-col items-start gap-2 p-4 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.97] ${
+                    activeTab === 'battery' ? 'bg-emerald-50/50 border-emerald-300 text-emerald-950' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Battery className="h-5 w-5 text-emerald-600" />
+                  <div>
+                    <p className="text-xs font-bold">🔋 Batteries</p>
+                    <p className="text-[9px] text-slate-500 mt-0.5">Battery wholesale & logs</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('claims'); setShowMobileMoreMenu(false); }}
+                  className={`flex flex-col items-start gap-2 p-4 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.97] ${
+                    activeTab === 'claims' ? 'bg-cyan-50/50 border-cyan-300 text-cyan-950' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <ShieldCheck className="h-5 w-5 text-cyan-600" />
+                  <div>
+                    <p className="text-xs font-bold">🛡️ Claims</p>
+                    <p className="text-[9px] text-slate-500 mt-0.5">Modular warranty claims</p>
+                  </div>
+                </button>
+
+                {currentUser.role === 'admin' && (
+                  <button
+                    onClick={() => { setActiveTab('settings'); setShowMobileMoreMenu(false); }}
+                    className={`flex flex-col items-start gap-2 p-4 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.97] ${
+                      activeTab === 'settings' ? 'bg-purple-50/50 border-purple-300 text-purple-950' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Settings className="h-5 w-5 text-purple-600" />
+                    <div>
+                      <p className="text-xs font-bold">⚙️ Settings</p>
+                      <p className="text-[9px] text-slate-500 mt-0.5">System configurations</p>
+                    </div>
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* 3. Main Workspace Area */}
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
@@ -1872,6 +1900,22 @@ export default function App() {
                 onNavigateToAssembly={() => setActiveTab('assembly')}
                 onNavigateToBatteries={() => setActiveTab('battery')}
                 onNavigateToStock={() => setActiveTab('stock')}
+                onNavigateToSearch={() => setActiveTab('search')}
+              />
+            )}
+
+            {activeTab === 'search' && (
+              <SearchConsole
+                products={products}
+                buyers={buyers}
+                scooterUnits={scooterUnits}
+                stockLogs={stockLogs}
+                batteryImports={batteryImports}
+                chargerImports={chargerImports}
+                batterySales={batterySales}
+                chargerSales={chargerSales}
+                currentUser={currentUser}
+                onRefresh={fetchAllData}
               />
             )}
 
@@ -1897,23 +1941,34 @@ export default function App() {
                 chargerTypeList={chargerTypes}
                 onReleaseChargerHold={handleReleaseChargerHold}
                 onFinalizeChargerHold={handleFinalizeChargerHold}
+                onSelectDetailScooter={setSelectedDetailScooter}
+                onShowMobileNotification={setMobileNotification}
               />
             )}
 
             {activeTab === 'stock' && (
-              <StockAdjustment 
-                products={products} 
-                buyers={buyers} 
-                stockLogs={stockLogs} 
-                currentUser={currentUser} 
-                onRefresh={fetchAllData}
-                onSubmitStockLog={handleSubmitStockLog}
-                batteryImports={batteryImports}
-                onSubmitBatteryImport={handleDirectBatteryImport}
-                chargerImports={chargerImports}
-                onSubmitChargerImport={handleDirectChargerImport}
-                chargerTypeList={chargerTypes}
-              />
+              (currentUser.role === 'admin' || currentUser.role === 'manager') ? (
+                <StockAdjustment 
+                  products={products} 
+                  buyers={buyers} 
+                  stockLogs={stockLogs} 
+                  currentUser={currentUser} 
+                  onRefresh={fetchAllData}
+                  onSubmitStockLog={handleSubmitStockLog}
+                  batteryImports={batteryImports}
+                  onSubmitBatteryImport={handleDirectBatteryImport}
+                  chargerImports={chargerImports}
+                  onSubmitChargerImport={handleDirectChargerImport}
+                  chargerTypeList={chargerTypes}
+                  scooterUnits={scooterUnits}
+                  onSubmitAssembly={handleSubmitScooterUnit}
+                />
+              ) : (
+                <div className="bg-red-50 text-red-800 p-6 rounded-2xl border border-red-200 font-sans" id="stock-unauthorized">
+                  <h3 className="text-lg font-bold mb-2">Access Denied</h3>
+                  <p className="text-sm">Only administrator accounts are permitted to access the Purchase module.</p>
+                </div>
+              )
             )}
 
             {activeTab === 'catalog' && (
@@ -1922,6 +1977,7 @@ export default function App() {
                 buyers={buyers} 
                 onRefresh={fetchAllData}
                 onAddProduct={handleAddProduct}
+                onBulkSeedProducts={handleBulkSeedProducts}
                 onAddBuyer={handleAddBuyer}
                 onUpdateProduct={handleUpdateProduct}
                 onUpdateBuyer={handleUpdateBuyer}
@@ -1962,7 +2018,21 @@ export default function App() {
               />
             )}
 
-            {activeTab === 'settings' && (
+            {activeTab === 'claims' && (
+              <WarrantyClaimsManager
+                scooterUnits={scooterUnits}
+                batterySales={batterySales}
+                chargerSales={chargerSales}
+                batteryImports={batteryImports}
+                chargerImports={chargerImports}
+                buyers={buyers}
+                warrantyClaims={warrantyClaims}
+                currentUser={currentUser}
+                onRefresh={fetchAllData}
+              />
+            )}
+
+            {activeTab === 'settings' && currentUser.role === 'admin' && (
               <SettingsPanel 
                 sheetConfig={sheetConfig} 
                 onSaveConfig={handleSaveSheetConfig} 
@@ -2005,6 +2075,23 @@ export default function App() {
       <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">
         ✨ Senzo Warehouse Manager — Simple & Powerful — {new Date().getFullYear()}
       </footer>
+
+      {/* Mobile Active Section Notification Alert popup */}
+      <AnimatePresence>
+        {mobileNotification && (
+          <motion.div
+            initial={{ opacity: 0, y: 50, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+            className="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white text-xs font-black tracking-wide font-sans py-3.5 px-6 rounded-full shadow-2xl border border-slate-800 backdrop-blur-md flex items-center gap-2.5 whitespace-nowrap"
+            id="mobile-section-notification"
+          >
+            <span className="h-2 w-2 rounded-full bg-cyan-400 animate-ping"></span>
+            <span>{mobileNotification}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

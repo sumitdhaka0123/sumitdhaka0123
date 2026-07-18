@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Zap, Plus, Sparkles, User, Calendar, ClipboardList, CheckCircle2, 
   AlertCircle, Search, ShieldAlert, Ban, Timer, Check, Info, ShieldCheck, RefreshCw, X
 } from 'lucide-react';
 import { Buyer, ChargerSale, ChargerImport } from '../types';
+import QRSerialScanner from './QRSerialScanner';
 
 interface ChargerSalesManagerProps {
   buyers: Buyer[];
@@ -24,6 +25,7 @@ interface ChargerSalesManagerProps {
     warrantyDurationMonths?: number;
     status?: 'sold' | 'hold';
     heldFor?: string;
+    serialNumbers?: string[];
   }) => Promise<boolean>;
   onSubmitChargerImport: (data: {
     chargerType: string;
@@ -33,10 +35,19 @@ interface ChargerSalesManagerProps {
     supplierName?: string;
     containerId?: string;
     notes?: string;
+    serialNumbers?: string[];
   }) => Promise<boolean>;
   onReleaseHold: (id: string) => Promise<boolean>;
   onFinalizeHold: (id: string) => Promise<boolean>;
   isPipelineView?: boolean;
+  onAddBuyer?: (
+    name: string,
+    contact?: string,
+    address?: string,
+    gstNo?: string,
+    addressProof?: string,
+    buyerType?: 'retail' | 'wholesale'
+  ) => Promise<boolean>;
 }
 
 export default function ChargerSalesManager({
@@ -50,19 +61,67 @@ export default function ChargerSalesManager({
   onSubmitChargerImport,
   onReleaseHold,
   onFinalizeHold,
-  isPipelineView = false
+  isPipelineView = false,
+  onAddBuyer
 }: ChargerSalesManagerProps) {
   // Add sale form state
   const [buyerName, setBuyerName] = useState('');
+  const [buyerContact, setBuyerContact] = useState('');
+  const [buyerAddress, setBuyerAddress] = useState('');
   const [chargerType, setChargerType] = useState(chargerTypesList[0] || '48V Charger');
   const [startNo, setStartNo] = useState('');
   const [endNo, setEndNo] = useState('');
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
+
+  // Auto-populate contact and address info when standard buyer is selected
+  useEffect(() => {
+    const trimmed = buyerName.trim();
+    if (!trimmed) {
+      setBuyerContact('');
+      setBuyerAddress('');
+      return;
+    }
+    const selectedBuyer = buyers.find(b => b.name.toLowerCase() === trimmed.toLowerCase());
+    if (selectedBuyer) {
+      setBuyerContact(selectedBuyer.contact || '');
+      setBuyerAddress(selectedBuyer.address || '');
+    }
+  }, [buyerName, buyers]);
   
   // Warranty Flow State
   const [isUnderWarranty, setIsUnderWarranty] = useState<boolean | null>(true);
   const [warrantyDuration, setWarrantyDuration] = useState<number | null>(12);
+
+  // Scanning Integration States (Sales)
+  const [inputMethod, setInputMethod] = useState<'range' | 'scan'>('range');
+  const [showScanner, setShowScanner] = useState(false);
+  const [scannedSerials, setScannedSerials] = useState<string[]>([]);
+
+  // Scanning Integration States (Imports)
+  const [importInputMethod, setImportInputMethod] = useState<'range' | 'scan'>('range');
+  const [showImportScanner, setShowImportScanner] = useState(false);
+  const [scannedImportSerials, setScannedImportSerials] = useState<string[]>([]);
+
+  // Collect all registered charger serial numbers to prevent duplicates
+  const allRegisteredChargerSerials = useMemo(() => {
+    const list: string[] = [];
+    if (chargerImports && Array.isArray(chargerImports)) {
+      chargerImports.forEach(imp => {
+        if (imp.serialNumbers) {
+          list.push(...imp.serialNumbers);
+        }
+      });
+    }
+    if (chargerSales && Array.isArray(chargerSales)) {
+      chargerSales.forEach(sale => {
+        if (sale.serialNumbers) {
+          list.push(...sale.serialNumbers);
+        }
+      });
+    }
+    return list;
+  }, [chargerImports, chargerSales]);
 
   // Submit and loading states
   const [submitMode, setSubmitMode] = useState<'sold' | 'hold'>('sold');
@@ -213,29 +272,39 @@ export default function ChargerSalesManager({
         setStatus({ type: 'error', text: 'Please select a warranty duration.' });
         return;
       }
-      if (!startNo.trim() || !endNo.trim()) {
-        setStatus({ type: 'error', text: 'Starting and ending series numbers are required for under-warranty chargers.' });
-        return;
-      }
-      finalStartNo = startNo.trim().toUpperCase();
-      finalEndNo = endNo.trim().toUpperCase();
-
-      // Recalculate quantity to enforce
-      const startMatch = finalStartNo.match(/\d+$/);
-      const endMatch = finalEndNo.match(/\d+$/);
-      if (startMatch && endMatch) {
-        const sNum = parseInt(startMatch[0], 10);
-        const eNum = parseInt(endMatch[0], 10);
-        if (eNum >= sNum) {
-          const calculatedQty = eNum - sNum + 1;
-          qtyNum = calculatedQty;
-        } else {
-          setStatus({ type: 'error', text: 'Ending series number must be greater than or equal to starting series number.' });
+      if (inputMethod === 'scan') {
+        if (scannedSerials.length === 0) {
+          setStatus({ type: 'error', text: 'Please scan or register at least one charger serial number.' });
           return;
         }
+        qtyNum = scannedSerials.length;
+        finalStartNo = scannedSerials[0];
+        finalEndNo = scannedSerials[scannedSerials.length - 1];
       } else {
-        setStatus({ type: 'error', text: 'Invalid serial formats. Series numbers must end with numeric values (e.g. CHG48-1001).' });
-        return;
+        if (!startNo.trim() || !endNo.trim()) {
+          setStatus({ type: 'error', text: 'Starting and ending series numbers are required for under-warranty chargers.' });
+          return;
+        }
+        finalStartNo = startNo.trim().toUpperCase();
+        finalEndNo = endNo.trim().toUpperCase();
+
+        // Recalculate quantity to enforce
+        const startMatch = finalStartNo.match(/\d+$/);
+        const endMatch = finalEndNo.match(/\d+$/);
+        if (startMatch && endMatch) {
+          const sNum = parseInt(startMatch[0], 10);
+          const eNum = parseInt(endMatch[0], 10);
+          if (eNum >= sNum) {
+            const calculatedQty = eNum - sNum + 1;
+            qtyNum = calculatedQty;
+          } else {
+            setStatus({ type: 'error', text: 'Ending series number must be greater than or equal to starting series number.' });
+            return;
+          }
+        } else {
+          setStatus({ type: 'error', text: 'Invalid serial formats. Series numbers must end with numeric values (e.g. CHG48-1001).' });
+          return;
+        }
       }
     } else {
       // Not under warranty - just validate quantity input
@@ -260,6 +329,15 @@ export default function ChargerSalesManager({
     setSaving(true);
     setStatus(null);
 
+    // Auto-register new buyer if they are not in the database
+    const finalBuyerName = buyerName.trim();
+    if (finalBuyerName) {
+      const buyerExists = buyers.some(b => b.name.toLowerCase() === finalBuyerName.toLowerCase());
+      if (!buyerExists && onAddBuyer) {
+        await onAddBuyer(finalBuyerName, buyerContact.trim() || undefined, buyerAddress.trim() || undefined, undefined, undefined, 'retail');
+      }
+    }
+
     const data = {
       buyerName: buyerName.trim(),
       chargerType,
@@ -270,7 +348,8 @@ export default function ChargerSalesManager({
       isUnderWarranty: !!isUnderWarranty,
       warrantyDurationMonths: isUnderWarranty ? Number(warrantyDuration) : undefined,
       status: submitMode,
-      heldFor: submitMode === 'hold' ? buyerName.trim() : undefined
+      heldFor: submitMode === 'hold' ? buyerName.trim() : undefined,
+      serialNumbers: inputMethod === 'scan' ? scannedSerials : undefined
     };
 
     const success = await onSubmitChargerSale(data);
@@ -285,10 +364,13 @@ export default function ChargerSalesManager({
       });
       // Reset
       setBuyerName('');
+      setBuyerContact('');
+      setBuyerAddress('');
       setStartNo('');
       setEndNo('');
       setQuantity('');
       setNotes('');
+      setScannedSerials([]);
       onRefresh();
     } else {
       setStatus({ type: 'error', text: 'Server rejected the request. Please try again.' });
@@ -298,10 +380,25 @@ export default function ChargerSalesManager({
   // Submit Import Form
   const handleImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const parsedQty = parseInt(importQty, 10);
-    if (isNaN(parsedQty) || parsedQty <= 0) {
-      setImportStatus({ type: 'error', text: 'Please specify a valid quantity.' });
-      return;
+    let finalStart = importStartNo.trim();
+    let finalEnd = importEndNo.trim();
+    let parsedQty = parseInt(importQty, 10);
+
+    if (importInputMethod === 'scan') {
+      if (scannedImportSerials.length === 0) {
+        setImportStatus({ type: 'error', text: 'Please scan or register at least one imported charger.' });
+        return;
+      }
+      parsedQty = scannedImportSerials.length;
+      finalStart = scannedImportSerials[0];
+      finalEnd = scannedImportSerials[scannedImportSerials.length - 1];
+    } else {
+      if (isNaN(parsedQty) || parsedQty <= 0) {
+        setImportStatus({ type: 'error', text: 'Please specify a valid quantity.' });
+        return;
+      }
+      if (!finalStart) finalStart = 'N/A';
+      if (!finalEnd) finalEnd = 'N/A';
     }
 
     setImportSaving(true);
@@ -309,12 +406,13 @@ export default function ChargerSalesManager({
 
     const success = await onSubmitChargerImport({
       chargerType: importType,
-      startNo: importStartNo.trim() || 'N/A',
-      endNo: importEndNo.trim() || 'N/A',
+      startNo: finalStart,
+      endNo: finalEnd,
       quantity: parsedQty,
       supplierName: importSupplier.trim() || undefined,
       containerId: importContainer.trim() || undefined,
-      notes: importNotes.trim() || undefined
+      notes: importNotes.trim() || undefined,
+      serialNumbers: importInputMethod === 'scan' ? scannedImportSerials : undefined
     });
 
     setImportSaving(false);
@@ -326,6 +424,7 @@ export default function ChargerSalesManager({
       setImportSupplier('');
       setImportContainer('');
       setImportNotes('');
+      setScannedImportSerials([]);
       onRefresh();
       setTimeout(() => {
         setShowImportModal(false);
@@ -638,7 +737,7 @@ export default function ChargerSalesManager({
                       onChange={() => setWarrantyDuration(13)}
                       className="text-red-600 focus:ring-red-500"
                     />
-                    13 Months (Special promo)
+                    12+1 Months (Special promo)
                   </label>
                   <label className="flex items-center gap-2 text-sm text-slate-700 font-medium cursor-pointer">
                     <input
@@ -885,26 +984,69 @@ export default function ChargerSalesManager({
             )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Buyer / Customer Name *
-                </label>
-                <div className="relative">
-                  <User className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                  <input
-                    type="text"
-                    placeholder="Enter customer or buyer name"
-                    value={buyerName}
-                    onChange={(e) => setBuyerName(e.target.value)}
-                    list="buyers-datalist"
-                    className="w-full pl-9 pr-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all"
-                    required
-                  />
-                  <datalist id="buyers-datalist">
-                    {buyers.map(b => (
-                      <option key={b.id} value={b.name} />
-                    ))}
-                  </datalist>
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Buyer / Customer Name *
+                  </label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Enter customer or buyer name"
+                      value={buyerName}
+                      onChange={(e) => setBuyerName(e.target.value)}
+                      list="buyers-datalist"
+                      className="w-full pl-9 pr-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-semibold"
+                      required
+                    />
+                    <datalist id="buyers-datalist">
+                      {buyers.map(b => (
+                        <option key={b.id} value={b.name} />
+                      ))}
+                    </datalist>
+                  </div>
+                  {buyerName.trim() !== '' && (
+                    (() => {
+                      const exists = buyers.some(b => b.name.toLowerCase() === buyerName.trim().toLowerCase());
+                      return exists ? (
+                        <div className="mt-1 flex items-center gap-1 text-[10px] text-emerald-600 font-bold font-sans">
+                          <span>✅ Registered Buyer: auto-filling contact & address/location</span>
+                        </div>
+                      ) : (
+                        <div className="mt-1 flex items-center gap-1 text-[10px] text-amber-600 font-bold font-sans">
+                          <span>✨ New Buyer! Will auto-register to database with address</span>
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                      Contact Number / Email
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="+91 or email..."
+                      value={buyerContact}
+                      onChange={(e) => setBuyerContact(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                      Physical Address / Location (Important) 📍
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Delivery address / location"
+                      value={buyerAddress}
+                      onChange={(e) => setBuyerAddress(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -925,58 +1067,156 @@ export default function ChargerSalesManager({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Start Serial Number {isUnderWarranty && <span className="text-red-500">*</span>}
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. CHG48-10001"
-                  value={startNo}
-                  onChange={(e) => handleStartOrEndChange('start', e.target.value)}
-                  className="w-full px-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder:text-slate-400 font-mono font-bold"
-                  required={!!isUnderWarranty}
-                />
-              </div>
+            {isUnderWarranty === true ? (
+              <div className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-3">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                  <span className="block text-xs font-bold text-red-800 uppercase tracking-wide font-sans">
+                    Serial Input Method:
+                  </span>
+                  <div className="flex bg-slate-200/60 p-0.5 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setInputMethod('range')}
+                      className={`px-3 py-1 text-[10px] font-bold rounded-md transition ${
+                        inputMethod === 'range' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      🔢 Range Series
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInputMethod('scan')}
+                      className={`px-3 py-1 text-[10px] font-bold rounded-md transition flex items-center gap-1 ${
+                        inputMethod === 'scan' ? 'bg-white text-red-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      📷 Scan QR/Codes
+                    </button>
+                  </div>
+                </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  End Serial Number {isUnderWarranty && <span className="text-red-500">*</span>}
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. CHG48-10005"
-                  value={endNo}
-                  onChange={(e) => handleStartOrEndChange('end', e.target.value)}
-                  className="w-full px-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder:text-slate-400 font-mono font-bold"
-                  required={!!isUnderWarranty}
-                />
-              </div>
+                {inputMethod === 'range' ? (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                        Start Serial Number <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. CHG48-10001"
+                        value={startNo}
+                        onChange={(e) => handleStartOrEndChange('start', e.target.value)}
+                        className="w-full px-4 py-2.5 text-sm bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder:text-slate-400 font-mono font-bold"
+                        required={inputMethod === 'range'}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                        End Serial Number <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. CHG48-10005"
+                        value={endNo}
+                        onChange={(e) => handleStartOrEndChange('end', e.target.value)}
+                        className="w-full px-4 py-2.5 text-sm bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder:text-slate-400 font-mono font-bold"
+                        required={inputMethod === 'range'}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                        Quantity *
+                      </label>
+                      <input
+                        type="number"
+                        placeholder="Derived from range..."
+                        value={quantity}
+                        readOnly
+                        className="w-full px-4 py-2.5 text-sm rounded-xl border border-emerald-250 bg-emerald-50 text-emerald-800 cursor-not-allowed font-mono font-bold"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                      <div>
+                        <h4 className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
+                          <span>📊</span> Scanned Charger Serials
+                        </h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Each unit requires an individual scanned serial or QR code.
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xl font-black font-mono text-red-600 block leading-none">
+                          {scannedSerials.length}
+                        </span>
+                        <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">Units Registered</span>
+                      </div>
+                    </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Quantity *
-                </label>
-                <input
-                  type="number"
-                  placeholder={isUnderWarranty ? "Derived from serial range..." : "Specify units count"}
-                  value={quantity}
-                  onChange={(e) => {
-                    if (!isUnderWarranty) {
-                      setQuantity(e.target.value);
-                    }
-                  }}
-                  readOnly={isUnderWarranty === true}
-                  className={`w-full px-4 py-2.5 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-mono font-bold ${
-                    isUnderWarranty
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800 cursor-not-allowed'
-                      : 'bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 border-slate-200'
-                  }`}
-                  required
-                />
+                    <button
+                      type="button"
+                      onClick={() => setShowScanner(true)}
+                      className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-sans font-bold text-xs rounded-xl transition flex items-center justify-center gap-2"
+                    >
+                      📷 Launch Camera QR Scanner
+                    </button>
+
+                    {scannedSerials.length > 0 && (
+                      <div className="bg-white border border-slate-200 p-2.5 rounded-xl space-y-1">
+                        <span className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Registered Scans (Click ❌ to remove):</span>
+                        <div className="flex flex-wrap gap-1 max-h-[100px] overflow-y-auto pr-1">
+                          {scannedSerials.map((serial, idx) => (
+                            <span key={serial} className="inline-flex items-center gap-1 bg-red-50 text-red-800 text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border border-red-200">
+                              <span>{idx + 1}. {serial}</span>
+                              <button
+                                type="button"
+                                onClick={() => setScannedSerials(prev => prev.filter(s => s !== serial))}
+                                className="text-[10px] text-red-600 hover:text-rose-600 font-sans cursor-pointer"
+                              >
+                                ❌
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Start/End Serial Reference (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Bulk-Reference"
+                    value={startNo}
+                    onChange={(e) => {
+                      setStartNo(e.target.value);
+                      setEndNo(e.target.value);
+                    }}
+                    className="w-full px-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all placeholder:text-slate-400 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Quantity *
+                  </label>
+                  <input
+                    type="number"
+                    placeholder="Specify units count"
+                    value={quantity}
+                    onChange={(e) => setQuantity(e.target.value)}
+                    className="w-full px-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-mono font-bold"
+                    required
+                  />
+                </div>
+              </div>
+            )}
 
             {/* Warranty Questionnaire Section */}
             <div className="p-4 rounded-xl border border-slate-150 bg-slate-50 space-y-4">
@@ -1044,7 +1284,7 @@ export default function ChargerSalesManager({
                         onChange={() => setWarrantyDuration(13)}
                         className="text-red-600 focus:ring-red-500"
                       />
-                      13 Months (Special promo)
+                      12+1 Months (Special promo)
                     </label>
                     <label className="flex items-center gap-2 text-sm text-slate-700 font-medium cursor-pointer">
                       <input
@@ -1365,6 +1605,79 @@ export default function ChargerSalesManager({
                   )}
                 </div>
 
+                {/* Charger serial numbers breakdown list */}
+                {selectedDetailSale.isUnderWarranty && (
+                  <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
+                    <h5 className="text-[10px] font-black uppercase tracking-wider text-slate-500 flex items-center justify-between">
+                      <span>🔌 Sequenced Charger Serials</span>
+                      <span className="text-slate-400 text-[9px] font-bold">
+                        {selectedDetailSale.serialNumbers && selectedDetailSale.serialNumbers.length > 0 
+                          ? 'Scanned QR Codes' 
+                          : 'Generated from Series Range'}
+                      </span>
+                    </h5>
+                    
+                    {selectedDetailSale.serialNumbers && selectedDetailSale.serialNumbers.length > 0 ? (
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[160px] overflow-y-auto pr-1">
+                        {selectedDetailSale.serialNumbers.map((serial, idx) => (
+                          <div key={idx} className="bg-white px-2.5 py-1.5 rounded-xl border border-red-200 bg-red-50/10 flex items-center justify-between text-[11px]">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-bold text-red-600 text-[9px] bg-red-100 h-4.5 w-4.5 flex items-center justify-center rounded-full">
+                                {idx + 1}
+                              </span>
+                              <span className="font-mono font-bold text-slate-800 select-all">{serial}</span>
+                            </div>
+                            <span className="text-[9px] text-red-600 font-bold uppercase tracking-wider px-1 bg-red-100/50 rounded text-center">QR</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (!selectedDetailSale.startNo || selectedDetailSale.startNo === 'N/A') ? (
+                      <p className="text-xs text-slate-400 font-medium py-1">No serialized ranges defined for this bulk shipment.</p>
+                    ) : (
+                      (() => {
+                        // Generate range list
+                        const start = selectedDetailSale.startNo;
+                        const end = selectedDetailSale.endNo;
+                        const qty = selectedDetailSale.quantity;
+                        const list: string[] = [];
+                        const startMatch = start.match(/^(.*?)(\d+)$/);
+                        const endMatch = end.match(/^(.*?)(\d+)$/);
+                        if (startMatch && endMatch) {
+                          const prefix = startMatch[1];
+                          const sNum = parseInt(startMatch[2], 10);
+                          const eNum = parseInt(endMatch[2], 10);
+                          const padLen = startMatch[2].length;
+                          if (eNum >= sNum) {
+                            for (let i = 0; i < qty; i++) {
+                              const curr = sNum + i;
+                              if (curr <= eNum) {
+                                list.push(prefix + String(curr).padStart(padLen, '0'));
+                              }
+                            }
+                          }
+                        }
+                        if (list.length === 0) {
+                          return <p className="text-xs text-slate-400 font-medium py-1">Could not expand serial range automatically.</p>;
+                        }
+                        return (
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[160px] overflow-y-auto pr-1">
+                            {list.map((serial, idx) => (
+                              <div key={idx} className="bg-white px-2.5 py-1.5 rounded-xl border border-slate-200 flex items-center justify-between text-[11px]">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-bold text-slate-400 text-[9px] bg-slate-100 h-4.5 w-4.5 flex items-center justify-center rounded-full">
+                                    {idx + 1}
+                                  </span>
+                                  <span className="font-mono font-bold text-slate-800 select-all">{serial}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()
+                    )}
+                  </div>
+                )}
+
                 {/* Hold specific details */}
                 {selectedDetailSale.status === 'hold' && (
                   <div className="p-4 rounded-xl border bg-amber-50 text-amber-800 border-amber-100">
@@ -1453,44 +1766,121 @@ export default function ChargerSalesManager({
                     </select>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      Start Serial No
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. C48-10001"
-                      value={importStartNo}
-                      onChange={(e) => handleImportStartOrEndChange('start', e.target.value)}
-                      className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none"
-                    />
-                  </div>
+                  <div className="col-span-2 bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-3">
+                    <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                      <span className="block text-xs font-bold text-red-800 uppercase tracking-wide font-sans">
+                        Import Serial Input Method:
+                      </span>
+                      <div className="flex bg-slate-200/60 p-0.5 rounded-lg">
+                        <button
+                          type="button"
+                          onClick={() => setImportInputMethod('range')}
+                          className={`px-3 py-1 text-[10px] font-bold rounded-md transition ${
+                            importInputMethod === 'range' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          🔢 Range Series
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setImportInputMethod('scan')}
+                          className={`px-3 py-1 text-[10px] font-bold rounded-md transition flex items-center gap-1 ${
+                            importInputMethod === 'scan' ? 'bg-white text-red-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                          }`}
+                        >
+                          📷 Scan QR/Codes
+                        </button>
+                      </div>
+                    </div>
 
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      End Serial No
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. C48-10250"
-                      value={importEndNo}
-                      onChange={(e) => handleImportStartOrEndChange('end', e.target.value)}
-                      className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none"
-                    />
-                  </div>
+                    {importInputMethod === 'range' ? (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                            Start Serial No
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. C48-10001"
+                            value={importStartNo}
+                            onChange={(e) => handleImportStartOrEndChange('start', e.target.value)}
+                            className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                            End Serial No
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. C48-10250"
+                            value={importEndNo}
+                            onChange={(e) => handleImportStartOrEndChange('end', e.target.value)}
+                            className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none"
+                          />
+                        </div>
+                        <div className="col-span-2">
+                          <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
+                            Batch Quantity *
+                          </label>
+                          <input
+                            type="number"
+                            placeholder="Units count"
+                            value={importQty}
+                            onChange={(e) => setImportQty(e.target.value)}
+                            className="w-full px-3 py-2 text-sm bg-white border border-slate-200 rounded-lg focus:outline-none font-semibold"
+                            required={importInputMethod === 'range'}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                          <div>
+                            <h4 className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
+                              <span>📊</span> Imported Charger Serials
+                            </h4>
+                            <p className="text-[10px] text-slate-400 mt-0.5">
+                              Scan or register the QR codes of each incoming charger.
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <span className="text-xl font-black font-mono text-red-600 block leading-none">
+                              {scannedImportSerials.length}
+                            </span>
+                            <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">Units Registered</span>
+                          </div>
+                        </div>
 
-                  <div className="col-span-2">
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">
-                      Batch Quantity *
-                    </label>
-                    <input
-                      type="number"
-                      placeholder="Units count"
-                      value={importQty}
-                      onChange={(e) => setImportQty(e.target.value)}
-                      className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none font-semibold"
-                      required
-                    />
+                        <button
+                          type="button"
+                          onClick={() => setShowImportScanner(true)}
+                          className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-sans font-bold text-xs rounded-xl transition flex items-center justify-center gap-2"
+                        >
+                          📷 Launch Import QR Scanner
+                        </button>
+
+                        {scannedImportSerials.length > 0 && (
+                          <div className="bg-white border border-slate-200 p-2.5 rounded-xl space-y-1">
+                            <span className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Registered Scans (Click ❌ to remove):</span>
+                            <div className="flex flex-wrap gap-1 max-h-[100px] overflow-y-auto pr-1">
+                              {scannedImportSerials.map((serial, idx) => (
+                                <span key={serial} className="inline-flex items-center gap-1 bg-red-50 text-red-800 text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border border-red-200">
+                                  <span>{idx + 1}. {serial}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => setScannedImportSerials(prev => prev.filter(s => s !== serial))}
+                                    className="text-[10px] text-red-600 hover:text-rose-600 font-sans cursor-pointer"
+                                  >
+                                    ❌
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -1564,6 +1954,40 @@ export default function ChargerSalesManager({
           </div>
         )}
       </AnimatePresence>
+
+      {/* Sale Camera Scanner overlay modal */}
+      {showScanner && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <QRSerialScanner
+            title="📷 Scan Sold Chargers"
+            type="charger"
+            existingSerials={scannedSerials}
+            allRegisteredSerials={allRegisteredChargerSerials}
+            onConfirm={(serials) => {
+              setScannedSerials(serials);
+              setShowScanner(false);
+            }}
+            onCancel={() => setShowScanner(false)}
+          />
+        </div>
+      )}
+
+      {/* Import Camera Scanner overlay modal */}
+      {showImportScanner && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <QRSerialScanner
+            title="📥 Scan Imported Chargers"
+            type="charger"
+            existingSerials={scannedImportSerials}
+            allRegisteredSerials={allRegisteredChargerSerials}
+            onConfirm={(serials) => {
+              setScannedImportSerials(serials);
+              setShowImportScanner(false);
+            }}
+            onCancel={() => setShowImportScanner(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }

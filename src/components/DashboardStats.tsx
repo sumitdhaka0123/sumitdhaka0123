@@ -16,6 +16,7 @@ interface DashboardStatsProps {
   onNavigateToAssembly: () => void;
   onNavigateToBatteries?: () => void;
   onNavigateToStock?: () => void;
+  onNavigateToSearch?: () => void;
 }
 
 export default function DashboardStats({ 
@@ -26,7 +27,8 @@ export default function DashboardStats({
   batteryImports = [], 
   onNavigateToAssembly,
   onNavigateToBatteries,
-  onNavigateToStock
+  onNavigateToStock,
+  onNavigateToSearch
 }: DashboardStatsProps) {
   // Modal toggle state
   const [activeDetailTab, setActiveDetailTab] = useState<'imported' | 'boxes' | 'ready' | 'states' | 'sold' | 'batteries' | 'held' | null>(null);
@@ -87,14 +89,46 @@ export default function DashboardStats({
   const activeScooterWarranty = scooterUnits.filter(u => u.scooterWarrantyStatus === 'Active').length;
   const activeBatteryWarranty = scooterUnits.filter(u => u.batteryWarrantyStatus === 'Active').length;
 
+  // Helper to map color names to HEX values for pretty dashboard UI
+  const getColorDotHex = (colorName: string): string => {
+    const norm = colorName.toLowerCase().trim();
+    if (norm.includes('red')) return '#ef4444';
+    if (norm.includes('blue')) return '#3b82f6';
+    if (norm.includes('green')) return '#10b981';
+    if (norm.includes('yellow')) return '#f59e0b';
+    if (norm.includes('black')) return '#1e293b';
+    if (norm.includes('white')) return '#cbd5e1'; // subtle light gray for white
+    if (norm.includes('gray') || norm.includes('grey')) return '#64748b';
+    if (norm.includes('orange')) return '#f97316';
+    if (norm.includes('purple')) return '#a855f7';
+    if (norm.includes('pink')) return '#ec4899';
+    if (norm.includes('silver') || norm.includes('chrome')) return '#94a3b8';
+    if (norm.includes('gold')) return '#fbbf24';
+    return '#64748b'; // default slate gray
+  };
+
   // Real-time stock levels per model & color (for available stock in warehouse)
   const stockLevels: { [model: string]: { [color: string]: number } } = {};
+
+  // Real-time detailed stock levels including Brake Type
+  const stockDetails: {
+    [model: string]: {
+      [color: string]: {
+        total: number;
+        Disk: number;
+        Drum: number;
+        unspecified: number;
+      }
+    }
+  } = {};
   
   // Initialize map
   products.forEach(p => {
     stockLevels[p.name] = {};
+    stockDetails[p.name] = {};
     p.colors.forEach(c => {
       stockLevels[p.name][c] = 0;
+      stockDetails[p.name][c] = { total: 0, Disk: 0, Drum: 0, unspecified: 0 };
     });
   });
 
@@ -108,6 +142,21 @@ export default function DashboardStats({
         stockLevels[unit.modelName][unit.color] = 0;
       }
       stockLevels[unit.modelName][unit.color] += 1;
+
+      if (!stockDetails[unit.modelName]) {
+        stockDetails[unit.modelName] = {};
+      }
+      if (!stockDetails[unit.modelName][unit.color]) {
+        stockDetails[unit.modelName][unit.color] = { total: 0, Disk: 0, Drum: 0, unspecified: 0 };
+      }
+      stockDetails[unit.modelName][unit.color].total += 1;
+      if (unit.brakeType === 'Disk') {
+        stockDetails[unit.modelName][unit.color].Disk += 1;
+      } else if (unit.brakeType === 'Drum') {
+        stockDetails[unit.modelName][unit.color].Drum += 1;
+      } else {
+        stockDetails[unit.modelName][unit.color].unspecified += 1;
+      }
     }
   });
 
@@ -349,23 +398,47 @@ export default function DashboardStats({
                       ></div>
                     </div>
 
-                    {/* Tiny color badge tags */}
-                    <div className="flex flex-wrap gap-1.5 mt-2.5">
+                    {/* Visual sub-breakdown per color and brake type */}
+                    <div className="mt-3 pl-2 border-l-2 border-slate-150 space-y-2">
                       {prod.colors.map((col, cIdx) => {
-                        const colorQty = stockLevels[prod.name]?.[col] || 0;
+                        const colDetail = stockDetails[prod.name]?.[col] || { total: 0, Disk: 0, Drum: 0, unspecified: 0 };
+                        if (colDetail.total === 0) return null; // Only show colors that actually have stock to keep it clean and uncluttered!
+                        
                         return (
-                          <span 
-                            key={cIdx} 
-                            className={`text-[9px] font-sans font-bold px-2.5 py-0.5 rounded-full border ${
-                              colorQty > 0 
-                                ? 'border-emerald-200 text-emerald-700 bg-emerald-50' 
-                                : 'border-slate-100 text-slate-400 bg-slate-50'
-                            }`}
-                          >
-                            {col}: {colorQty}
-                          </span>
+                          <div key={cIdx} className="flex flex-col sm:flex-row sm:items-center sm:justify-between text-[11px] text-slate-600 bg-slate-50/50 hover:bg-slate-50 px-3 py-2 rounded-xl border border-slate-100 transition-colors">
+                            <div className="flex items-center gap-1.5 font-semibold text-slate-700">
+                              <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getColorDotHex(col) }}></span>
+                              {col}
+                              <span className="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded-md font-bold font-mono text-[10px]">
+                                {colDetail.total} units
+                              </span>
+                            </div>
+                            
+                            {/* Brake Type Breakdown for this Color */}
+                            <div className="flex gap-2 mt-1 sm:mt-0">
+                              {colDetail.Disk > 0 && (
+                                <span className="bg-cyan-50/60 text-cyan-700 px-2 py-0.5 rounded-md font-medium border border-cyan-100/50 text-[10px]">
+                                  Disk: <strong className="font-bold">{colDetail.Disk}</strong>
+                                </span>
+                              )}
+                              {colDetail.Drum > 0 && (
+                                <span className="bg-indigo-50/60 text-indigo-700 px-2 py-0.5 rounded-md font-medium border border-indigo-100/50 text-[10px]">
+                                  Drum: <strong className="font-bold">{colDetail.Drum}</strong>
+                                </span>
+                              )}
+                              {colDetail.unspecified > 0 && (
+                                <span className="bg-slate-100/60 text-slate-600 px-2 py-0.5 rounded-md font-medium border border-slate-200/50 text-[10px]">
+                                  Unspecified: <strong className="font-bold">{colDetail.unspecified}</strong>
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         );
                       })}
+                      {/* If all colors are zero, show a subtle empty text */}
+                      {(!stockDetails[prod.name] || Object.values(stockDetails[prod.name]).every(d => d.total === 0)) && (
+                        <div className="text-[10px] text-slate-400 italic">No available stock in warehouse.</div>
+                      )}
                     </div>
                   </div>
                 );
@@ -663,13 +736,15 @@ export default function DashboardStats({
                   });
                 });
 
-                const filteredKits = boxesKitsList.filter(k => {
-                  const searchLower = modalSearch.toLowerCase();
-                  return (
-                    String(k.modelName || '').toLowerCase().includes(searchLower) ||
-                    String(k.color || '').toLowerCase().includes(searchLower)
-                  );
-                });
+                const filteredKits = boxesKitsList
+                  .filter(k => {
+                    const searchLower = modalSearch.toLowerCase();
+                    return (
+                      String(k.modelName || '').toLowerCase().includes(searchLower) ||
+                      String(k.color || '').toLowerCase().includes(searchLower)
+                    );
+                  })
+                  .sort((a, b) => b.remaining - a.remaining);
 
                 if (filteredKits.length === 0) {
                   return (

@@ -13,7 +13,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState<'admin' | 'manufacturer' | 'salesperson'>('manufacturer');
+  const [role, setRole] = useState<'admin' | 'manufacturer' | 'salesperson' | 'manager'>('manufacturer');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
@@ -53,8 +53,9 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   // Quick-login helper values
   const quickLogins = [
     { label: 'Manufacturer: Production Specialist', user: 'manufacturer', pass: 'manu123', color: 'border-emerald-200 text-emerald-800 bg-emerald-50 hover:bg-emerald-100/70' },
-    { label: 'Salesperson: Sales & POS Advisor', user: 'sales', pass: 'sales123', color: 'border-cyan-200 text-cyan-800 bg-cyan-50 hover:bg-cyan-100/70' },
-    { label: 'Admin: Warehouse Supervisor', user: 'admin', pass: 'admin123', color: 'border-amber-200 text-amber-800 bg-amber-50 hover:bg-amber-100/70' },
+    { label: 'Salesperson: Sales & POS Advisor', user: 'sales', pass: 'sales', color: 'border-cyan-200 text-cyan-800 bg-cyan-50 hover:bg-cyan-100/70' },
+    { label: 'Manager: Operations Manager', user: 'manager', pass: 'manager123', color: 'border-teal-200 text-teal-800 bg-teal-50 hover:bg-teal-100/70' },
+    { label: 'Admin: Warehouse Supervisor', user: 'admin', pass: 'admin', color: 'border-amber-200 text-amber-800 bg-amber-50 hover:bg-amber-100/70' },
   ];
 
   const handleQuickLogin = (user: string, pass: string) => {
@@ -240,11 +241,11 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
                 Assigned Role
               </label>
-              <div className="grid grid-cols-2 gap-2 mt-1">
+              <div className="grid grid-cols-3 gap-2 mt-1">
                 <button
                   type="button"
                   onClick={() => setRole('manufacturer')}
-                  className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
+                  className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
                     role === 'manufacturer'
                       ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
                       : 'border-slate-100 bg-slate-50 text-slate-400 hover:border-slate-200'
@@ -252,13 +253,13 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
                   id="reg-role-manufacturer"
                 >
                   <Battery className="h-4.5 w-4.5 mb-1 text-emerald-600" />
-                  <span className="font-bold text-[11px]">Manufacturer</span>
-                  <span className="text-[9px] opacity-80">Assembly Logging</span>
+                  <span className="font-bold text-[10px]">Manufacturer</span>
+                  <span className="text-[8px] opacity-85">Assemble</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setRole('salesperson')}
-                  className={`flex flex-col items-center justify-center p-3 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
+                  className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
                     role === 'salesperson'
                       ? 'border-cyan-500 bg-cyan-50 text-cyan-800'
                       : 'border-slate-100 bg-slate-50 text-slate-400 hover:border-slate-200'
@@ -266,8 +267,22 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
                   id="reg-role-salesperson"
                 >
                   <ShoppingCart className="h-4.5 w-4.5 mb-1 text-cyan-600" />
-                  <span className="font-bold text-[11px]">Salesperson</span>
-                  <span className="text-[9px] opacity-80">POS & Warranties</span>
+                  <span className="font-bold text-[10px]">Salesperson</span>
+                  <span className="text-[8px] opacity-85">POS / Sale</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRole('manager')}
+                  className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
+                    role === 'manager'
+                      ? 'border-teal-500 bg-teal-50 text-teal-800'
+                      : 'border-slate-100 bg-slate-50 text-slate-400 hover:border-slate-200'
+                  }`}
+                  id="reg-role-manager"
+                >
+                  <Shield className="h-4.5 w-4.5 mb-1 text-teal-600" />
+                  <span className="font-bold text-[10px]">Manager</span>
+                  <span className="text-[8px] opacity-85">Operations</span>
                 </button>
               </div>
             </div>
@@ -308,6 +323,68 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           </button>
         </div>
 
+        {/* Server Connection Configuration (especially for Capacitor Android) */}
+        <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col items-center">
+          {!showServerConfig ? (
+            <button
+              type="button"
+              onClick={() => setShowServerConfig(true)}
+              className="text-[10px] font-semibold text-slate-400 hover:text-slate-600 transition-all flex items-center gap-1.5"
+            >
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>Server: {serverUrl ? new URL(serverUrl).hostname : 'Default Cloud Server'}</span>
+              <span className="underline">(Change)</span>
+            </button>
+          ) : (
+            <div className="w-full bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                  API Server Connection
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowServerConfig(false);
+                    if (!tempServerUrl.trim()) {
+                      setTempServerUrl('https://ais-pre-ok3o3tltxmte4gbcr2v3di-403794027483.asia-east1.run.app');
+                    }
+                  }}
+                  className="text-[10px] font-bold text-rose-500 hover:underline"
+                >
+                  Close
+                </button>
+              </div>
+              <p className="text-[9px] text-slate-400 leading-normal">
+                When running as an Android App, it must connect to a remote server. Enter your server's IP address or Domain.
+              </p>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  placeholder="https://your-server-address.com"
+                  value={tempServerUrl}
+                  onChange={(e) => setTempServerUrl(e.target.value)}
+                  className="flex-1 bg-white border border-slate-200 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20 rounded-xl px-2.5 py-1.5 text-xs text-slate-800 font-mono outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveServerUrl}
+                  className="bg-slate-900 text-white font-sans font-bold text-xs px-3 py-1.5 rounded-xl hover:bg-slate-800 transition-all cursor-pointer"
+                >
+                  Save
+                </button>
+              </div>
+              <div className="flex gap-1.5 justify-end">
+                <button
+                  type="button"
+                  onClick={handleResetServerUrl}
+                  className="text-[9px] font-semibold text-slate-400 hover:text-slate-600 transition-all"
+                >
+                  Reset to Default
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </motion.div>
     </div>
   );

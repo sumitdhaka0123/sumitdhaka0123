@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Battery, Plus, Sparkles, User, Calendar, ClipboardList, CheckCircle2, 
   AlertCircle, Search, ShieldAlert, Ban, Timer, Check, Info, ShieldCheck, RefreshCw, X, Trash2
 } from 'lucide-react';
 import { Buyer, BatterySale, BatteryImport, ScooterUnit } from '../types';
+import QRSerialScanner from './QRSerialScanner';
 
 interface BatterySalesManagerProps {
   buyers: Buyer[];
@@ -24,10 +25,19 @@ interface BatterySalesManagerProps {
     warrantyDurationMonths?: number;
     status?: 'sold' | 'hold';
     heldFor?: string;
+    serialNumbers?: string[];
   }) => Promise<boolean>;
   batterySeriesList: string[];
   isPipelineView?: boolean;
   hideForm?: boolean;
+  onAddBuyer?: (
+    name: string,
+    contact?: string,
+    address?: string,
+    gstNo?: string,
+    addressProof?: string,
+    buyerType?: 'retail' | 'wholesale'
+  ) => Promise<boolean>;
 }
 
 export default function BatterySalesManager({
@@ -40,19 +50,71 @@ export default function BatterySalesManager({
   onSubmitBatterySale,
   batterySeriesList = [],
   isPipelineView = false,
-  hideForm = false
+  hideForm = false,
+  onAddBuyer
 }: BatterySalesManagerProps) {
   const [buyerName, setBuyerName] = useState('');
+  const [buyerContact, setBuyerContact] = useState('');
+  const [buyerAddress, setBuyerAddress] = useState('');
   const [batterySeries, setBatterySeries] = useState(batterySeriesList[0] || 'Alpha Series');
   const [customSeries, setCustomSeries] = useState('');
   const [startNo, setStartNo] = useState('');
   const [endNo, setEndNo] = useState('');
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
+
+  // Auto-populate contact and address info when standard buyer is selected
+  useEffect(() => {
+    const trimmed = buyerName.trim();
+    if (!trimmed) {
+      setBuyerContact('');
+      setBuyerAddress('');
+      return;
+    }
+    const selectedBuyer = buyers.find(b => b.name.toLowerCase() === trimmed.toLowerCase());
+    if (selectedBuyer) {
+      setBuyerContact(selectedBuyer.contact || '');
+      setBuyerAddress(selectedBuyer.address || '');
+    }
+  }, [buyerName, buyers]);
   
   // Warranty Questions Flow State
   const [isUnderWarranty, setIsUnderWarranty] = useState<boolean | null>(true);
   const [warrantyDuration, setWarrantyDuration] = useState<number | null>(12);
+
+  // Scanning Integration States
+  const [inputMethod, setInputMethod] = useState<'range' | 'scan'>('range');
+  const [showScanner, setShowScanner] = useState(false);
+  const [scannedSerials, setScannedSerials] = useState<string[]>([]);
+  const [directManualSerial, setDirectManualSerial] = useState('');
+  const [directManualError, setDirectManualError] = useState<string | null>(null);
+
+  // Collect all registered battery serial numbers to prevent duplicates
+  const allRegisteredBatterySerials = useMemo(() => {
+    const list: string[] = [];
+    if (batteryImports && Array.isArray(batteryImports)) {
+      batteryImports.forEach(imp => {
+        if (imp.serialNumbers) {
+          list.push(...imp.serialNumbers);
+        }
+      });
+    }
+    if (scooterUnits && Array.isArray(scooterUnits)) {
+      scooterUnits.forEach(unit => {
+        if (unit.batterySerials) {
+          list.push(...unit.batterySerials);
+        }
+      });
+    }
+    if (batterySales && Array.isArray(batterySales)) {
+      batterySales.forEach(sale => {
+        if (sale.serialNumbers) {
+          list.push(...sale.serialNumbers);
+        }
+      });
+    }
+    return list;
+  }, [batteryImports, scooterUnits, batterySales]);
 
   // Submit and loading states
   const [submitMode, setSubmitMode] = useState<'sold' | 'hold'>('sold');
@@ -159,6 +221,27 @@ export default function BatterySalesManager({
 
     return map;
   }, [batteryImports, batterySales, scooterUnits]);
+
+  // Handle direct manual entry of serial numbers in the main form
+  const handleAddDirectManualSerial = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setDirectManualError(null);
+    const cleanSerial = directManualSerial.trim().toUpperCase();
+    if (!cleanSerial) return;
+
+    if (scannedSerials.includes(cleanSerial)) {
+      setDirectManualError(`Duplicate: "${cleanSerial}" is already in your current list!`);
+      return;
+    }
+
+    if (allRegisteredBatterySerials.map(s => s.trim().toUpperCase()).includes(cleanSerial)) {
+      setDirectManualError(`System Error: "${cleanSerial}" is already registered in the warehouse database!`);
+      return;
+    }
+
+    setScannedSerials(prev => [...prev, cleanSerial]);
+    setDirectManualSerial('');
+  };
 
   // Auto-calculate quantity helper when start/end numbers are updated
   const handleStartOrEndChange = (type: 'start' | 'end', value: string) => {
@@ -269,29 +352,39 @@ export default function BatterySalesManager({
         setStatus({ type: 'error', text: 'Please select the warranty duration (12 or 13 months).' });
         return;
       }
-      if (!startNo.trim() || !endNo.trim()) {
-        setStatus({ type: 'error', text: 'Starting and ending series numbers are required for under-warranty batteries.' });
-        return;
-      }
-      finalStartNo = startNo.trim().toUpperCase();
-      finalEndNo = endNo.trim().toUpperCase();
-
-      // Recalculate quantity to enforce
-      const startMatch = finalStartNo.match(/\d+$/);
-      const endMatch = finalEndNo.match(/\d+$/);
-      if (startMatch && endMatch) {
-        const sNum = parseInt(startMatch[0], 10);
-        const eNum = parseInt(endMatch[0], 10);
-        if (eNum >= sNum) {
-          const calculatedQty = eNum - sNum + 1;
-          qtyNum = calculatedQty;
-        } else {
-          setStatus({ type: 'error', text: 'Ending series number must be greater than or equal to starting series number.' });
+      if (inputMethod === 'scan') {
+        if (scannedSerials.length === 0) {
+          setStatus({ type: 'error', text: 'Please scan or register at least one battery serial number.' });
           return;
         }
+        qtyNum = scannedSerials.length;
+        finalStartNo = scannedSerials[0];
+        finalEndNo = scannedSerials[scannedSerials.length - 1];
       } else {
-        setStatus({ type: 'error', text: 'Invalid serial formats. Series numbers must end with numeric values (e.g. AL-1001).' });
-        return;
+        if (!startNo.trim() || !endNo.trim()) {
+          setStatus({ type: 'error', text: 'Starting and ending series numbers are required for under-warranty batteries.' });
+          return;
+        }
+        finalStartNo = startNo.trim().toUpperCase();
+        finalEndNo = endNo.trim().toUpperCase();
+
+        // Recalculate quantity to enforce
+        const startMatch = finalStartNo.match(/\d+$/);
+        const endMatch = finalEndNo.match(/\d+$/);
+        if (startMatch && endMatch) {
+          const sNum = parseInt(startMatch[0], 10);
+          const eNum = parseInt(endMatch[0], 10);
+          if (eNum >= sNum) {
+            const calculatedQty = eNum - sNum + 1;
+            qtyNum = calculatedQty;
+          } else {
+            setStatus({ type: 'error', text: 'Ending series number must be greater than or equal to starting series number.' });
+            return;
+          }
+        } else {
+          setStatus({ type: 'error', text: 'Invalid serial formats. Series numbers must end with numeric values (e.g. AL-1001).' });
+          return;
+        }
       }
     } else {
       // Not under warranty - just validate quantity input
@@ -319,6 +412,16 @@ export default function BatterySalesManager({
     }
 
     setSaving(true);
+    
+    // Auto-register new buyer if they are not in the database
+    const finalBuyerName = buyerName.trim();
+    if (finalBuyerName) {
+      const buyerExists = buyers.some(b => b.name.toLowerCase() === finalBuyerName.toLowerCase());
+      if (!buyerExists && onAddBuyer) {
+        await onAddBuyer(finalBuyerName, buyerContact.trim() || undefined, buyerAddress.trim() || undefined, undefined, undefined, 'retail');
+      }
+    }
+
     const success = await onSubmitBatterySale({
       buyerName,
       batterySeries: finalSeries,
@@ -329,7 +432,8 @@ export default function BatterySalesManager({
       isUnderWarranty: !!isUnderWarranty,
       warrantyDurationMonths: isUnderWarranty ? Number(warrantyDuration) : undefined,
       status: submitMode,
-      heldFor: submitMode === 'hold' ? buyerName : undefined
+      heldFor: submitMode === 'hold' ? buyerName : undefined,
+      serialNumbers: inputMethod === 'scan' ? scannedSerials : undefined
     });
     setSaving(false);
 
@@ -337,6 +441,8 @@ export default function BatterySalesManager({
       const modeLabel = submitMode === 'hold' ? 'reserved (on hold)' : 'dispatched';
       setStatus({ type: 'success', text: `Successfully registered battery ${modeLabel} of ${qtyNum} units to ${buyerName}!` });
       setBuyerName('');
+      setBuyerContact('');
+      setBuyerAddress('');
       setStartNo('');
       setEndNo('');
       setQuantity('');
@@ -344,6 +450,7 @@ export default function BatterySalesManager({
       setCustomSeries('');
       setIsUnderWarranty(null);
       setWarrantyDuration(null);
+      setScannedSerials([]);
       onRefresh();
     } else {
       setStatus({ type: 'error', text: 'Failed to save the battery transaction. Try again.' });
@@ -556,7 +663,7 @@ export default function BatterySalesManager({
                         : 'bg-white border-emerald-200 text-slate-700 hover:bg-emerald-50'
                     }`}
                   >
-                    12 Months
+                    6+6 Months
                   </button>
                   <button
                     type="button"
@@ -567,50 +674,122 @@ export default function BatterySalesManager({
                         : 'bg-white border-emerald-200 text-slate-700 hover:bg-emerald-50'
                     }`}
                   >
-                    13 Months
+                    12+1 Months
                   </button>
                 </div>
               </motion.div>
             )}
 
-            {/* 3. Under Warranty with Duration selected: Show Series Start & End Range */}
+            {/* 3. Under Warranty with Duration selected: Choose Input Method (Range or Scan QR) */}
             {isUnderWarranty === true && warrantyDuration !== null && (
               <motion.div
                 initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="grid grid-cols-2 gap-3 bg-slate-50 border border-slate-200 p-4 rounded-2xl"
+                className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-3"
               >
-                <div className="col-span-2">
-                  <span className="block text-[10px] font-bold text-emerald-800 uppercase tracking-wide mb-1 font-sans">
-                    Specify Battery Serial Series Numbers:
+                <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                  <span className="block text-[10px] font-bold text-emerald-800 uppercase tracking-wide font-sans">
+                    Serial Input Method:
                   </span>
+                  <div className="flex bg-slate-200/60 p-0.5 rounded-lg">
+                    <button
+                      type="button"
+                      onClick={() => setInputMethod('range')}
+                      className={`px-3 py-1 text-[10px] font-bold rounded-md transition ${
+                        inputMethod === 'range' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      🔢 Range Series
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setInputMethod('scan')}
+                      className={`px-3 py-1 text-[10px] font-bold rounded-md transition flex items-center gap-1 ${
+                        inputMethod === 'scan' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                      }`}
+                    >
+                      📷 Scan QR/Codes
+                    </button>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                    Start No. Series
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. AL-1001"
-                    value={startNo}
-                    onChange={(e) => handleStartOrEndChange('start', e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none uppercase focus:border-emerald-500"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                    End No. Series
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. AL-1100"
-                    value={endNo}
-                    onChange={(e) => handleStartOrEndChange('end', e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none uppercase focus:border-emerald-500"
-                    required
-                  />
-                </div>
+
+                {inputMethod === 'range' ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                        Start No. Series
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. AL-1001"
+                        value={startNo}
+                        onChange={(e) => handleStartOrEndChange('start', e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none uppercase focus:border-emerald-500"
+                        required={inputMethod === 'range'}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                        End No. Series
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. AL-1100"
+                        value={endNo}
+                        onChange={(e) => handleStartOrEndChange('end', e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none uppercase focus:border-emerald-500"
+                        required={inputMethod === 'range'}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                      <div>
+                        <h4 className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
+                          <span>📊</span> Scanned Serials Count
+                        </h4>
+                        <p className="text-[10px] text-slate-400 mt-0.5">
+                          Each pack requires a unique scanned serial/QR code.
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xl font-black font-mono text-emerald-600 block leading-none">
+                          {scannedSerials.length}
+                        </span>
+                        <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">Packs Registered</span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setShowScanner(true)}
+                      className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-sans font-bold text-xs rounded-xl transition flex items-center justify-center gap-2"
+                    >
+                      📷 Launch Camera QR Scanner
+                    </button>
+
+                    {scannedSerials.length > 0 && (
+                      <div className="bg-white border border-slate-200 p-2.5 rounded-xl space-y-1">
+                        <span className="block text-[9px] font-extrabold text-slate-400 uppercase tracking-wider">Registered Scans (Click ❌ to remove):</span>
+                        <div className="flex flex-wrap gap-1 max-h-[100px] overflow-y-auto pr-1">
+                          {scannedSerials.map((serial, idx) => (
+                            <span key={serial} className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-800 text-[9px] font-mono font-bold px-2 py-0.5 rounded-full border border-emerald-200">
+                              <span>{idx + 1}. {serial}</span>
+                              <button
+                                type="button"
+                                onClick={() => setScannedSerials(prev => prev.filter(s => s !== serial))}
+                                className="text-[10px] text-emerald-600 hover:text-rose-600 font-sans cursor-pointer"
+                              >
+                                ❌
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </motion.div>
             )}
 
@@ -911,7 +1090,7 @@ export default function BatterySalesManager({
                           : 'bg-white border-emerald-200 text-slate-700 hover:bg-emerald-50'
                       }`}
                     >
-                      12 Months
+                      6+6 Months
                     </button>
                     <button
                       type="button"
@@ -922,50 +1101,176 @@ export default function BatterySalesManager({
                           : 'bg-white border-emerald-200 text-slate-700 hover:bg-emerald-50'
                       }`}
                     >
-                      13 Months
+                      12+1 Months
                     </button>
                   </div>
                 </motion.div>
               )}
 
-              {/* 3. Under Warranty with Duration selected: Show Series Start & End Range */}
+              {/* 3. Under Warranty with Duration selected: Choose Input Method (Range or Scan QR) */}
               {isUnderWarranty === true && warrantyDuration !== null && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className="grid grid-cols-2 gap-3 bg-slate-50 border border-slate-200 p-4 rounded-2xl"
+                  className="bg-slate-50 border border-slate-200 p-4 rounded-2xl space-y-3"
                 >
-                  <div className="col-span-2">
-                    <span className="block text-[10px] font-bold text-emerald-800 uppercase tracking-wide mb-1 font-sans">
-                      Specify Battery Serial Series Numbers:
+                  <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                    <span className="block text-[10px] font-bold text-emerald-800 uppercase tracking-wide font-sans">
+                      Serial Input Method:
                     </span>
+                    <div className="flex bg-slate-200/60 p-0.5 rounded-lg">
+                      <button
+                        type="button"
+                        onClick={() => setInputMethod('range')}
+                        className={`px-3 py-1 text-[10px] font-bold rounded-md transition cursor-pointer ${
+                          inputMethod === 'range' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        🔢 Range Series
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInputMethod('scan')}
+                        className={`px-3 py-1 text-[10px] font-bold rounded-md transition flex items-center gap-1 cursor-pointer ${
+                          inputMethod === 'scan' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                        }`}
+                      >
+                        📷 Scan QR/Codes
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                      Start No. Series
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. AL-1001"
-                      value={startNo}
-                      onChange={(e) => handleStartOrEndChange('start', e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none uppercase focus:border-emerald-500"
-                      required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                      End No. Series
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. AL-1100"
-                      value={endNo}
-                      onChange={(e) => handleStartOrEndChange('end', e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none uppercase focus:border-emerald-500"
-                      required
-                    />
-                  </div>
+
+                  {inputMethod === 'range' ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                          Start No. Series
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. AL-1001"
+                          value={startNo}
+                          onChange={(e) => handleStartOrEndChange('start', e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none uppercase focus:border-emerald-500"
+                          required={inputMethod === 'range'}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                          End No. Series
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. AL-1100"
+                          value={endNo}
+                          onChange={(e) => handleStartOrEndChange('end', e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none uppercase focus:border-emerald-500"
+                          required={inputMethod === 'range'}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                        <div>
+                          <h4 className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5 font-sans">
+                            <span>📊</span> Scanned Serials
+                          </h4>
+                          <p className="text-[10px] text-slate-400 mt-0.5 font-sans">
+                            Each battery requires a unique scanned serial or QR.
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xl font-black font-mono text-emerald-600 block leading-none">
+                            {scannedSerials.length}
+                          </span>
+                          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-sans">Total Packs</span>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowScanner(true)}
+                          className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-sans font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
+                        >
+                          📷 Launch Camera QR Scanner
+                        </button>
+
+                        <div className="border border-slate-200 rounded-xl p-3 bg-white space-y-2">
+                          <label className="block text-[10px] font-extrabold text-slate-500 uppercase tracking-wider font-sans">
+                            ✍️ Enter Serial Manually
+                          </label>
+                          <div className="flex gap-1.5">
+                            <input
+                              type="text"
+                              value={directManualSerial}
+                              onChange={(e) => {
+                                setDirectManualSerial(e.target.value);
+                                setDirectManualError(null);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault();
+                                  handleAddDirectManualSerial();
+                                }
+                              }}
+                              placeholder="Type serial number and click Add"
+                              className="flex-1 text-xs px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:ring-1 focus:ring-emerald-500 font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleAddDirectManualSerial()}
+                              className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs px-4 py-2 rounded-xl font-extrabold font-sans cursor-pointer transition-colors"
+                            >
+                              ➕ Add
+                            </button>
+                          </div>
+                          {directManualError && (
+                            <p className="text-[10px] text-rose-600 font-bold font-sans mt-1">
+                              ⚠️ {directManualError}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {scannedSerials.length > 0 && (
+                        <div className="bg-white border border-slate-200 p-3 rounded-xl space-y-2">
+                          <span className="block text-[10px] font-extrabold text-slate-500 uppercase tracking-wider font-sans">
+                            Scanned Serial List (Click ❌ to remove):
+                          </span>
+                          <div className="space-y-1 max-h-[140px] overflow-y-auto pr-1">
+                            {scannedSerials.map((serial, idx) => (
+                              <div 
+                                key={serial} 
+                                className="flex justify-between items-center bg-slate-50 px-2.5 py-1.5 rounded-lg border border-slate-100 text-[11px] font-mono"
+                              >
+                                <span className="text-slate-800 font-semibold">
+                                  {idx + 1}. {serial}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => setScannedSerials(prev => prev.filter(s => s !== serial))}
+                                  className="text-[11px] text-rose-500 hover:text-rose-700 font-sans cursor-pointer p-0.5"
+                                  title="Remove serial"
+                                >
+                                  ❌
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="pt-2 border-t border-slate-100 flex justify-between items-center">
+                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider font-sans">
+                              Grand Total scanned
+                            </span>
+                            <span className="text-xs font-black font-mono text-slate-800 bg-slate-100 px-2.5 py-1 rounded-md">
+                              {scannedSerials.length} PACK(S)
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </motion.div>
               )}
 
@@ -979,19 +1284,64 @@ export default function BatterySalesManager({
                   {/* Buyer Select */}
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                      Wholesale Buyer
+                      Wholesale Buyer Name *
                     </label>
-                    <select
+                    <input
+                      type="text"
+                      placeholder="Enter or select buyer name"
+                      list="battery-buyers-autocomplete"
                       value={buyerName}
                       onChange={(e) => setBuyerName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans cursor-pointer"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans font-semibold"
                       required
-                    >
-                      <option value="">-- Choose Buyer --</option>
+                    />
+                    <datalist id="battery-buyers-autocomplete">
                       {buyers.map(b => (
-                        <option key={b.id} value={b.name}>{b.name}</option>
+                        <option key={b.id} value={b.name} />
                       ))}
-                    </select>
+                    </datalist>
+                    {buyerName.trim() !== '' && (
+                      (() => {
+                        const exists = buyers.some(b => b.name.toLowerCase() === buyerName.trim().toLowerCase());
+                        return exists ? (
+                          <div className="mt-1 flex items-center gap-1 text-[10px] text-emerald-600 font-bold font-sans">
+                            <span>✅ Registered Buyer: auto-filling contact & address/location</span>
+                          </div>
+                        ) : (
+                          <div className="mt-1 flex items-center gap-1 text-[10px] text-amber-600 font-bold font-sans">
+                            <span>✨ New Buyer! Will auto-register to database with address</span>
+                          </div>
+                        );
+                      })()
+                    )}
+                  </div>
+
+                  {/* Buyer Contact & Address inputs */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                        Contact Number / Email
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="+91 or email..."
+                        value={buyerContact}
+                        onChange={(e) => setBuyerContact(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                        Physical Address / Location (Important) 📍
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Complete delivery address"
+                        value={buyerAddress}
+                        onChange={(e) => setBuyerAddress(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans"
+                      />
+                    </div>
                   </div>
 
                   {/* Battery Series */}
@@ -1787,10 +2137,28 @@ export default function BatterySalesManager({
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3">
                   <h5 className="text-[10px] font-black uppercase tracking-wider text-slate-500 flex items-center justify-between">
                     <span>🔋 Sequenced Battery Pack Serials</span>
-                    <span className="text-slate-400 text-[9px] font-bold">Generated from Series Range</span>
+                    <span className="text-slate-400 text-[9px] font-bold">
+                      {selectedDetailSale.serialNumbers && selectedDetailSale.serialNumbers.length > 0 
+                        ? 'Scanned QR Codes' 
+                        : 'Generated from Series Range'}
+                    </span>
                   </h5>
                   
-                  {(!selectedDetailSale.startNo || selectedDetailSale.startNo === 'N/A') ? (
+                  {selectedDetailSale.serialNumbers && selectedDetailSale.serialNumbers.length > 0 ? (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[160px] overflow-y-auto pr-1">
+                      {selectedDetailSale.serialNumbers.map((serial, idx) => (
+                        <div key={idx} className="bg-white px-2.5 py-1.5 rounded-xl border border-emerald-200 bg-emerald-50/10 flex items-center justify-between text-[11px]">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-emerald-600 text-[9px] bg-emerald-100 h-4.5 w-4.5 flex items-center justify-center rounded-full">
+                              {idx + 1}
+                            </span>
+                            <span className="font-mono font-bold text-slate-800 select-all">{serial}</span>
+                          </div>
+                          <span className="text-[9px] text-emerald-600 font-bold uppercase tracking-wider px-1 bg-emerald-100/50 rounded text-center">QR</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (!selectedDetailSale.startNo || selectedDetailSale.startNo === 'N/A') ? (
                     <p className="text-xs text-slate-400 font-medium py-1">No serialized ranges defined for this bulk shipment.</p>
                   ) : (
                     (() => {
@@ -2061,6 +2429,22 @@ export default function BatterySalesManager({
           </div>
         )}
       </AnimatePresence>
+
+      {showScanner && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <QRSerialScanner
+            title="Scan Under-Warranty Lithium Batteries"
+            type="battery"
+            existingSerials={scannedSerials}
+            allRegisteredSerials={allRegisteredBatterySerials}
+            onConfirm={(serials) => {
+              setScannedSerials(serials);
+              setShowScanner(false);
+            }}
+            onCancel={() => setShowScanner(false)}
+          />
+        </div>
+      )}
     </div>
   );
 }

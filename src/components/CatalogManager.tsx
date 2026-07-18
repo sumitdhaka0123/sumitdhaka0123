@@ -11,6 +11,7 @@ interface CatalogManagerProps {
   buyers: Buyer[];
   onRefresh: () => void;
   onAddProduct: (name: string, colors: string[]) => Promise<boolean>;
+  onBulkSeedProducts?: (mode: 'replace' | 'append') => Promise<boolean>;
   onAddBuyer: (name: string, contact?: string) => Promise<boolean>;
   onUpdateProduct?: (id: string, name: string, colors: string[]) => Promise<boolean>;
   onUpdateBuyer?: (id: string, name: string, contact?: string) => Promise<boolean>;
@@ -27,6 +28,7 @@ export default function CatalogManager({
   buyers, 
   onRefresh, 
   onAddProduct, 
+  onBulkSeedProducts,
   onAddBuyer,
   onUpdateProduct,
   onUpdateBuyer,
@@ -43,6 +45,7 @@ export default function CatalogManager({
   const [prodError, setProdError] = useState('');
   const [prodSuccess, setProdSuccess] = useState('');
   const [prodLoading, setProdLoading] = useState(false);
+  const [seedingLoading, setSeedingLoading] = useState(false);
 
   // New Buyer State
   const [buyerName, setBuyerName] = useState('');
@@ -159,6 +162,32 @@ export default function CatalogManager({
       setProdError('Model name already exists or is invalid.');
     }
     setProdLoading(false);
+  };
+
+  const handleBulkSeedClick = async (mode: 'replace' | 'append') => {
+    if (!onBulkSeedProducts) return;
+    setProdError('');
+    setProdSuccess('');
+    
+    const confirmMessage = mode === 'replace'
+      ? 'This will clear out the default template models (Volt S-1, etc.) and replace them with the 43 official Senzo models from your spreadsheet. Are you sure?'
+      : 'This will add the 43 official Senzo models from your spreadsheet alongside your existing models. Are you sure?';
+
+    askConfirm(
+      'Import Official Senzo Catalog',
+      confirmMessage,
+      async () => {
+        setSeedingLoading(true);
+        const ok = await onBulkSeedProducts(mode);
+        if (ok) {
+          setProdSuccess(`Successfully imported the 43 official Senzo models from the spreadsheet!`);
+          onRefresh();
+        } else {
+          setProdError('Failed to import the Senzo catalog. Please try again.');
+        }
+        setSeedingLoading(false);
+      }
+    );
   };
 
   const handleCreateBuyer = async (e: React.FormEvent) => {
@@ -363,6 +392,7 @@ export default function CatalogManager({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* 1. Scooty Models Management Column */}
         <div className="space-y-6" id="product-models-panel">
+
           <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm" id="add-product-card">
             <div className="flex items-center gap-2 mb-4">
               <Tag className="h-5 w-5 text-cyan-500" />

@@ -2,33 +2,34 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
-import { DBState, User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport } from './src/types';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { DBState, User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim, AuditLog } from './src/types';
 import { z } from 'zod';
-import cors from 'cors';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection, writeBatch } from 'firebase/firestore';
 
 const app = express();
-app.use(cors());
-const PORT = process.env.PORT || 3000;
+const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), 'warehouse_db.json');
 
-// Initialize Firebase using the configuration file
+// Initialize Firebase using the config file
+// On Render (production), always initialize. Locally, only init if config file exists.
+const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
 let firebaseApp: any = null;
 let firebaseDb: any = null;
-try {
-  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
-  // ONLY connect to Firebase if running on the live Render server
-  if (fs.existsSync(configPath) && process.env.RENDER === 'true') {
-    const firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    firebaseApp = initializeApp(firebaseConfig);
+
+const shouldInitFirebase = process.env.RENDER === 'true' || fs.existsSync(firebaseConfigPath);
+
+if (shouldInitFirebase && fs.existsSync(firebaseConfigPath)) {
+  try {
+    const config = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
+    firebaseApp = initializeApp(config);
     firebaseDb = getFirestore(firebaseApp);
-    console.log('Firebase initialized successfully with project ID:', firebaseConfig.projectId);
-  } else {
-    console.warn('Firebase configuration file not found at:', configPath);
+    console.log('Firebase App and Firestore successfully initialized!');
+  } catch (err) {
+    console.error('Error initializing Firebase in server.ts:', err);
   }
-} catch (error) {
-  console.error('Error initializing Firebase in server:', error);
+} else {
+  console.log('No firebase-applet-config.json found. Running in local/offline mode.');
 }
 
 let globalDBState: DBState | null = null;
@@ -36,21 +37,10 @@ let globalDBState: DBState | null = null;
 
 app.use(express.json());
 
-// Helper to write to Google Sheets Webhook asynchronously
+// Helper to write to Google Sheets Webhook asynchronously (Disabled per user request)
 async function postToGoogleSheets(webhookUrl: string, payload: any) {
-  try {
-    const response = await fetch(webhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    return response.ok;
-  } catch (error) {
-    console.error('Error syncing to Google Sheets:', error);
-    return false;
-  }
+  console.log('Sync to Google Sheets has been intentionally disabled per user request.');
+  return true;
 }
 
 const PRODUCT_MAPPING = {
@@ -469,7 +459,52 @@ function getSummaryData(db: DBState) {
 }
 
 // Initial Database Seeding
-const DEFAULT_PRODUCTS: Product[] = [];
+const DEFAULT_PRODUCTS: Product[] = [
+  { id: "prod-senzo-0", name: "SENZO ESSENATIAL W/O DISK", colors: ["WHITE", "BLACK", "GREY", "RED", "COFFIE", "C-GREEN", "SHINE BLUE", "BLUE"] },
+  { id: "prod-senzo-1", name: "SENZO CKD", colors: ["ANY OTHER"] },
+  { id: "prod-senzo-2", name: "SENZO ESSENATIAL DISC", colors: ["Red", "Black", "WHITE", "GREY", "BLUE", "C-GREEN", "SHINE BLUE", "MEHROON", "YELLOW", "GOLDEN", "COFFIE"] },
+  { id: "prod-senzo-3", name: "SENZO LODER", colors: ["BLACK"] },
+  { id: "prod-senzo-4", name: "SENZO ESSENATIAL DISC 12\"/10\"", colors: ["Red", "Black", "WHITE", "GREY", "BLUE", "C-GREEN", "SILVER", "SHINE BLUE", "MEHROON", "SKY BLUE", "COFFIE"] },
+  { id: "prod-senzo-5", name: "CITY XL 10\"/10\"", colors: ["BLACK", "RED", "C-GREEN", "GOLDEN", "WHITE", "BLUE", "GREY"] },
+  { id: "prod-senzo-6", name: "UNCOMPLET", colors: ["WHITE", "RED", "SILVER"] },
+  { id: "prod-senzo-7", name: "CITY XL 12\"/10\"", colors: ["BLACK", "WHITE", "C-GREEN", "RED", "BLUE", "COFFIE", "GREY"] },
+  { id: "prod-senzo-8", name: "SENZO CITY R.L 10\"/10\"", colors: ["BLACK", "WHITE", "RED", "GREY", "BLUE"] },
+  { id: "prod-senzo-9", name: "SENZO CITY RL 10\"/10\" UNCOMPLET", colors: ["RED", "WHITE"] },
+  { id: "prod-senzo-10", name: "SENZO CITY R.L 12\"/10\"", colors: ["BLACK", "WHITE", "C-GREEN", "GREY", "COFFIE", "RED"] },
+  { id: "prod-senzo-11", name: "SENZO CITY S.Q 10\"/10\"", colors: ["BLACK", "WHITE", "SILVER", "GREY"] },
+  { id: "prod-senzo-12", name: "SENZO POWER 12\"/12\"", colors: ["WHITE", "BLACK", "BLUE", "GREY", "C-GREEN", "RED", "GOLDEN"] },
+  { id: "prod-senzo-13", name: "SENZO POWER 12\"/10\"", colors: ["BLACK", "WHITE"] },
+  { id: "prod-senzo-14", name: "SENZO POWER PLUS okinawa", colors: ["WHITE", "GREY", "C-GREEN", "Red", "BLUE", "BLACK"] },
+  { id: "prod-senzo-15", name: "SENZO POWER Plus NEO", colors: ["WHITE", "BLACK", "BLUE", "C-GREEN", "GREY", "RED", "GOLDEN"] },
+  { id: "prod-senzo-16", name: "SENZO CITY PLUS U LIGHT", colors: ["BLACK", "WHITE", "GREY", "RED", "BLUE"] },
+  { id: "prod-senzo-17", name: "SENZO CITY PLUS NEO JALI", colors: ["BLACK", "WHITE", "BLUE", "GREY", "RED"] },
+  { id: "prod-senzo-18", name: "SENZO CITY S.Q 10\"/10\" NEW", colors: ["BLACK", "WHITE", "RED", "GREY"] },
+  { id: "prod-senzo-19", name: "SENZO ESSENATIAL DISC 3W", colors: ["BLACK", "WHITE", "C-GREEN", "GREY"] },
+  { id: "prod-senzo-20", name: "SENZO CITY XL 3W", colors: ["RED"] },
+  { id: "prod-senzo-21", name: "SENZO POWER +NEO (STAR LIGHT)", colors: ["GREY", "BLACK", "WHITE", "C-GREEN"] },
+  { id: "prod-senzo-22", name: "SENZO POWER (HYBRID)", colors: ["GREY", "BLACK", "WHITE", "RED", "C-GREEN"] },
+  { id: "prod-senzo-23", name: "SENZO POWER+XL", colors: ["GREY", "BLACK", "WHITE", "GOLDEN"] },
+  { id: "prod-senzo-24", name: "ARCHAR", colors: ["RED", "BLUE", "GREY", "WHITE"] },
+  { id: "prod-senzo-25", name: "OLD SCOOTY", colors: ["YELLOW", "MIX"] },
+  { id: "prod-senzo-26", name: "SENZO POWER 10/10", colors: ["BLACK", "WHITE", "GREY"] },
+  { id: "prod-senzo-27", name: "SENZO CITY + KGF", colors: ["BLACK", "WHITE", "RED", "GREY"] },
+  { id: "prod-senzo-28", name: "SENZO CITY PLUS PRO", colors: ["BLACK", "WHITE", "C-GREEN", "GREY"] },
+  { id: "prod-senzo-29", name: "SENZO LODER TWO WHEELS", colors: ["BLACK"] },
+  { id: "prod-senzo-30", name: "SENZO LODER THREE WHEELS", colors: ["BLACK"] },
+  { id: "prod-senzo-31", name: "SENZO CITY MAGIC (OLA)", colors: ["BLACK", "WHITE", "RED", "BLUE", "C-GREEN", "GREY"] },
+  { id: "prod-senzo-32", name: "SENZO CITY PLUS PRO BMW", colors: ["BLACK", "WHITE", "BLUE", "RED", "GREY"] },
+  { id: "prod-senzo-33", name: "SENZO CITY RL SWIFT", colors: ["BLACK", "WHITE", "GREY", "C-GREEN", "BLUE"] },
+  { id: "prod-senzo-34", name: "SENZO POWER PLUS PRO", colors: ["BLACK", "WHITE", "GREY", "C-GREEN", "BLUE"] },
+  { id: "prod-senzo-35", name: "SENZO CITY XL PRO 12/12", colors: ["BLACK", "WHITE", "GREY", "RED", "C-GREEN", "BLUE"] },
+  { id: "prod-senzo-36", name: "SENZO POWER TURBO (E4)", colors: ["BLACK", "WHITE", "GREY", "RED", "C-GREEN", "BLUE"] },
+  { id: "prod-senzo-37", name: "SENZO SENZO ESSENATIAL DISC 12\"/10\" CKD", colors: ["ANY OTHER"] },
+  { id: "prod-senzo-38", name: "SENZO POWER TURBO CKD (E4)", colors: ["ANY OTHER"] },
+  { id: "prod-senzo-39", name: "SENZO CITY RL SWIFT CKD", colors: ["ANY OTHER"] },
+  { id: "prod-senzo-40", name: "SENZO POWER PLUS PRO CKD", colors: ["ANY OTHER"] },
+  { id: "prod-senzo-41", name: "SENZO CITY MAGIC (OLA) CKD", colors: ["ANY OTHER"] },
+  { id: "prod-senzo-42", name: "STAFF USE /OLD SCOOTY", colors: ["BLACK"] },
+  { id: "prod-1783675720160", name: "Single light", colors: ["White", "Red", "Black", "Blue"] }
+];
 
 const DEFAULT_BUYERS: Buyer[] = [];
 
@@ -480,6 +515,14 @@ const DEFAULT_USERS: { [username: string]: User & { passwordHash: string } } = {
     passwordHash: 'admin123', // Demo credentials
     role: 'admin',
     name: 'Warehouse Owner / Admin',
+    approved: true
+  },
+  manager: {
+    id: 'u-manager',
+    username: 'manager',
+    passwordHash: 'manager123',
+    role: 'manager',
+    name: 'Warehouse Manager',
     approved: true
   },
   manufacturer: {
@@ -547,9 +590,16 @@ function readDBFromFile(): DBState {
       const sheetUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL || parsed.sheetConfig?.webhookUrl || '';
       const sheetEnabled = process.env.GOOGLE_SHEET_WEBHOOK_URL ? true : (parsed.sheetConfig?.enabled ?? false);
 
+      let finalProducts = parsed.products || [];
+      const hasSenzo = Array.isArray(finalProducts) && finalProducts.some((p: any) => p.name && p.name.includes('SENZO'));
+      const hasVolt = Array.isArray(finalProducts) && finalProducts.some((p: any) => p.name && (p.name.includes('Volt S-1') || p.name.includes('Volt S-2') || p.name.includes('Volt Pro-X')));
+      if (!Array.isArray(finalProducts) || !hasSenzo || hasVolt || finalProducts.length < 5) {
+        finalProducts = DEFAULT_PRODUCTS;
+      }
+
       return {
         users: mergedUsers,
-        products: parsed.products || DEFAULT_PRODUCTS,
+        products: finalProducts,
         buyers: parsed.buyers || DEFAULT_BUYERS,
         scooterUnits: parsed.scooterUnits || legacyUnits || [],
         stockLogs: parsed.stockLogs || [],
@@ -558,9 +608,10 @@ function readDBFromFile(): DBState {
         batteryImports: parsed.batteryImports || [],
         chargerSales: parsed.chargerSales || [],
         chargerImports: parsed.chargerImports || [],
-        batterySeriesList: parsed.batterySeriesList || ['Alpha Series', 'Beta Series', 'Delta Series', 'Omega Series', 'Pro-Pack Series'],
-        chargerTypeList: parsed.chargerTypeList || ['48V Charger', '60V Charger', '72V Charger'],
-        auditLogs: parsed.auditLogs || []
+        batterySeriesList: parsed.batterySeriesList || ['Lithium 60V, 24AH', 'Lithium 60V, 30AH', 'Lithium 60V, 10AH', 'Lithium 48V, 30AH', 'Lithium 48V, 24AH', 'Lithium 60V, 28AH', 'Lithium 72V, 42AH', 'Lead Acid 12V'],
+        chargerTypeList: parsed.chargerTypeList || ['Lithium Charger 54.6V/6A', 'Lithium Charger 69.4V/6A', 'Lithium Charger 67.2V/6A', 'Lead Acid Charger 48V', 'Lead Acid Charger 60V', 'Lead Acid Charger 72V'],
+        auditLogs: parsed.auditLogs || [],
+        warrantyClaims: parsed.warrantyClaims || []
       };
     }
   } catch (err) {
@@ -581,9 +632,10 @@ function readDBFromFile(): DBState {
     batteryImports: [],
     chargerSales: [],
     chargerImports: [],
-    batterySeriesList: ['Alpha Series', 'Beta Series', 'Delta Series', 'Omega Series', 'Pro-Pack Series'],
-    chargerTypeList: ['48V Charger', '60V Charger', '72V Charger'],
-    auditLogs: []
+    batterySeriesList: ['Lithium 60V, 24AH', 'Lithium 60V, 30AH', 'Lithium 60V, 10AH', 'Lithium 48V, 30AH', 'Lithium 48V, 24AH', 'Lithium 60V, 28AH', 'Lithium 72V, 42AH', 'Lead Acid 12V'],
+    chargerTypeList: ['Lithium Charger 54.6V/6A', 'Lithium Charger 69.4V/6A', 'Lithium Charger 67.2V/6A', 'Lead Acid Charger 48V', 'Lead Acid Charger 60V', 'Lead Acid Charger 72V'],
+    auditLogs: [],
+    warrantyClaims: []
   };
 }
 
@@ -596,304 +648,296 @@ function readDB(): DBState {
 }
 
 function cleanForFirestore(obj: any): any {
-  if (obj === null || obj === undefined) {
-    return null;
+  return obj;
+}
+
+async function syncCollectionArray<T extends { id: string }>(
+  collectionName: string,
+  newList: T[] | undefined,
+  oldList: T[] | undefined
+) {
+  if (!firebaseDb) return;
+  const newArr = newList || [];
+  const oldArr = oldList || [];
+
+  const oldMap = new Map<string, T>();
+  oldArr.forEach(item => {
+    if (item.id) oldMap.set(item.id, item);
+  });
+
+  const changedItems: T[] = [];
+  newArr.forEach(item => {
+    if (!item.id) return;
+    const oldItem = oldMap.get(item.id);
+    if (!oldItem || JSON.stringify(item) !== JSON.stringify(oldItem)) {
+      changedItems.push(item);
+    }
+  });
+
+  const newIds = new Set(newArr.map(item => item.id).filter(Boolean));
+  const deletedIds: string[] = [];
+  oldArr.forEach(item => {
+    if (item.id && !newIds.has(item.id)) {
+      deletedIds.push(item.id);
+    }
+  });
+
+  if (changedItems.length > 0 || deletedIds.length > 0) {
+    console.log(`[Firestore Sync] Collection ${collectionName}: ${changedItems.length} changed, ${deletedIds.length} deleted.`);
+    
+    let batch = writeBatch(firebaseDb);
+    let count = 0;
+
+    for (const item of changedItems) {
+      const docRef = doc(firebaseDb, collectionName, item.id);
+      batch.set(docRef, item, { merge: true });
+      count++;
+      if (count >= 500) {
+        await batch.commit();
+        batch = writeBatch(firebaseDb);
+        count = 0;
+      }
+    }
+
+    for (const id of deletedIds) {
+      const docRef = doc(firebaseDb, collectionName, id);
+      batch.delete(docRef);
+      count++;
+      if (count >= 500) {
+        await batch.commit();
+        batch = writeBatch(firebaseDb);
+        count = 0;
+      }
+    }
+
+    if (count > 0) {
+      await batch.commit();
+    }
   }
+}
+
+async function syncUsers(
+  newUsers: { [username: string]: any } | undefined,
+  oldUsers: { [username: string]: any } | undefined
+) {
+  if (!firebaseDb) return;
+  const newMap = newUsers || {};
+  const oldMap = oldUsers || {};
+
+  const changedUsers: { username: string; data: any }[] = [];
+  for (const [username, userData] of Object.entries(newMap)) {
+    const oldUserData = oldMap[username];
+    if (!oldUserData || JSON.stringify(userData) !== JSON.stringify(oldUserData)) {
+      changedUsers.push({ username, data: userData });
+    }
+  }
+
+  const deletedUsernames: string[] = [];
+  for (const username of Object.keys(oldMap)) {
+    if (!newMap[username]) {
+      deletedUsernames.push(username);
+    }
+  }
+
+  if (changedUsers.length > 0 || deletedUsernames.length > 0) {
+    console.log(`[Firestore Sync] Users: ${changedUsers.length} changed, ${deletedUsernames.length} deleted.`);
+    let batch = writeBatch(firebaseDb);
+    let count = 0;
+
+    for (const u of changedUsers) {
+      const docRef = doc(firebaseDb, 'users', u.username.toLowerCase());
+      batch.set(docRef, u.data, { merge: true });
+      count++;
+      if (count >= 500) {
+        await batch.commit();
+        batch = writeBatch(firebaseDb);
+        count = 0;
+      }
+    }
+
+    for (const username of deletedUsernames) {
+      const docRef = doc(firebaseDb, 'users', username.toLowerCase());
+      batch.delete(docRef);
+      count++;
+      if (count >= 500) {
+        await batch.commit();
+        batch = writeBatch(firebaseDb);
+        count = 0;
+      }
+    }
+
+    if (count > 0) {
+      await batch.commit();
+    }
+  }
+}
+
+async function syncSheetConfig(newConfig: any, oldConfig: any) {
+  if (!firebaseDb) return;
+  if (!newConfig) return;
+  if (!oldConfig || JSON.stringify(newConfig) !== JSON.stringify(oldConfig)) {
+    console.log(`[Firestore Sync] config/sheetConfig updated.`);
+    const docRef = doc(firebaseDb, 'config', 'sheetConfig');
+    await setDoc(docRef, newConfig, { merge: true });
+  }
+}
+
+async function syncLists(
+  newBatterySeries: string[] | undefined,
+  oldBatterySeries: string[] | undefined,
+  newChargerTypes: string[] | undefined,
+  oldChargerTypes: string[] | undefined
+) {
+  if (!firebaseDb) return;
+  const changedBattery = !oldBatterySeries || JSON.stringify(newBatterySeries) !== JSON.stringify(oldBatterySeries);
+  const changedCharger = !oldChargerTypes || JSON.stringify(newChargerTypes) !== JSON.stringify(oldChargerTypes);
+  if (changedBattery || changedCharger) {
+    console.log(`[Firestore Sync] config/lists updated.`);
+    const docRef = doc(firebaseDb, 'config', 'lists');
+    await setDoc(docRef, {
+      batterySeriesList: newBatterySeries || [],
+      chargerTypeList: newChargerTypes || []
+    }, { merge: true });
+  }
+}
+
+async function syncToFirestore(state: DBState, oldState: DBState | null) {
+  if (!firebaseDb) return;
+
   try {
-    return JSON.parse(JSON.stringify(obj));
-  } catch (err) {
-    console.error('Error cleaning object for Firestore:', err);
-    return obj;
+    const baseState = oldState || {
+      users: {},
+      products: [],
+      buyers: [],
+      scooterUnits: [],
+      stockLogs: [],
+      sheetConfig: { webhookUrl: '', enabled: false },
+      batterySales: [],
+      batteryImports: [],
+      chargerSales: [],
+      chargerImports: [],
+      batterySeriesList: [],
+      chargerTypeList: [],
+      auditLogs: [],
+      warrantyClaims: []
+    };
+
+    await syncUsers(state.users, baseState.users);
+    await syncCollectionArray('products', state.products, baseState.products);
+    await syncCollectionArray('buyers', state.buyers, baseState.buyers);
+    await syncCollectionArray('scooterUnits', state.scooterUnits, baseState.scooterUnits);
+    await syncCollectionArray('stockLogs', state.stockLogs, baseState.stockLogs);
+    await syncCollectionArray('batterySales', state.batterySales, baseState.batterySales);
+    await syncCollectionArray('batteryImports', state.batteryImports, baseState.batteryImports);
+    await syncCollectionArray('chargerSales', state.chargerSales, baseState.chargerSales);
+    await syncCollectionArray('chargerImports', state.chargerImports, baseState.chargerImports);
+    await syncCollectionArray('auditLogs', state.auditLogs, baseState.auditLogs);
+    await syncCollectionArray('warrantyClaims', state.warrantyClaims, baseState.warrantyClaims);
+    await syncSheetConfig(state.sheetConfig, baseState.sheetConfig);
+    await syncLists(
+      state.batterySeriesList,
+      baseState.batterySeriesList,
+      state.chargerTypeList,
+      baseState.chargerTypeList
+    );
+  } catch (error) {
+    console.error('Error during Firestore background sync:', error);
   }
 }
 
 async function seedFirestore(state: DBState) {
   if (!firebaseDb) return;
-  try {
-    console.log('Seeding Firestore collections...');
-    const promises: Promise<any>[] = [];
-
-    for (const [username, user] of Object.entries(state.users)) {
-      promises.push(setDoc(doc(firebaseDb, 'users', username), cleanForFirestore(user)));
-    }
-    for (const prod of state.products) {
-      promises.push(setDoc(doc(firebaseDb, 'products', prod.id), cleanForFirestore(prod)));
-    }
-    for (const buyer of state.buyers) {
-      promises.push(setDoc(doc(firebaseDb, 'buyers', buyer.id), cleanForFirestore(buyer)));
-    }
-    for (const unit of state.scooterUnits) {
-      promises.push(setDoc(doc(firebaseDb, 'scooterUnits', unit.id), cleanForFirestore(unit)));
-    }
-    for (const log of state.stockLogs) {
-      promises.push(setDoc(doc(firebaseDb, 'stockLogs', log.id), cleanForFirestore(log)));
-    }
-    if (state.batterySales) {
-      for (const sale of state.batterySales) {
-        promises.push(setDoc(doc(firebaseDb, 'batterySales', sale.id), cleanForFirestore(sale)));
-      }
-    }
-    if (state.batteryImports) {
-      for (const imp of state.batteryImports) {
-        promises.push(setDoc(doc(firebaseDb, 'batteryImports', imp.id), cleanForFirestore(imp)));
-      }
-    }
-    if (state.chargerSales) {
-      for (const sale of state.chargerSales) {
-        promises.push(setDoc(doc(firebaseDb, 'chargerSales', sale.id), cleanForFirestore(sale)));
-      }
-    }
-    if (state.chargerImports) {
-      for (const imp of state.chargerImports) {
-        promises.push(setDoc(doc(firebaseDb, 'chargerImports', imp.id), cleanForFirestore(imp)));
-      }
-    }
-    if (state.batterySeriesList) {
-      promises.push(setDoc(doc(firebaseDb, 'config', 'batterySeriesList'), cleanForFirestore({ list: state.batterySeriesList })));
-    }
-    if (state.chargerTypeList) {
-      promises.push(setDoc(doc(firebaseDb, 'config', 'chargerTypeList'), cleanForFirestore({ list: state.chargerTypeList })));
-    }
-    if (state.auditLogs) {
-      for (const log of state.auditLogs) {
-        promises.push(setDoc(doc(firebaseDb, 'auditLogs', log.id), cleanForFirestore(log)));
-      }
-    }
-    promises.push(setDoc(doc(firebaseDb, 'config', 'sheetConfig'), cleanForFirestore(state.sheetConfig)));
-
-    await Promise.all(promises);
-    console.log('Firestore successfully seeded with default/legacy data!');
-  } catch (error) {
-    console.error('Error seeding Firestore on startup:', error);
-  }
+  console.log('Seeding entire local warehouse database to Firestore...');
+  await syncToFirestore(state, null);
+  console.log('Seeding complete!');
 }
 
 async function hydrateFromFirestore(): Promise<DBState | null> {
   if (!firebaseDb) return null;
+
   try {
-    console.log('Hydrating database from Firestore...');
-    const [
-      usersSnap,
-      productsSnap,
-      buyersSnap,
-      scooterUnitsSnap,
-      stockLogsSnap,
-      batterySalesSnap,
-      batteryImportsSnap,
-      chargerSalesSnap,
-      chargerImportsSnap,
-      batterySeriesListSnap,
-      chargerTypeListSnap,
-      auditLogsSnap,
-      sheetConfigSnap
-    ] = await Promise.all([
-      getDocs(collection(firebaseDb, 'users')),
-      getDocs(collection(firebaseDb, 'products')),
-      getDocs(collection(firebaseDb, 'buyers')),
-      getDocs(collection(firebaseDb, 'scooterUnits')),
-      getDocs(collection(firebaseDb, 'stockLogs')),
-      getDocs(collection(firebaseDb, 'batterySales')),
-      getDocs(collection(firebaseDb, 'batteryImports')),
-      getDocs(collection(firebaseDb, 'chargerSales')),
-      getDocs(collection(firebaseDb, 'chargerImports')),
-      getDoc(doc(firebaseDb, 'config', 'batterySeriesList')),
-      getDoc(doc(firebaseDb, 'config', 'chargerTypeList')),
-      getDocs(collection(firebaseDb, 'auditLogs')),
-      getDoc(doc(firebaseDb, 'config', 'sheetConfig'))
-    ]);
+    console.log('Hydrating local database cache from cloud Firestore...');
+    const state: Partial<DBState> = {};
 
-    const isEmpty = usersSnap.empty && productsSnap.empty && buyersSnap.empty && scooterUnitsSnap.empty;
-    if (isEmpty) {
-      console.log('Firestore is empty. Migrating local JSON data...');
-      const localDB = readDBFromFile();
-      await seedFirestore(localDB);
-      return localDB;
-    }
-
-    const users: any = {};
-    usersSnap.forEach(d => {
-      const data = d.data();
-      if (data.approved === undefined) {
-        data.approved = true;
+    const usersSnap = await getDocs(collection(firebaseDb, 'users'));
+    const users: { [username: string]: User & { passwordHash: string } } = {};
+    usersSnap.forEach(docSnap => {
+      const u = docSnap.data() as User & { passwordHash: string };
+      if (u.username) {
+        users[u.username.toLowerCase()] = u;
       }
-      users[d.id] = data;
     });
+    state.users = Object.keys(users).length > 0 ? users : undefined;
 
-    const products: any[] = [];
-    productsSnap.forEach(d => {
-      products.push(d.data());
-    });
-
-    const buyers: any[] = [];
-    buyersSnap.forEach(d => {
-      buyers.push(d.data());
-    });
-
-    const scooterUnits: any[] = [];
-    scooterUnitsSnap.forEach(d => {
-      scooterUnits.push(d.data());
-    });
-
-    const stockLogs: any[] = [];
-    stockLogsSnap.forEach(d => {
-      stockLogs.push(d.data());
-    });
-
-    const batterySales: any[] = [];
-    batterySalesSnap.forEach(d => {
-      batterySales.push(d.data());
-    });
-
-    const batteryImports: any[] = [];
-    batteryImportsSnap.forEach(d => {
-      batteryImports.push(d.data());
-    });
-
-    const chargerSales: any[] = [];
-    chargerSalesSnap.forEach(d => {
-      chargerSales.push(d.data());
-    });
-
-    const chargerImports: any[] = [];
-    chargerImportsSnap.forEach(d => {
-      chargerImports.push(d.data());
-    });
-
-    let batterySeriesList = ['Alpha Series', 'Beta Series', 'Delta Series', 'Omega Series', 'Pro-Pack Series'];
-    if (batterySeriesListSnap.exists()) {
-      batterySeriesList = (batterySeriesListSnap.data() as any).list || batterySeriesList;
+    async function fetchCollectionArray<T>(collName: string): Promise<T[]> {
+      const snap = await getDocs(collection(firebaseDb, collName));
+      const arr: T[] = [];
+      snap.forEach(docSnap => {
+        arr.push(docSnap.data() as T);
+      });
+      return arr;
     }
 
-    let chargerTypeList = ['48V Charger', '60V Charger', '72V Charger'];
-    if (chargerTypeListSnap.exists()) {
-      chargerTypeList = (chargerTypeListSnap.data() as any).list || chargerTypeList;
+    state.products = await fetchCollectionArray<Product>('products');
+    state.buyers = await fetchCollectionArray<Buyer>('buyers');
+    state.scooterUnits = await fetchCollectionArray<ScooterUnit>('scooterUnits');
+    state.stockLogs = await fetchCollectionArray<StockLog>('stockLogs');
+    state.batterySales = await fetchCollectionArray<BatterySale>('batterySales');
+    state.batteryImports = await fetchCollectionArray<BatteryImport>('batteryImports');
+    state.chargerSales = await fetchCollectionArray<ChargerSale>('chargerSales');
+    state.chargerImports = await fetchCollectionArray<ChargerImport>('chargerImports');
+    state.auditLogs = await fetchCollectionArray<AuditLog>('auditLogs');
+    state.warrantyClaims = await fetchCollectionArray<WarrantyClaim>('warrantyClaims');
+
+    const configListsSnap = await getDoc(doc(firebaseDb, 'config', 'lists'));
+    if (configListsSnap.exists()) {
+      const listsData = configListsSnap.data();
+      state.batterySeriesList = listsData.batterySeriesList;
+      state.chargerTypeList = listsData.chargerTypeList;
     }
 
-    const auditLogs: any[] = [];
-    auditLogsSnap.forEach(d => {
-      auditLogs.push(d.data());
-    });
-
-    // Sort logs chronologically to keep original sorting
-    auditLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    stockLogs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-    let sheetConfig = { webhookUrl: '', enabled: false };
+    const sheetConfigSnap = await getDoc(doc(firebaseDb, 'config', 'sheetConfig'));
     if (sheetConfigSnap.exists()) {
-      sheetConfig = sheetConfigSnap.data() as any;
+      state.sheetConfig = sheetConfigSnap.data() as SheetConfig;
     }
 
-    const state: DBState = {
-      users,
-      products,
-      buyers,
-      scooterUnits,
-      stockLogs,
-      sheetConfig,
-      batterySales,
-      batteryImports,
-      chargerSales,
-      chargerImports,
-      batterySeriesList,
-      chargerTypeList,
-      auditLogs
+    const isEmpty = (!state.users || Object.keys(state.users).length === 0) &&
+                    (!state.products || state.products.length === 0) &&
+                    (!state.scooterUnits || state.scooterUnits.length === 0);
+
+    if (isEmpty) {
+      console.log('Cloud Firestore database appears empty. Seeding with local backup file contents...');
+      const localState = readDBFromFile();
+      await seedFirestore(localState);
+      return localState;
+    }
+
+    const finalState: DBState = {
+      users: state.users || DEFAULT_USERS,
+      products: state.products && state.products.length > 0 ? state.products : DEFAULT_PRODUCTS,
+      buyers: state.buyers || DEFAULT_BUYERS,
+      scooterUnits: state.scooterUnits || [],
+      stockLogs: state.stockLogs || [],
+      sheetConfig: state.sheetConfig || { webhookUrl: '', enabled: false },
+      batterySales: state.batterySales || [],
+      batteryImports: state.batteryImports || [],
+      chargerSales: state.chargerSales || [],
+      chargerImports: state.chargerImports || [],
+      batterySeriesList: state.batterySeriesList || ['Lithium 60V, 24AH', 'Lithium 60V, 30AH', 'Lithium 60V, 10AH', 'Lithium 48V, 30AH', 'Lithium 48V, 24AH', 'Lithium 60V, 28AH', 'Lithium 72V, 42AH', 'Lead Acid 12V'],
+      chargerTypeList: state.chargerTypeList || ['Lithium Charger 54.6V/6A', 'Lithium Charger 69.4V/6A', 'Lithium Charger 67.2V/6A', 'Lead Acid Charger 48V', 'Lead Acid Charger 60V', 'Lead Acid Charger 72V'],
+      auditLogs: state.auditLogs || [],
+      warrantyClaims: state.warrantyClaims || []
     };
 
-    // Keep backup JSON file updated
-    fs.writeFileSync(DB_FILE, JSON.stringify(state, null, 2), 'utf8');
-    return state;
-  } catch (err) {
-    console.error('Error loading data from Firestore, falling back to local file:', err);
+    return finalState;
+  } catch (error) {
+    console.error('Error hydrating database from Firestore:', error);
     return null;
   }
 }
 
-async function syncToFirestore(state: DBState) {
-  if (!firebaseDb) return;
-  try {
-    // Sync users deletions
-    const usersSnap = await getDocs(collection(firebaseDb, 'users'));
-    const currentUsernames = new Set(Object.keys(state.users));
-    for (const uDoc of usersSnap.docs) {
-      if (!currentUsernames.has(uDoc.id)) {
-        await deleteDoc(doc(firebaseDb, 'users', uDoc.id));
-      }
-    }
-
-    // Sync battery sales deletions
-    const salesSnap = await getDocs(collection(firebaseDb, 'batterySales'));
-    const currentSalesIds = new Set((state.batterySales || []).map(s => s.id));
-    for (const sDoc of salesSnap.docs) {
-      if (!currentSalesIds.has(sDoc.id)) {
-        await deleteDoc(doc(firebaseDb, 'batterySales', sDoc.id));
-      }
-    }
-
-    // Sync charger sales deletions
-    const chargerSalesSnap = await getDocs(collection(firebaseDb, 'chargerSales'));
-    const currentChargerSalesIds = new Set((state.chargerSales || []).map(s => s.id));
-    for (const cDoc of chargerSalesSnap.docs) {
-      if (!currentChargerSalesIds.has(cDoc.id)) {
-        await deleteDoc(doc(firebaseDb, 'chargerSales', cDoc.id));
-      }
-    }
-
-    const promises: Promise<any>[] = [];
-    for (const [username, user] of Object.entries(state.users)) {
-      promises.push(setDoc(doc(firebaseDb, 'users', username), cleanForFirestore(user)));
-    }
-    for (const prod of state.products) {
-      promises.push(setDoc(doc(firebaseDb, 'products', prod.id), cleanForFirestore(prod)));
-    }
-    for (const buyer of state.buyers) {
-      promises.push(setDoc(doc(firebaseDb, 'buyers', buyer.id), cleanForFirestore(buyer)));
-    }
-    for (const unit of state.scooterUnits) {
-      promises.push(setDoc(doc(firebaseDb, 'scooterUnits', unit.id), cleanForFirestore(unit)));
-    }
-    for (const log of state.stockLogs) {
-      promises.push(setDoc(doc(firebaseDb, 'stockLogs', log.id), cleanForFirestore(log)));
-    }
-    if (state.batterySales) {
-      for (const sale of state.batterySales) {
-        promises.push(setDoc(doc(firebaseDb, 'batterySales', sale.id), cleanForFirestore(sale)));
-      }
-    }
-    if (state.batteryImports) {
-      for (const imp of state.batteryImports) {
-        promises.push(setDoc(doc(firebaseDb, 'batteryImports', imp.id), cleanForFirestore(imp)));
-      }
-    }
-    if (state.chargerSales) {
-      for (const sale of state.chargerSales) {
-        promises.push(setDoc(doc(firebaseDb, 'chargerSales', sale.id), cleanForFirestore(sale)));
-      }
-    }
-    if (state.chargerImports) {
-      for (const imp of state.chargerImports) {
-        promises.push(setDoc(doc(firebaseDb, 'chargerImports', imp.id), cleanForFirestore(imp)));
-      }
-    }
-    if (state.batterySeriesList) {
-      promises.push(setDoc(doc(firebaseDb, 'config', 'batterySeriesList'), cleanForFirestore({ list: state.batterySeriesList })));
-    }
-    if (state.chargerTypeList) {
-      promises.push(setDoc(doc(firebaseDb, 'config', 'chargerTypeList'), cleanForFirestore({ list: state.chargerTypeList })));
-    }
-    if (state.auditLogs) {
-      for (const log of state.auditLogs) {
-        promises.push(setDoc(doc(firebaseDb, 'auditLogs', log.id), cleanForFirestore(log)));
-      }
-    }
-    promises.push(setDoc(doc(firebaseDb, 'config', 'sheetConfig'), cleanForFirestore(state.sheetConfig)));
-
-    await Promise.all(promises);
-  } catch (error) {
-    console.error('Error background-syncing to Firestore:', error);
-  }
-}
-
 function writeDB(state: DBState) {
+  const oldState = globalDBState ? JSON.parse(JSON.stringify(globalDBState)) : null;
   globalDBState = state;
   try {
     fs.writeFile(DB_FILE, JSON.stringify(state, null, 2), 'utf8', (err) => {
@@ -904,7 +948,7 @@ function writeDB(state: DBState) {
   }
 
   // Push to cloud Firestore in background
-  syncToFirestore(state).catch(err => {
+  syncToFirestore(state, oldState).catch(err => {
     console.error('Error in background Firestore sync:', err);
   });
 }
@@ -934,10 +978,13 @@ function addAuditLog(db: DBState, username: string, operatorName: string, action
   let operatorRole = 'User';
   if (user && user.role) {
     if (user.role === 'admin') operatorRole = 'Admin';
+    else if (user.role === 'manager') operatorRole = 'Manager';
     else if (user.role === 'manufacturer') operatorRole = 'Manufacturer';
     else if (user.role === 'salesperson') operatorRole = 'Sales Advisor';
   } else if (cleanUsername === 'admin') {
     operatorRole = 'Admin';
+  } else if (cleanUsername === 'manager') {
+    operatorRole = 'Manager';
   } else if (cleanUsername === 'manufacturer') {
     operatorRole = 'Manufacturer';
   } else if (cleanUsername === 'sales') {
@@ -1133,7 +1180,7 @@ const loginSchema = z.object({
 const registerSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(100, "Username is too long").toLowerCase().trim().regex(ALPHANUMERIC_REGEX, "Username can only contain alphanumeric characters, underscores, and hyphens"),
   password: z.string().min(4, "Password must be at least 4 characters").max(100, "Password is too long"),
-  role: z.enum(['admin', 'manufacturer', 'salesperson']),
+  role: z.enum(['admin', 'manufacturer', 'salesperson', 'manager']),
   name: z.string().min(1, "Name is required").max(150, "Name is too long").trim(),
   approved: z.boolean().optional(),
 });
@@ -1142,7 +1189,7 @@ const userUpdateSchema = z.object({
   id: z.string().min(1, "ID is required").max(100),
   username: z.string().min(3, "Username must be at least 3 characters").max(100, "Username is too long").toLowerCase().trim().regex(ALPHANUMERIC_REGEX, "Username can only contain alphanumeric characters, underscores, and hyphens"),
   password: z.string().min(4, "Password must be at least 4 characters").max(100, "Password is too long").optional().or(z.literal('')),
-  role: z.enum(['admin', 'manufacturer', 'salesperson']),
+  role: z.enum(['admin', 'manufacturer', 'salesperson', 'manager']),
   name: z.string().min(1, "Name is required").max(150, "Name is too long").trim(),
   locked: z.boolean().optional(),
   operator: z.string().max(150).optional(),
@@ -1176,22 +1223,14 @@ const userRejectSchema = z.object({
   operator: z.string().max(150).optional(),
 });
 
-
-const attendanceLogSchema = z.object({
-  username: z.string(),
-  operatorName: z.string(),
-  clockInTime: z.string()
-});
-const clockOutSchema = z.object({
-  username: z.string(),
-  clockOutTime: z.string()
-});
-const liveLocationSchema = z.object({
-  username: z.string(),
-  operatorName: z.string(),
+const userLocationSchema = z.object({
+  username: z.string().min(1).max(100),
   latitude: z.number(),
   longitude: z.number(),
-  timestamp: z.string()
+});
+
+const userSimulateTrailSchema = z.object({
+  username: z.string().min(1).max(100),
 });
 
 const productSchema = z.object({
@@ -1211,6 +1250,10 @@ const productDeleteSchema = z.object({
 const buyerSchema = z.object({
   name: z.string().min(1, "Buyer name is required").max(150, "Buyer name too long").trim(),
   contact: z.string().max(150, "Contact is too long").trim().optional(),
+  address: z.string().max(1000, "Address is too long").trim().optional(),
+  gstNo: z.string().max(100, "GST number is too long").trim().optional(),
+  addressProof: z.string().max(1000, "Address proof description is too long").trim().optional(),
+  buyerType: z.enum(['retail', 'wholesale']).optional(),
 });
 
 const buyerUpdateSchema = buyerSchema.extend({
@@ -1234,6 +1277,9 @@ const batterySaleSchema = z.object({
   warrantyDurationMonths: z.coerce.number().positive().optional(),
   status: z.enum(['sold', 'hold']).optional(),
   heldFor: z.string().max(150).optional(),
+  billNo: z.string().max(100).optional().or(z.literal('')),
+  deliveryChallanNo: z.string().max(100).optional().or(z.literal('')),
+  serialNumbers: z.array(z.string().max(100).trim().toUpperCase()).optional(),
 });
 
 const batterySaleReleaseSchema = z.object({
@@ -1255,6 +1301,10 @@ const batteryImportSchema = z.object({
   supplierName: z.string().max(150).optional(),
   containerId: z.string().max(150).optional(),
   notes: z.string().max(1000, "Notes too long").optional(),
+  billNo: z.string().max(100).optional().or(z.literal('')),
+  stockInNo: z.string().max(100).optional().or(z.literal('')),
+  serialNumbers: z.array(z.string().max(100).trim().toUpperCase()).optional(),
+  warrantyDurationMonths: z.coerce.number().positive().optional(),
 });
 
 const chargerSaleSchema = z.object({
@@ -1269,6 +1319,9 @@ const chargerSaleSchema = z.object({
   warrantyDurationMonths: z.coerce.number().positive().optional(),
   status: z.enum(['sold', 'hold']).optional(),
   heldFor: z.string().max(150).optional(),
+  billNo: z.string().max(100).optional().or(z.literal('')),
+  deliveryChallanNo: z.string().max(100).optional().or(z.literal('')),
+  serialNumbers: z.array(z.string().max(100).trim().toUpperCase()).optional(),
 });
 
 const chargerSaleReleaseSchema = z.object({
@@ -1290,6 +1343,10 @@ const chargerImportSchema = z.object({
   supplierName: z.string().max(150).optional(),
   containerId: z.string().max(150).optional(),
   notes: z.string().max(1000, "Notes too long").optional(),
+  billNo: z.string().max(100).optional().or(z.literal('')),
+  stockInNo: z.string().max(100).optional().or(z.literal('')),
+  serialNumbers: z.array(z.string().max(100).trim().toUpperCase()).optional(),
+  warrantyDurationMonths: z.coerce.number().positive().optional(),
 });
 
 const typeListSchema = z.object({
@@ -1309,6 +1366,7 @@ const scooterUnitSchema = z.object({
   tireSize: z.string().max(100).optional(),
   frontTireSize: z.string().max(100).optional(),
   rearTireSize: z.string().max(100).optional(),
+  brakeType: z.enum(['Disk', 'Drum']).optional(),
   customizationNotes: z.string().max(1000).optional(),
   buyerName: z.string().max(150).trim().optional(),
   buyerContact: z.string().max(150).trim().optional(),
@@ -1320,8 +1378,20 @@ const scooterUnitSchema = z.object({
   batteryWarrantyExpiry: z.string().max(100).optional(),
   batteryWarrantyFlags: z.array(z.boolean()).optional(),
   batteryWarrantyMonths: z.array(z.coerce.number()).optional(),
+  chargerIncluded: z.boolean().optional(),
+  chargerType: z.string().max(150).optional(),
+  chargerSerial: z.string().max(100).optional(),
+  chargerWarrantyActive: z.boolean().optional(),
+  chargerWarrantyMonths: z.coerce.number().optional(),
+  chargerWarrantyStatus: z.string().max(100).optional(),
+  scooterWarrantyMonths: z.coerce.number().optional(),
+  scooterWarrantyActive: z.boolean().optional(),
   warrantyNotes: z.string().max(1000).optional(),
   operator: z.string().max(150).optional(),
+  billNo: z.string().max(100).optional().or(z.literal('')),
+  stockInNo: z.string().max(100).optional().or(z.literal('')),
+  salesBillNo: z.string().max(100).optional().or(z.literal('')),
+  deliveryChallanNo: z.string().max(100).optional().or(z.literal('')),
 });
 
 const scooterBulkCreateSchema = z.object({
@@ -1330,12 +1400,15 @@ const scooterBulkCreateSchema = z.object({
   sourceChannel: z.string().max(100).optional(),
   frontTireSize: z.string().max(100).optional(),
   rearTireSize: z.string().max(100).optional(),
+  brakeType: z.enum(['Disk', 'Drum']).optional(),
   items: z.array(z.object({
     chassisNo: z.string().min(1, "Chassis number cannot be empty").max(100).trim().toUpperCase(),
     motorNo: z.string().min(1, "Motor number cannot be empty").max(100).trim().toUpperCase(),
     controllerNo: z.string().min(1, "Controller number cannot be empty").max(100).trim().toUpperCase(),
   })).min(1, "Must include at least one item"),
   operator: z.string().min(1, "Operator is required").max(150),
+  billNo: z.string().max(100).optional().or(z.literal('')),
+  stockInNo: z.string().max(100).optional().or(z.literal('')),
 });
 
 const scooterBulkPosSchema = z.object({
@@ -1354,6 +1427,8 @@ const scooterBulkPosSchema = z.object({
     batteryWarrantyFlags: z.array(z.boolean()).optional(),
   })).min(1, "Must include at least one sale"),
   status: z.enum(['sold', 'hold']),
+  salesBillNo: z.string().max(100).optional().or(z.literal('')),
+  deliveryChallanNo: z.string().max(100).optional().or(z.literal('')),
 });
 
 const stockLogSchema = z.object({
@@ -1365,6 +1440,8 @@ const stockLogSchema = z.object({
   buyerName: z.string().max(150).optional(),
   operator: z.string().min(1, "Operator is required").max(150),
   notes: z.string().max(1000).optional(),
+  billNo: z.string().max(100).optional().or(z.literal('')),
+  stockInNo: z.string().max(100).optional().or(z.literal('')),
 });
 
 const sheetConfigSchema = z.object({
@@ -1502,7 +1579,7 @@ app.post('/api/auth/register', authIpRateLimiter, validateBody(registerSchema), 
       id: `u-${Date.now()}`,
       username: normalizedUsername,
       passwordHash: password,
-      role: role as 'admin' | 'manufacturer' | 'salesperson',
+      role: role as 'admin' | 'manufacturer' | 'salesperson' | 'manager',
       name,
       locked: false,
       failedAttempts: 0,
@@ -1546,7 +1623,7 @@ app.post('/api/users/update', validateBody(userUpdateSchema), (req, res) => {
     ...oldUser,
     username: newNormalizedUsername,
     name,
-    role: role as 'admin' | 'manufacturer' | 'salesperson',
+    role: role as 'admin' | 'manufacturer' | 'salesperson' | 'manager',
     locked: locked !== undefined ? !!locked : oldUser.locked,
     failedAttempts: locked === false ? 0 : oldUser.failedAttempts
   };
@@ -1595,6 +1672,68 @@ app.get('/api/users', (req, res) => {
     passwordText: passwordHash
   }));
   res.json(safeUsers);
+});
+
+// Auth: Update User Location (For silent employee geolocation updates)
+app.post('/api/users/location', validateBody(userLocationSchema), (req, res) => {
+  const { username, latitude, longitude } = req.body;
+  const db = readDB();
+  const normalized = username.toLowerCase().trim();
+  if (db.users[normalized]) {
+    const timestamp = new Date().toISOString();
+    db.users[normalized].latitude = latitude;
+    db.users[normalized].longitude = longitude;
+    db.users[normalized].locationTimestamp = timestamp;
+    
+    if (!db.users[normalized].locationHistory) {
+      db.users[normalized].locationHistory = [];
+    }
+    db.users[normalized].locationHistory.push({
+      latitude,
+      longitude,
+      timestamp
+    });
+
+    // Keep history clean: prune logs older than 24 hours
+    const limitTime = Date.now() - 24 * 60 * 60 * 1000;
+    db.users[normalized].locationHistory = db.users[normalized].locationHistory.filter(
+      (entry: any) => new Date(entry.timestamp).getTime() >= limitTime
+    );
+
+    writeDB(db);
+    return res.json({ success: true });
+  }
+  return res.status(404).json({ error: 'User not found' });
+});
+
+// Auth: Simulate Location Trail (For testing breadcrumbs)
+app.post('/api/users/simulate-trail', validateBody(userSimulateTrailSchema), (req, res) => {
+  const { username } = req.body;
+  const db = readDB();
+  const normalized = username.toLowerCase().trim();
+  if (db.users[normalized]) {
+    const baseLat = 28.6139;
+    const baseLng = 77.2090;
+    
+    // Generate 5 points moving from Connaught Place around Delhi
+    const now = Date.now();
+    const mockTrail = [
+      { latitude: baseLat, longitude: baseLng, timestamp: new Date(now - 20 * 60 * 60 * 1000).toISOString() }, // 20h ago CP
+      { latitude: baseLat + 0.015, longitude: baseLng - 0.01, timestamp: new Date(now - 15 * 60 * 60 * 1000).toISOString() }, // 15h ago Karol Bagh
+      { latitude: baseLat + 0.035, longitude: baseLng + 0.02, timestamp: new Date(now - 10 * 60 * 60 * 1000).toISOString() }, // 10h ago Chandni Chowk
+      { latitude: baseLat - 0.04, longitude: baseLng + 0.045, timestamp: new Date(now - 5 * 60 * 60 * 1000).toISOString() },  // 5h ago Nizamuddin / Lotus Temple
+      { latitude: baseLat - 0.078, longitude: baseLng - 0.013, timestamp: new Date(now).toISOString() }                     // Now Qutub Minar
+    ];
+
+    db.users[normalized].latitude = mockTrail[mockTrail.length - 1].latitude;
+    db.users[normalized].longitude = mockTrail[mockTrail.length - 1].longitude;
+    db.users[normalized].locationTimestamp = mockTrail[mockTrail.length - 1].timestamp;
+    db.users[normalized].locationHistory = mockTrail;
+
+    writeDB(db);
+    return res.json({ success: true, history: mockTrail });
+  }
+  return res.status(404).json({ error: 'User not found' });
 });
 
 // Auth: Unlock User (Admin only)
@@ -1703,10 +1842,13 @@ app.get('/api/audit-logs', (req, res) => {
     let operatorRole = log.operatorRole || 'User';
     if (user && user.role) {
       if (user.role === 'admin') operatorRole = 'Admin';
+      else if (user.role === 'manager') operatorRole = 'Manager';
       else if (user.role === 'manufacturer') operatorRole = 'Manufacturer';
       else if (user.role === 'salesperson') operatorRole = 'Sales Advisor';
     } else if (cleanUsername === 'admin') {
       operatorRole = 'Admin';
+    } else if (cleanUsername === 'manager') {
+      operatorRole = 'Manager';
     } else if (cleanUsername === 'manufacturer') {
       operatorRole = 'Manufacturer';
     } else if (cleanUsername === 'sales') {
@@ -1758,6 +1900,103 @@ app.post('/api/products', validateBody(productSchema), (req, res) => {
   res.json(newProduct);
 });
 
+// Products: Bulk Seed Official Senzo Catalog
+app.post('/api/products/bulk-seed', (req, res) => {
+  const { mode } = req.body; // 'replace' or 'append'
+  const db = readDB();
+
+  const SENZO_OFFICIAL_CATALOG = [
+    { name: 'SENZO ESSENATIAL W/O DISK', colors: ['WHITE', 'BLACK', 'GREY', 'RED', 'COFFIE', 'C-GREEN', 'SHINE BLUE', 'BLUE'] },
+    { name: 'SENZO CKD', colors: ['ANY OTHER'] },
+    { name: 'SENZO ESSENATIAL DISC', colors: ['Red', 'Black', 'WHITE', 'GREY', 'BLUE', 'C-GREEN', 'SHINE BLUE', 'MEHROON', 'YELLOW', 'GOLDEN', 'COFFIE'] },
+    { name: 'SENZO LODER', colors: ['BLACK'] },
+    { name: 'SENZO ESSENATIAL DISC 12"/10"', colors: ['Red', 'Black', 'WHITE', 'GREY', 'BLUE', 'C-GREEN', 'SILVER', 'SHINE BLUE', 'MEHROON', 'SKY BLUE', 'COFFIE'] },
+    { name: 'CITY XL 10"/10"', colors: ['BLACK', 'RED', 'C-GREEN', 'GOLDEN', 'WHITE', 'BLUE', 'GREY'] },
+    { name: 'UNCOMPLET', colors: ['WHITE', 'RED', 'SILVER'] },
+    { name: 'CITY XL 12"/10"', colors: ['BLACK', 'WHITE', 'C-GREEN', 'RED', 'BLUE', 'COFFIE', 'GREY'] },
+    { name: 'SENZO CITY R.L 10"/10"', colors: ['BLACK', 'WHITE', 'RED', 'GREY', 'BLUE'] },
+    { name: 'SENZO CITY RL 10"/10" UNCOMPLET', colors: ['RED', 'WHITE'] },
+    { name: 'SENZO CITY R.L 12"/10"', colors: ['BLACK', 'WHITE', 'C-GREEN', 'GREY', 'COFFIE', 'RED'] },
+    { name: 'SENZO CITY S.Q 10"/10"', colors: ['BLACK', 'WHITE', 'SILVER', 'GREY'] },
+    { name: 'SENZO POWER 12"/12"', colors: ['WHITE', 'BLACK', 'BLUE', 'GREY', 'C-GREEN', 'RED', 'GOLDEN'] },
+    { name: 'SENZO POWER 12"/10"', colors: ['BLACK', 'WHITE'] },
+    { name: 'SENZO POWER PLUS okinawa', colors: ['WHITE', 'GREY', 'C-GREEN', 'Red', 'BLUE', 'BLACK'] },
+    { name: 'SENZO POWER Plus NEO', colors: ['WHITE', 'BLACK', 'BLUE', 'C-GREEN', 'GREY', 'RED', 'GOLDEN'] },
+    { name: 'SENZO CITY PLUS U LIGHT', colors: ['BLACK', 'WHITE', 'GREY', 'RED', 'BLUE'] },
+    { name: 'SENZO CITY PLUS NEO JALI', colors: ['BLACK', 'WHITE', 'BLUE', 'GREY', 'RED'] },
+    { name: 'SENZO CITY S.Q 10"/10" NEW', colors: ['BLACK', 'WHITE', 'RED', 'GREY'] },
+    { name: 'SENZO ESSENATIAL DISC 3W', colors: ['BLACK', 'WHITE', 'C-GREEN', 'GREY'] },
+    { name: 'SENZO CITY XL 3W', colors: ['RED'] },
+    { name: 'SENZO POWER +NEO (STAR LIGHT)', colors: ['GREY', 'BLACK', 'WHITE', 'C-GREEN'] },
+    { name: 'SENZO POWER (HYBRID)', colors: ['GREY', 'BLACK', 'WHITE', 'RED', 'C-GREEN'] },
+    { name: 'SENZO POWER+XL', colors: ['GREY', 'BLACK', 'WHITE', 'GOLDEN'] },
+    { name: 'ARCHAR', colors: ['RED', 'BLUE', 'GREY', 'WHITE'] },
+    { name: 'OLD SCOOTY', colors: ['YELLOW', 'MIX'] },
+    { name: 'SENZO POWER 10/10', colors: ['BLACK', 'WHITE', 'GREY'] },
+    { name: 'SENZO CITY + KGF', colors: ['BLACK', 'WHITE', 'RED', 'GREY'] },
+    { name: 'SENZO CITY PLUS PRO', colors: ['BLACK', 'WHITE', 'C-GREEN', 'GREY'] },
+    { name: 'SENZO LODER TWO WHEELS', colors: ['BLACK'] },
+    { name: 'SENZO LODER THREE WHEELS', colors: ['BLACK'] },
+    { name: 'SENZO CITY MAGIC (OLA)', colors: ['BLACK', 'WHITE', 'RED', 'BLUE', 'C-GREEN', 'GREY'] },
+    { name: 'SENZO CITY PLUS PRO BMW', colors: ['BLACK', 'WHITE', 'BLUE', 'RED', 'GREY'] },
+    { name: 'SENZO CITY RL SWIFT', colors: ['BLACK', 'WHITE', 'GREY', 'C-GREEN', 'BLUE'] },
+    { name: 'SENZO POWER PLUS PRO', colors: ['BLACK', 'WHITE', 'GREY', 'C-GREEN', 'BLUE'] },
+    { name: 'SENZO CITY XL PRO 12/12', colors: ['BLACK', 'WHITE', 'GREY', 'RED', 'C-GREEN', 'BLUE'] },
+    { name: 'SENZO POWER TURBO (E4)', colors: ['BLACK', 'WHITE', 'GREY', 'RED', 'C-GREEN', 'BLUE'] },
+    { name: 'SENZO SENZO ESSENATIAL DISC 12"/10" CKD', colors: ['ANY OTHER'] },
+    { name: 'SENZO POWER TURBO CKD (E4)', colors: ['ANY OTHER'] },
+    { name: 'SENZO CITY RL SWIFT CKD', colors: ['ANY OTHER'] },
+    { name: 'SENZO POWER PLUS PRO CKD', colors: ['ANY OTHER'] },
+    { name: 'SENZO CITY MAGIC (OLA) CKD', colors: ['ANY OTHER'] },
+    { name: 'STAFF USE /OLD SCOOTY', colors: ['BLACK'] }
+  ];
+
+  let seedCount = 0;
+  if (mode === 'replace') {
+    // Overwrite existing products
+    db.products = SENZO_OFFICIAL_CATALOG.map((p, idx) => ({
+      id: `prod-senzo-${idx}-${Date.now()}`,
+      name: p.name,
+      colors: p.colors
+    }));
+    seedCount = db.products.length;
+  } else {
+    // Append or update existing products
+    SENZO_OFFICIAL_CATALOG.forEach((p, idx) => {
+      const existingIdx = db.products.findIndex(existing => existing.name.toLowerCase() === p.name.toLowerCase());
+      if (existingIdx === -1) {
+        db.products.push({
+          id: `prod-senzo-append-${idx}-${Date.now()}`,
+          name: p.name,
+          colors: p.colors
+        });
+        seedCount++;
+      } else {
+        // Merge colors or update colors to match the spreadsheet
+        db.products[existingIdx].colors = Array.from(new Set([...db.products[existingIdx].colors, ...p.colors]));
+      }
+    });
+  }
+
+  writeDB(db);
+
+  // Add an audit log for seeding
+  const auditId = `audit-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+  db.auditLogs.unshift({
+    id: auditId,
+    action: 'product_seeding',
+    timestamp: new Date().toISOString(),
+    username: req.body.operator || 'system',
+    operator: req.body.operator || 'System Seeder',
+    operatorName: req.body.operator || 'System Seeder',
+    operatorRole: 'Admin',
+    details: `Seeded ${seedCount} models from the official Senzo spreadsheet.`
+  });
+  writeDB(db);
+
+  res.json({ success: true, count: seedCount, total: db.products.length });
+});
+
 // Products: Update
 app.post('/api/products/update', validateBody(productUpdateSchema), (req, res) => {
   const { id, name, colors } = req.body;
@@ -1801,7 +2040,7 @@ app.get('/api/buyers', (req, res) => {
 
 // Buyers: Add
 app.post('/api/buyers', validateBody(buyerSchema), (req, res) => {
-  const { name, contact } = req.body;
+  const { name, contact, address, gstNo, addressProof, buyerType } = req.body;
 
   const db = readDB();
 
@@ -1812,7 +2051,11 @@ app.post('/api/buyers', validateBody(buyerSchema), (req, res) => {
   const newBuyer: Buyer = {
     id: `buy-${Date.now()}`,
     name,
-    contact: contact || undefined
+    contact: contact || undefined,
+    address: address || undefined,
+    gstNo: gstNo || undefined,
+    addressProof: addressProof || undefined,
+    buyerType: buyerType || undefined
   };
 
   db.buyers.push(newBuyer);
@@ -1831,7 +2074,7 @@ app.post('/api/buyers', validateBody(buyerSchema), (req, res) => {
 
 // Buyers: Update
 app.post('/api/buyers/update', validateBody(buyerUpdateSchema), (req, res) => {
-  const { id, name, contact } = req.body;
+  const { id, name, contact, address, gstNo, addressProof, buyerType } = req.body;
   const db = readDB();
   const buyerIndex = db.buyers.findIndex(b => b.id === id);
   if (buyerIndex === -1) {
@@ -1845,6 +2088,10 @@ app.post('/api/buyers/update', validateBody(buyerUpdateSchema), (req, res) => {
   const oldName = db.buyers[buyerIndex].name;
   db.buyers[buyerIndex].name = name;
   db.buyers[buyerIndex].contact = contact ? contact.trim() : undefined;
+  db.buyers[buyerIndex].address = address ? address.trim() : undefined;
+  db.buyers[buyerIndex].gstNo = gstNo ? gstNo.trim() : undefined;
+  db.buyers[buyerIndex].addressProof = addressProof ? addressProof.trim() : undefined;
+  db.buyers[buyerIndex].buyerType = buyerType || undefined;
 
   // Update references if name changed
   if (oldName !== name) {
@@ -1929,12 +2176,35 @@ app.post('/api/battery-sales', validateBody(batterySaleSchema), (req, res) => {
     isUnderWarranty,
     warrantyDurationMonths,
     status, // 'sold' | 'hold'
-    heldFor
+    heldFor,
+    serialNumbers
   } = req.body;
 
   const db = readDB();
   if (!db.batterySales) {
     db.batterySales = [];
+  }
+
+  // Duplicate Check
+  if (serialNumbers && Array.isArray(serialNumbers)) {
+    for (const sn of serialNumbers) {
+      const cleanSn = String(sn).trim().toUpperCase();
+      if (!cleanSn) continue;
+
+      const existsInSales = db.batterySales.some(sale => 
+        sale.status !== 'hold' && sale.serialNumbers && sale.serialNumbers.map(s => s.trim().toUpperCase()).includes(cleanSn)
+      );
+      if (existsInSales) {
+        return res.status(400).json({ error: `Duplicate error: Battery Serial Number '${cleanSn}' has already been sold/dispatched.` });
+      }
+
+      const existsInScooters = db.scooterUnits && db.scooterUnits.some(scoot => 
+        scoot.batterySerials && scoot.batterySerials.map(s => s.trim().toUpperCase()).includes(cleanSn)
+      );
+      if (existsInScooters) {
+        return res.status(400).json({ error: `Duplicate error: Battery Serial Number '${cleanSn}' has already been linked to an assembled scooter.` });
+      }
+    }
   }
 
   const isHold = status === 'hold';
@@ -1955,7 +2225,8 @@ app.post('/api/battery-sales', validateBody(batterySaleSchema), (req, res) => {
     status: isHold ? 'hold' : 'sold',
     heldFor: isHold ? (heldFor || buyerName) : undefined,
     heldBy: isHold ? (operator || 'Operator') : undefined,
-    holdDate: isHold ? timestamp : undefined
+    holdDate: isHold ? timestamp : undefined,
+    serialNumbers: serialNumbers || undefined
   };
 
   db.batterySales.push(newSale);
@@ -2075,11 +2346,40 @@ app.get('/api/battery-imports', (req, res) => {
 
 // Battery Imports: Add
 app.post('/api/battery-imports', validateBody(batteryImportSchema), (req, res) => {
-  const { batterySeries, startNo, endNo, quantity, operator, supplierName, containerId, notes } = req.body;
+  const { batterySeries, startNo, endNo, quantity, operator, supplierName, containerId, notes, billNo, stockInNo, serialNumbers, warrantyDurationMonths } = req.body;
 
   const db = readDB();
   if (!db.batteryImports) {
     db.batteryImports = [];
+  }
+
+  // Duplicate Check
+  if (serialNumbers && Array.isArray(serialNumbers)) {
+    for (const sn of serialNumbers) {
+      const cleanSn = String(sn).trim().toUpperCase();
+      if (!cleanSn) continue;
+
+      const existsInImports = db.batteryImports.some(imp => 
+        imp.serialNumbers && imp.serialNumbers.map(s => s.trim().toUpperCase()).includes(cleanSn)
+      );
+      if (existsInImports) {
+        return res.status(400).json({ error: `Duplicate error: Battery Serial Number '${cleanSn}' has already been imported/registered.` });
+      }
+
+      const existsInScooters = db.scooterUnits && db.scooterUnits.some(scoot => 
+        scoot.batterySerials && scoot.batterySerials.map(s => s.trim().toUpperCase()).includes(cleanSn)
+      );
+      if (existsInScooters) {
+        return res.status(400).json({ error: `Duplicate error: Battery Serial Number '${cleanSn}' has already been linked to an assembled scooter.` });
+      }
+
+      const existsInSales = db.batterySales && db.batterySales.some(sale => 
+        sale.serialNumbers && sale.serialNumbers.map(s => s.trim().toUpperCase()).includes(cleanSn)
+      );
+      if (existsInSales) {
+        return res.status(400).json({ error: `Duplicate error: Battery Serial Number '${cleanSn}' has already been sold/dispatched.` });
+      }
+    }
   }
 
   const newImport: BatteryImport = {
@@ -2092,7 +2392,11 @@ app.post('/api/battery-imports', validateBody(batteryImportSchema), (req, res) =
     operator: operator || 'system',
     supplierName: supplierName || undefined,
     containerId: containerId || undefined,
-    notes: notes || undefined
+    notes: notes || undefined,
+    billNo: billNo || undefined,
+    stockInNo: stockInNo || undefined,
+    serialNumbers: serialNumbers || undefined,
+    warrantyDurationMonths: warrantyDurationMonths || undefined
   };
 
   db.batteryImports.push(newImport);
@@ -2137,12 +2441,35 @@ app.post('/api/charger-sales', validateBody(chargerSaleSchema), (req, res) => {
     isUnderWarranty,
     warrantyDurationMonths,
     status, // 'sold' | 'hold'
-    heldFor
+    heldFor,
+    serialNumbers
   } = req.body;
 
   const db = readDB();
   if (!db.chargerSales) {
     db.chargerSales = [];
+  }
+
+  // Duplicate Check
+  if (serialNumbers && Array.isArray(serialNumbers)) {
+    for (const sn of serialNumbers) {
+      const cleanSn = String(sn).trim().toUpperCase();
+      if (!cleanSn) continue;
+
+      const existsInSales = db.chargerSales.some(sale => 
+        sale.status !== 'hold' && sale.serialNumbers && sale.serialNumbers.map(s => s.trim().toUpperCase()).includes(cleanSn)
+      );
+      if (existsInSales) {
+        return res.status(400).json({ error: `Duplicate error: Charger Serial Number '${cleanSn}' has already been sold/dispatched.` });
+      }
+
+      const existsInScooters = db.scooterUnits && db.scooterUnits.some(scoot => 
+        scoot.chargerSerial && scoot.chargerSerial.trim().toUpperCase() === cleanSn
+      );
+      if (existsInScooters) {
+        return res.status(400).json({ error: `Duplicate error: Charger Serial Number '${cleanSn}' has already been linked to an assembled scooter.` });
+      }
+    }
   }
 
   const isHold = status === 'hold';
@@ -2163,7 +2490,8 @@ app.post('/api/charger-sales', validateBody(chargerSaleSchema), (req, res) => {
     status: isHold ? 'hold' : 'sold',
     heldFor: isHold ? (heldFor || buyerName) : undefined,
     heldBy: isHold ? (operator || 'Operator') : undefined,
-    holdDate: isHold ? timestamp : undefined
+    holdDate: isHold ? timestamp : undefined,
+    serialNumbers: serialNumbers || undefined
   };
 
   db.chargerSales.push(newSale);
@@ -2234,11 +2562,40 @@ app.get('/api/charger-imports', (req, res) => {
 
 // Charger Imports: Add
 app.post('/api/charger-imports', validateBody(chargerImportSchema), (req, res) => {
-  const { chargerType, startNo, endNo, quantity, operator, supplierName, containerId, notes } = req.body;
+  const { chargerType, startNo, endNo, quantity, operator, supplierName, containerId, notes, billNo, stockInNo, serialNumbers, warrantyDurationMonths } = req.body;
 
   const db = readDB();
   if (!db.chargerImports) {
     db.chargerImports = [];
+  }
+
+  // Duplicate Check
+  if (serialNumbers && Array.isArray(serialNumbers)) {
+    for (const sn of serialNumbers) {
+      const cleanSn = String(sn).trim().toUpperCase();
+      if (!cleanSn) continue;
+
+      const existsInImports = db.chargerImports.some(imp => 
+        imp.serialNumbers && imp.serialNumbers.map(s => s.trim().toUpperCase()).includes(cleanSn)
+      );
+      if (existsInImports) {
+        return res.status(400).json({ error: `Duplicate error: Charger Serial Number '${cleanSn}' has already been imported/registered.` });
+      }
+
+      const existsInScooters = db.scooterUnits && db.scooterUnits.some(scoot => 
+        scoot.chargerSerial && scoot.chargerSerial.trim().toUpperCase() === cleanSn
+      );
+      if (existsInScooters) {
+        return res.status(400).json({ error: `Duplicate error: Charger Serial Number '${cleanSn}' has already been linked to an assembled scooter.` });
+      }
+
+      const existsInSales = db.chargerSales && db.chargerSales.some(sale => 
+        sale.serialNumbers && sale.serialNumbers.map(s => s.trim().toUpperCase()).includes(cleanSn)
+      );
+      if (existsInSales) {
+        return res.status(400).json({ error: `Duplicate error: Charger Serial Number '${cleanSn}' has already been sold/dispatched.` });
+      }
+    }
   }
 
   const newImport: ChargerImport = {
@@ -2251,7 +2608,11 @@ app.post('/api/charger-imports', validateBody(chargerImportSchema), (req, res) =
     operator: operator || 'system',
     supplierName: supplierName || undefined,
     containerId: containerId || undefined,
-    notes: notes || undefined
+    notes: notes || undefined,
+    billNo: billNo || undefined,
+    stockInNo: stockInNo || undefined,
+    serialNumbers: serialNumbers || undefined,
+    warrantyDurationMonths: warrantyDurationMonths || undefined
   };
 
   db.chargerImports.push(newImport);
@@ -2264,7 +2625,7 @@ app.post('/api/charger-imports', validateBody(chargerImportSchema), (req, res) =
 // Customizable Battery Series Types: List & Save
 app.get('/api/battery-types', (req, res) => {
   const db = readDB();
-  res.json(db.batterySeriesList || ['Alpha Series', 'Beta Series', 'Delta Series', 'Omega Series', 'Pro-Pack Series']);
+  res.json(db.batterySeriesList || ['Lithium 60V, 24AH', 'Lithium 60V, 30AH', 'Lithium 60V, 10AH', 'Lithium 48V, 30AH', 'Lithium 48V, 24AH', 'Lithium 60V, 28AH', 'Lithium 72V, 42AH', 'Lead Acid 12V']);
 });
 
 app.post('/api/battery-types', validateBody(typeListSchema), (req, res) => {
@@ -2279,7 +2640,7 @@ app.post('/api/battery-types', validateBody(typeListSchema), (req, res) => {
 // Customizable Charger Types: List & Save
 app.get('/api/charger-types', (req, res) => {
   const db = readDB();
-  res.json(db.chargerTypeList || ['48V Charger', '60V Charger', '72V Charger']);
+  res.json(db.chargerTypeList || ['Lithium Charger 54.6V/6A', 'Lithium Charger 69.4V/6A', 'Lithium Charger 67.2V/6A', 'Lead Acid Charger 48V', 'Lead Acid Charger 60V', 'Lead Acid Charger 72V']);
 });
 
 app.post('/api/charger-types', validateBody(typeListSchema), (req, res) => {
@@ -2311,6 +2672,7 @@ app.post('/api/scooter-units', validateBody(scooterUnitSchema), (req, res) => {
     frontTireSize,
     rearTireSize,
     tireSize,
+    brakeType,
     customizationNotes,
     buyerName,
     buyerContact,
@@ -2323,7 +2685,11 @@ app.post('/api/scooter-units', validateBody(scooterUnitSchema), (req, res) => {
     batteryWarrantyFlags,
     batteryWarrantyMonths,
     warrantyNotes,
-    operator
+    operator,
+    billNo,
+    stockInNo,
+    salesBillNo,
+    deliveryChallanNo
   } = req.body;
 
   const db = readDB();
@@ -2349,13 +2715,16 @@ app.post('/api/scooter-units', validateBody(scooterUnitSchema), (req, res) => {
       frontTireSize: frontTireSize || '12-inch',
       rearTireSize: rearTireSize || '12-inch',
       tireSize: rearTireSize || '12-inch', // Default standard to rear tire
+      brakeType,
       batterySerials: [],
       status: 'available',
       scooterWarrantyStatus: 'None',
       batteryWarrantyStatus: 'None',
       createdOperator: operator,
       createdTimestamp: timestamp,
-      lastUpdatedTimestamp: timestamp
+      lastUpdatedTimestamp: timestamp,
+      billNo: billNo || undefined,
+      stockInNo: stockInNo || undefined
     };
 
     db.scooterUnits.push(newUnit);
@@ -2402,6 +2771,20 @@ app.post('/api/scooter-units', validateBody(scooterUnitSchema), (req, res) => {
     unit.batteryWarrantyMonths = batteryWarrantyMonths || [];
     unit.status = 'sold';
     unit.saleDate = timestamp;
+    unit.salesBillNo = salesBillNo || '';
+    unit.deliveryChallanNo = deliveryChallanNo || '';
+    
+    // Save integrated charger options
+    unit.chargerIncluded = req.body.chargerIncluded;
+    unit.chargerType = req.body.chargerType;
+    unit.chargerSerial = req.body.chargerSerial;
+    unit.chargerWarrantyActive = req.body.chargerWarrantyActive;
+    unit.chargerWarrantyMonths = req.body.chargerWarrantyMonths;
+    unit.chargerWarrantyStatus = req.body.chargerWarrantyActive ? 'Active' : 'None';
+
+    // Save scooter custom frame warranty options
+    unit.scooterWarrantyMonths = req.body.scooterWarrantyMonths;
+    unit.scooterWarrantyActive = req.body.scooterWarrantyActive;
     
     // Warranty info added right during sell/POS
     unit.scooterWarrantyStatus = scooterWarrantyStatus || 'None';
@@ -2409,6 +2792,29 @@ app.post('/api/scooter-units', validateBody(scooterUnitSchema), (req, res) => {
     unit.batteryWarrantyStatus = batteryWarrantyStatus || 'None';
     unit.batteryWarrantyExpiry = batteryWarrantyExpiry || undefined;
     unit.warrantyNotes = warrantyNotes || '';
+
+    // Register charger sale if included
+    if (req.body.chargerIncluded && req.body.chargerType) {
+      if (!db.chargerSales) {
+        db.chargerSales = [];
+      }
+      db.chargerSales.push({
+        id: `chgsale-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        buyerName: buyerName,
+        chargerType: req.body.chargerType,
+        startNo: req.body.chargerSerial || 'N/A',
+        endNo: req.body.chargerSerial || 'N/A',
+        quantity: 1,
+        saleDate: timestamp,
+        operator: operator || 'Sales Advisor',
+        notes: `Sold integrated with Scooter frame (Chassis: ${unit.chassisNo})`,
+        isUnderWarranty: !!req.body.chargerWarrantyActive,
+        warrantyDurationMonths: req.body.chargerWarrantyActive ? Number(req.body.chargerWarrantyMonths || 12) : undefined,
+        status: 'sold',
+        billNo: salesBillNo || undefined,
+        deliveryChallanNo: deliveryChallanNo || undefined
+      });
+    }
 
     // Auto log transaction out in stock ledger
     const autoOutLog: StockLog = {
@@ -2421,11 +2827,12 @@ app.post('/api/scooter-units', validateBody(scooterUnitSchema), (req, res) => {
       buyerName,
       timestamp,
       operator: operator || 'Sales Advisor',
-      notes: `Scooter sold and certified (Chassis: ${unit.chassisNo}, Batteries Assigned: ${unit.batterySerials.length})`
+      notes: `Scooter sold and certified (Chassis: ${unit.chassisNo}, Batteries: ${unit.batterySerials.length}, Charger: ${req.body.chargerIncluded ? 'Yes' : 'No'})`,
+      billNo: salesBillNo || undefined
     };
     db.stockLogs.push(autoOutLog);
     
-    addAuditLog(db, operator || 'system', operator || 'system', 'pos_scooter_sale', `Completed POS retail checkout sale for Scooter (Chassis: ${unit.chassisNo}) to Buyer: ${buyerName}. Batteries linked: [${unit.batterySerials.join(', ') || 'none'}].`);
+    addAuditLog(db, operator || 'system', operator || 'system', 'pos_scooter_sale', `Completed POS retail checkout sale for Scooter (Chassis: ${unit.chassisNo}) to Buyer: ${buyerName}. Bill No: ${salesBillNo || 'N/A'}, Challan No: ${deliveryChallanNo || 'N/A'}. Batteries linked: [${unit.batterySerials.join(', ') || 'none'}]. Charger linked: ${req.body.chargerIncluded ? `${req.body.chargerType} (${req.body.chargerSerial || 'No Serial'})` : 'none'}.`);
 
     if (db.sheetConfig.enabled && db.sheetConfig.webhookUrl) {
       postToGoogleSheets(db.sheetConfig.webhookUrl, {
@@ -2472,8 +2879,11 @@ app.post('/api/scooter-units/bulk-create', validateBody(scooterBulkCreateSchema)
     sourceChannel,
     frontTireSize,
     rearTireSize,
+    brakeType,
     items, // array of { chassisNo, motorNo, controllerNo }
-    operator
+    operator,
+    billNo,
+    stockInNo
   } = req.body;
 
   const db = readDB();
@@ -2517,13 +2927,16 @@ app.post('/api/scooter-units/bulk-create', validateBody(scooterBulkCreateSchema)
       frontTireSize: frontTireSize || '12-inch',
       rearTireSize: rearTireSize || '12-inch',
       tireSize: rearTireSize || '12-inch',
+      brakeType,
       batterySerials: [],
       status: 'available',
       scooterWarrantyStatus: 'None',
       batteryWarrantyStatus: 'None',
       createdOperator: operator,
       createdTimestamp: timestamp,
-      lastUpdatedTimestamp: timestamp
+      lastUpdatedTimestamp: timestamp,
+      billNo: billNo || undefined,
+      stockInNo: stockInNo || undefined
     };
 
     db.scooterUnits.push(newUnit);
@@ -2566,7 +2979,9 @@ app.post('/api/scooter-units/bulk-pos', validateBody(scooterBulkPosSchema), (req
     warrantyNotes,
     operator,
     sales, // array of { id: string, batterySerials: string[], batteryWarrantyFlags: boolean[] }
-    status // 'sold' | 'hold'
+    status, // 'sold' | 'hold'
+    salesBillNo,
+    deliveryChallanNo
   } = req.body;
 
   const db = readDB();
@@ -2603,6 +3018,8 @@ app.post('/api/scooter-units/bulk-pos', validateBody(scooterBulkPosSchema), (req
       unit.buyerName = buyerName;
       unit.buyerContact = buyerContact || '';
       unit.salesPrice = salesPrice ? Number(salesPrice) : undefined;
+      unit.salesBillNo = salesBillNo || '';
+      unit.deliveryChallanNo = deliveryChallanNo || '';
       
       if (sale.batterySerials && Array.isArray(sale.batterySerials) && sale.batterySerials.length > 0) {
         unit.batterySerials = sale.batterySerials.filter(b => b && b.trim() !== '').map(b => b.trim().toUpperCase());
@@ -2646,7 +3063,8 @@ app.post('/api/scooter-units/bulk-pos', validateBody(scooterBulkPosSchema), (req
           buyerName,
           timestamp,
           operator,
-          notes: `Scooter sold in bulk (Chassis: ${unit.chassisNo}, Batteries Assigned: ${unit.batterySerials.length})`
+          notes: `Scooter sold in bulk (Chassis: ${unit.chassisNo}, Batteries Assigned: ${unit.batterySerials.length})`,
+          billNo: salesBillNo || undefined
         };
         db.stockLogs.push(autoOutLog);
       }
@@ -2656,7 +3074,7 @@ app.post('/api/scooter-units/bulk-pos', validateBody(scooterBulkPosSchema), (req
     }
   });
 
-  addAuditLog(db, operator, operator, isHold ? 'bulk_scooter_hold' : 'bulk_scooter_sale', `Completed bulk ${isHold ? 'hold reservation' : 'sale dispatch'} of ${sales.length} Scooters to Buyer: ${buyerName}.`);
+  addAuditLog(db, operator, operator, isHold ? 'bulk_scooter_hold' : 'bulk_scooter_sale', `Completed bulk ${isHold ? 'hold reservation' : 'sale dispatch'} of ${sales.length} Scooters to Buyer: ${buyerName}. Bill No: ${salesBillNo || 'N/A'}, Challan No: ${deliveryChallanNo || 'N/A'}.`);
   writeDB(db);
 
   // Sync to sheet
@@ -2687,7 +3105,7 @@ app.get('/api/stock-logs', (req, res) => {
 
 // StockLogs: Add (Bulk adjustment / generic logging)
 app.post('/api/stock-logs', validateBody(stockLogSchema), (req, res) => {
-  const { modelName, color, type, sourceChannel, quantity, buyerName, operator, notes } = req.body;
+  const { modelName, color, type, sourceChannel, quantity, buyerName, operator, notes, billNo, stockInNo } = req.body;
 
   const db = readDB();
   const timestamp = new Date().toISOString();
@@ -2702,7 +3120,9 @@ app.post('/api/stock-logs', validateBody(stockLogSchema), (req, res) => {
     buyerName: type === 'out' ? buyerName : undefined,
     timestamp,
     operator,
-    notes: notes || ''
+    notes: notes || '',
+    billNo: billNo || undefined,
+    stockInNo: stockInNo || undefined
   };
 
   db.stockLogs.push(newLog);
@@ -2717,6 +3137,219 @@ app.post('/api/stock-logs', validateBody(stockLogSchema), (req, res) => {
   }
 
   res.json(newLog);
+});
+
+// Helper for warranty claims to apply replacement of serial numbers inside the database
+function applyReplacementInDB(
+  db: any,
+  type: 'scooter' | 'battery' | 'charger',
+  saleId: string,
+  originalSerial: string,
+  newSerial: string,
+  operator: string,
+  replacementWarrantyMonths?: number
+) {
+  if (type === 'scooter') {
+    const scootIdx = db.scooterUnits.findIndex((s: any) => s.id === saleId);
+    if (scootIdx !== -1) {
+      const scoot = db.scooterUnits[scootIdx];
+      let updated = false;
+
+      // Check if originalSerial matches chassisNo
+      if (scoot.chassisNo === originalSerial) {
+        scoot.chassisNo = newSerial;
+        scoot.warrantyNotes = (scoot.warrantyNotes || '') + `\n[Warranty Exchange] Frame Chassis exchanged from ${originalSerial} to ${newSerial} by ${operator} on ${new Date().toLocaleDateString()}`;
+        updated = true;
+      } 
+      // Check if originalSerial matches any battery serials
+      else if (scoot.batterySerials && scoot.batterySerials.includes(originalSerial)) {
+        const batIndex = scoot.batterySerials.indexOf(originalSerial);
+        if (batIndex !== -1) {
+          scoot.batterySerials[batIndex] = newSerial;
+          if (replacementWarrantyMonths !== undefined && replacementWarrantyMonths !== null) {
+            if (!scoot.batteryWarrantyMonths) {
+              scoot.batteryWarrantyMonths = scoot.batterySerials.map(() => 12);
+            }
+            scoot.batteryWarrantyMonths[batIndex] = replacementWarrantyMonths;
+          }
+          scoot.warrantyNotes = (scoot.warrantyNotes || '') + `\n[Warranty Exchange] Battery ${originalSerial} exchanged for ${newSerial} by ${operator} on ${new Date().toLocaleDateString()} (Custom remaining warranty: ${replacementWarrantyMonths !== undefined ? replacementWarrantyMonths + ' months' : 'unchanged'})`;
+          updated = true;
+        }
+      }
+      // Check if originalSerial matches chargerSerial
+      else if (scoot.chargerSerial === originalSerial) {
+        scoot.chargerSerial = newSerial;
+        scoot.warrantyNotes = (scoot.warrantyNotes || '') + `\n[Warranty Exchange] Charger ${originalSerial} exchanged for ${newSerial} by ${operator} on ${new Date().toLocaleDateString()}`;
+        updated = true;
+      }
+
+      if (updated) {
+        scoot.lastUpdatedBy = operator;
+        scoot.lastUpdatedTimestamp = new Date().toISOString();
+        db.scooterUnits[scootIdx] = scoot;
+      }
+    }
+  } else if (type === 'battery') {
+    const batIdx = (db.batterySales || []).findIndex((b: any) => b.id === saleId);
+    if (batIdx !== -1 && db.batterySales) {
+      const sale = db.batterySales[batIdx];
+      if (sale.batterySerials && sale.batterySerials.includes(originalSerial)) {
+        sale.batterySerials = sale.batterySerials.map((s: string) => s === originalSerial ? newSerial : s);
+      } else if (sale.batterySeries === originalSerial) {
+        sale.batterySeries = newSerial;
+      }
+
+      if (replacementWarrantyMonths !== undefined && replacementWarrantyMonths !== null) {
+        sale.warrantyDurationMonths = replacementWarrantyMonths;
+      }
+
+      sale.notes = (sale.notes || '') + `\n[Warranty Exchange] Battery serial ${originalSerial} exchanged for ${newSerial} by ${operator} on ${new Date().toLocaleDateString()} (Custom remaining warranty: ${replacementWarrantyMonths !== undefined ? replacementWarrantyMonths + ' months' : 'unchanged'})`;
+      db.batterySales[batIdx] = sale;
+    }
+  } else if (type === 'charger') {
+    const chgIdx = (db.chargerSales || []).findIndex((c: any) => c.id === saleId);
+    if (chgIdx !== -1 && db.chargerSales) {
+      const sale = db.chargerSales[chgIdx];
+      sale.notes = (sale.notes || '') + `\n[Warranty Exchange] Charger serial ${originalSerial} exchanged for ${newSerial} by ${operator} on ${new Date().toLocaleDateString()}`;
+      db.chargerSales[chgIdx] = sale;
+    }
+  }
+}
+
+// Warranty Claims: Get All
+app.get('/api/warranty-claims', (req, res) => {
+  const db = readDB();
+  res.json(db.warrantyClaims || []);
+});
+
+// Warranty Claims: Create/Update claim
+app.post('/api/warranty-claims', (req, res) => {
+  const db = readDB();
+  if (!db.warrantyClaims) {
+    db.warrantyClaims = [];
+  }
+
+  const {
+    id,
+    originalSaleId,
+    originalSaleType,
+    originalSerialNo,
+    buyerName,
+    buyerContact,
+    saleDate,
+    warrantyDurationMonths,
+    issueDescription,
+    status,
+    actionTaken,
+    newSerialNo,
+    notes,
+    operatorName,
+    operatorUsername,
+    replacementWarrantyMonths,
+    isBattery
+  } = req.body;
+
+  if (!originalSaleId || !originalSaleType || !originalSerialNo || !buyerName || !issueDescription || !status) {
+    return res.status(400).json({ error: 'Missing required warranty claim fields.' });
+  }
+
+  const claimDate = req.body.claimDate || new Date().toISOString().split('T')[0];
+  const lastUpdatedTimestamp = new Date().toISOString();
+
+  if (id) {
+    // Update existing
+    const idx = db.warrantyClaims.findIndex((c: any) => c.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Warranty claim not found.' });
+    }
+
+    const oldClaim = db.warrantyClaims[idx];
+    const updatedClaim = {
+      ...oldClaim,
+      issueDescription,
+      status,
+      actionTaken,
+      newSerialNo,
+      notes,
+      operatorName,
+      lastUpdatedTimestamp,
+      replacementWarrantyMonths: replacementWarrantyMonths !== undefined ? Number(replacementWarrantyMonths) : oldClaim.replacementWarrantyMonths,
+      isBattery: isBattery !== undefined ? Boolean(isBattery) : oldClaim.isBattery
+    };
+
+    db.warrantyClaims[idx] = updatedClaim;
+
+    addAuditLog(
+      db,
+      operatorUsername || 'system',
+      operatorName,
+      'WARRANTY_CLAIM_UPDATE',
+      `Updated warranty claim ${id} for ${originalSaleType} (${originalSerialNo}) to status: ${status}.`
+    );
+
+    if (status === 'exchanged' && newSerialNo) {
+      applyReplacementInDB(
+        db,
+        originalSaleType,
+        originalSaleId,
+        originalSerialNo,
+        newSerialNo,
+        operatorName,
+        replacementWarrantyMonths !== undefined ? Number(replacementWarrantyMonths) : undefined
+      );
+    }
+
+    writeDB(db);
+    res.json(updatedClaim);
+  } else {
+    // Create new
+    const newId = `WC-${Date.now().toString().slice(-6)}`;
+    const newClaim = {
+      id: newId,
+      claimDate,
+      originalSaleId,
+      originalSaleType,
+      originalSerialNo,
+      buyerName,
+      buyerContact,
+      saleDate,
+      warrantyDurationMonths,
+      issueDescription,
+      status,
+      actionTaken,
+      newSerialNo,
+      operatorName,
+      notes,
+      lastUpdatedTimestamp,
+      replacementWarrantyMonths: replacementWarrantyMonths !== undefined ? Number(replacementWarrantyMonths) : undefined,
+      isBattery: isBattery !== undefined ? Boolean(isBattery) : undefined
+    };
+
+    db.warrantyClaims.push(newClaim);
+
+    addAuditLog(
+      db,
+      operatorUsername || 'system',
+      operatorName,
+      'WARRANTY_CLAIM_CREATE',
+      `Created warranty claim ${newId} for ${originalSaleType} (${originalSerialNo}).`
+    );
+
+    if (status === 'exchanged' && newSerialNo) {
+      applyReplacementInDB(
+        db,
+        originalSaleType,
+        originalSaleId,
+        originalSerialNo,
+        newSerialNo,
+        operatorName,
+        replacementWarrantyMonths !== undefined ? Number(replacementWarrantyMonths) : undefined
+      );
+    }
+
+    writeDB(db);
+    res.json(newClaim);
+  }
 });
 
 // SheetConfig: Get
@@ -2815,8 +3448,20 @@ app.post('/api/sheet-config/pull-all', async (req, res) => {
   }
 });
 
-// Vite Middleware & Static Serving setup
+
+// ─── APK Auto-Updater: Version Check Endpoint ──────────────────────────────
+// When you build a new APK, bump the version number here.
+// Upload the new app-release.apk to the public/ folder and push to GitHub.
+app.get('/api/version', (req, res) => {
+  res.json({
+    version: "1.0.2",
+    apkUrl: "https://sumitdhaka0123.onrender.com/app-release.apk"
+  });
+});
+
+// ─── Vite Middleware & Static Serving setup ──────────────────────────────────
 async function startServer() {
+
   // First, hydrate from cloud Firestore
   const firestoreState = await hydrateFromFirestore();
   if (firestoreState) {
@@ -2860,69 +3505,12 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    
-app.get('/api/attendance', (req, res) => {
-  const db = readDB();
-  res.json(db.attendanceLogs || []);
-});
-
-app.post('/api/attendance/clock-in', validateBody(attendanceLogSchema), async (req, res) => {
-  const db = readDB();
-  if (!db.attendanceLogs) db.attendanceLogs = [];
-  const log = { id: Date.now().toString(), ...req.body };
-  db.attendanceLogs.push(log);
-  writeDB(db);
-  if (firebaseDb) {
-    await setDoc(doc(firebaseDb, 'attendanceLogs', log.id), log);
-  }
-  res.json(log);
-});
-
-app.post('/api/attendance/clock-out', validateBody(clockOutSchema), async (req, res) => {
-  const db = readDB();
-  if (!db.attendanceLogs) db.attendanceLogs = [];
-  
-  // Find the last clock-in without a clock-out for this user
-  const userLogs = db.attendanceLogs.filter(l => l.username === req.body.username && !l.clockOutTime);
-  if (userLogs.length > 0) {
-    const lastLog = userLogs[userLogs.length - 1];
-    lastLog.clockOutTime = req.body.clockOutTime;
-    writeDB(db);
-    if (firebaseDb) {
-      await setDoc(doc(firebaseDb, 'attendanceLogs', lastLog.id), lastLog);
+    // Serve the public/ folder for APK downloads and other static assets
+    const publicPath = path.join(process.cwd(), 'public');
+    if (fs.existsSync(publicPath)) {
+      app.use(express.static(publicPath));
     }
-    res.json(lastLog);
-  } else {
-    res.status(404).json({ error: 'No active clock-in found' });
-  }
-});
-
-app.get('/api/locations', (req, res) => {
-  const db = readDB();
-  res.json(db.liveLocations || {});
-});
-
-app.post('/api/locations', validateBody(liveLocationSchema), async (req, res) => {
-  const db = readDB();
-  if (!db.liveLocations) db.liveLocations = {};
-  db.liveLocations[req.body.username] = req.body;
-  writeDB(db);
-  if (firebaseDb) {
-    await setDoc(doc(firebaseDb, 'liveLocations', req.body.username), req.body);
-  }
-  res.json({ success: true });
-});
-
-    
-app.get('/api/version', (req, res) => {
-  // When you build a new APK, change the version here and upload the new app-release.apk to Render
-  res.json({
-    version: "1.0.1",
-    apkUrl: "https://sumitdhaka0123.onrender.com/app-release.apk"
-  });
-});
-
+    app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));
     });
@@ -2942,4 +3530,3 @@ app.get('/api/version', (req, res) => {
 }
 
 startServer();
-// Trigger restart to pull products

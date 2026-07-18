@@ -4,10 +4,13 @@ import {
   Users, UserPlus, Shield, ClipboardList, RefreshCw, Key, Trash2, Edit2, 
   Check, AlertCircle, Cloud, Activity, Search, Sparkles, User, Briefcase,
   Lock, Unlock, Printer, FileSpreadsheet, Calendar, ArrowDown, Filter, Clock,
-  Plus, X, Eye, EyeOff
+  Plus, X, Eye, EyeOff, MapPin, Compass, Navigation, Map
 } from 'lucide-react';
 import { SheetConfig, ScooterUnit, StockLog, BatterySale, BatteryImport, User as SessionUser } from '../types';
 import SheetSyncPanel from './SheetSyncPanel';
+import EmployeeMap from './EmployeeMap';
+import StaffUnifiedMap from './StaffUnifiedMap';
+import LocationTrailsMap from './LocationTrailsMap';
 
 interface SettingsPanelProps {
   sheetConfig: SheetConfig;
@@ -24,12 +27,15 @@ interface SettingsPanelProps {
 interface DBUser {
   id: string;
   username: string;
-  role: 'admin' | 'manufacturer' | 'salesperson';
+  role: 'admin' | 'manufacturer' | 'salesperson' | 'manager';
   name: string;
   locked?: boolean;
   failedAttempts?: number;
   approved?: boolean;
   passwordText?: string;
+  latitude?: number;
+  longitude?: number;
+  locationTimestamp?: string;
 }
 
 interface SystemAuditLog {
@@ -52,10 +58,19 @@ export default function SettingsPanel({
   stockLogs,
   currentUser
 }: SettingsPanelProps) {
-  const [subTab, setSubTab] = useState<'employees' | 'sheets' | 'audit'>('employees');
+  const [subTab, setSubTab] = useState<'employees' | 'sheets' | 'audit' | 'tracking' | 'trails'>('employees');
   
   // Employees list state
   const [employees, setEmployees] = useState<DBUser[]>([]);
+  const uniqueEmployees = useMemo(() => {
+    const seen = new Set();
+    return employees.filter(e => {
+      if (!e.id) return false;
+      if (seen.has(e.id)) return false;
+      seen.add(e.id);
+      return true;
+    });
+  }, [employees]);
   const [loadingEmployees, setLoadingEmployees] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -64,13 +79,93 @@ export default function SettingsPanel({
   // Selected employee for detailed intelligence
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
 
+  // Live employee location tracking states
+  const [showLocationMap, setShowLocationMap] = useState<boolean>(true);
+  const [isSimulatingLocation, setIsSimulatingLocation] = useState<boolean>(false);
+
+  const handleSimulateLocation = async (username: string) => {
+    setIsSimulatingLocation(true);
+    try {
+      // Delhi, India region (Volt Scooty Distribution Hub)
+      const baseLat = 28.6139; 
+      const baseLng = 77.2090;
+      const randomOffsetLat = (Math.random() - 0.5) * 0.04;
+      const randomOffsetLng = (Math.random() - 0.5) * 0.04;
+      const lat = baseLat + randomOffsetLat;
+      const lng = baseLng + randomOffsetLng;
+
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          latitude: lat,
+          longitude: lng,
+        }),
+      });
+
+      if (res.ok) {
+        await fetchEmployees();
+        setSuccessMsg(`Simulated live 24/7 telemetry coords updated for @${username}!`);
+        setShowLocationMap(true);
+        setTimeout(() => setSuccessMsg(''), 4000);
+      } else {
+        setErrorMsg('Failed to broadcast simulated telemetry.');
+        setTimeout(() => setErrorMsg(''), 4000);
+      }
+    } catch (err) {
+      setErrorMsg('Error triggering telemetry simulation.');
+      setTimeout(() => setErrorMsg(''), 4000);
+    } finally {
+      setIsSimulatingLocation(false);
+    }
+  };
+
+  // 24-Hour Location Trails Simulation States & Handler
+  const [isSimulatingTrail, setIsSimulatingTrail] = useState<boolean>(false);
+
+  const handleSimulateTrail = async (username: string) => {
+    setIsSimulatingTrail(true);
+    try {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/simulate-trail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+
+      if (res.ok) {
+        await fetchEmployees();
+        triggerAlert('success', `Simulated 24-hour location trail generated for @${username}!`);
+      } else {
+        triggerAlert('error', 'Failed to generate simulated location trail.');
+      }
+    } catch (err) {
+      triggerAlert('error', 'Error generating trail simulation.');
+    } finally {
+      setIsSimulatingTrail(false);
+    }
+  };
+
+  // Helper: Haversine distance calculator
+  const getDistanceKM = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371; // km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  };
+
   // Form states (Add & Edit)
   const [formMode, setFormMode] = useState<'idle' | 'add' | 'edit'>('idle');
   const [formId, setFormId] = useState('');
   const [formName, setFormName] = useState('');
   const [formUsername, setFormUsername] = useState('');
   const [formPassword, setFormPassword] = useState('');
-  const [formRole, setFormRole] = useState<'admin' | 'manufacturer' | 'salesperson'>('manufacturer');
+  const [formRole, setFormRole] = useState<'admin' | 'manufacturer' | 'salesperson' | 'manager'>('manufacturer');
   const [submittingForm, setSubmittingForm] = useState(false);
 
   // Delete User Confirmation Modal States
@@ -357,14 +452,14 @@ export default function SettingsPanel({
 
   // Filter employees based on search query
   const filteredEmployees = useMemo(() => {
-    if (!searchQuery.trim()) return employees;
+    if (!searchQuery.trim()) return uniqueEmployees;
     const q = searchQuery.toLowerCase();
-    return employees.filter(
+    return uniqueEmployees.filter(
       emp => emp.name.toLowerCase().includes(q) || 
              emp.username.toLowerCase().includes(q) || 
              emp.role.toLowerCase().includes(q)
     );
-  }, [employees, searchQuery]);
+  }, [uniqueEmployees, searchQuery]);
 
   const pendingEmployees = useMemo(() => {
     return filteredEmployees.filter(emp => emp.approved === false);
@@ -376,8 +471,8 @@ export default function SettingsPanel({
 
   // Find currently selected employee object
   const selectedEmployee = useMemo(() => {
-    return employees.find(emp => emp.id === selectedEmployeeId) || null;
-  }, [employees, selectedEmployeeId]);
+    return uniqueEmployees.find(emp => emp.id === selectedEmployeeId) || null;
+  }, [uniqueEmployees, selectedEmployeeId]);
 
   // Trace Employee Contributions / What they have done
   const employeeStats = useMemo(() => {
@@ -441,7 +536,7 @@ export default function SettingsPanel({
         type: 'sale',
         title: 'Dispatched POS Scooter Sale',
         timestamp: u.saleDate || u.lastUpdatedTimestamp,
-        details: `Sold to: ${u.buyerName} — Price: ₹${(u.salesPrice || 0).toLocaleString()} — Batteries: ${u.batterySerials.join(', ') || 'None'}`,
+        details: `Sold to: ${u.buyerName} — Batteries: ${u.batterySerials.join(', ') || 'None'}`,
         color: 'border-l-indigo-500 text-indigo-800 bg-indigo-50/40'
       });
     });
@@ -681,6 +776,30 @@ export default function SettingsPanel({
         </button>
         <button
           type="button"
+          onClick={() => setSubTab('tracking')}
+          className={`flex-1 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            subTab === 'tracking' 
+              ? 'bg-slate-900 text-white shadow-sm' 
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Compass className="h-4.5 w-4.5" />
+          <span>🛰️ Satellite tracking</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('trails')}
+          className={`flex-1 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+            subTab === 'trails' 
+              ? 'bg-slate-900 text-white shadow-sm' 
+              : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <MapPin className="h-4 w-4" />
+          <span>📍 Location Trails</span>
+        </button>
+        <button
+          type="button"
           onClick={() => setSubTab('sheets')}
           className={`flex-1 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
             subTab === 'sheets' 
@@ -744,6 +863,7 @@ export default function SettingsPanel({
                           let roleBadgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
                           if (emp.role === 'admin') roleBadgeColor = 'bg-amber-50 text-amber-700 border-amber-100';
                           if (emp.role === 'salesperson') roleBadgeColor = 'bg-indigo-50 text-indigo-700 border-indigo-100';
+                          if (emp.role === 'manager') roleBadgeColor = 'bg-teal-50 text-teal-700 border-teal-100';
 
                           return (
                             <div 
@@ -769,7 +889,7 @@ export default function SettingsPanel({
                                   )}
                                   <span>•</span>
                                   <span className={`text-[8px] px-1 py-0.5 rounded-md border font-semibold uppercase ${roleBadgeColor}`}>
-                                    {emp.role === 'admin' ? 'Owner' : emp.role === 'manufacturer' ? 'Production' : 'Sales'}
+                                    {emp.role === 'admin' ? 'Owner' : emp.role === 'manager' ? 'Manager' : emp.role === 'manufacturer' ? 'Production' : 'Sales'}
                                   </span>
                                 </div>
                               </div>
@@ -809,6 +929,7 @@ export default function SettingsPanel({
                         let roleBadgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
                         if (emp.role === 'admin') roleBadgeColor = 'bg-amber-50 text-amber-700 border-amber-100';
                         if (emp.role === 'salesperson') roleBadgeColor = 'bg-indigo-50 text-indigo-700 border-indigo-100';
+                        if (emp.role === 'manager') roleBadgeColor = 'bg-teal-50 text-teal-700 border-teal-100';
 
                         return (
                           <div 
@@ -843,7 +964,7 @@ export default function SettingsPanel({
                                 <span className={`text-[8px] px-1.5 py-0.5 rounded-md border font-semibold uppercase ${
                                   isSelected ? 'bg-slate-800 border-slate-700 text-slate-100' : roleBadgeColor
                                 }`}>
-                                  {emp.role === 'admin' ? 'Owner' : emp.role === 'manufacturer' ? 'Production' : 'Sales'}
+                                  {emp.role === 'admin' ? 'Owner' : emp.role === 'manager' ? 'Manager' : emp.role === 'manufacturer' ? 'Production' : 'Sales'}
                                 </span>
                               </div>
                             </div>
@@ -937,6 +1058,91 @@ export default function SettingsPanel({
                         </div>
                       </div>
                     </div>
+
+                    {/* Live Geolocation Tracker Block */}
+                    {(selectedEmployee.role === 'manufacturer' || selectedEmployee.role === 'salesperson') && (
+                      <div className="border-t border-slate-200 pt-4 mt-4 space-y-3" id="employee-location-monitoring">
+                        <div className="flex justify-between items-center">
+                          <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                            <Compass className="h-3.5 w-3.5 text-cyan-600 animate-spin-slow" /> LIVE GEOLOCATION 24/7
+                          </h4>
+                          {selectedEmployee.latitude && selectedEmployee.longitude && (
+                            <button
+                              type="button"
+                              onClick={() => setShowLocationMap(!showLocationMap)}
+                              className="text-[9px] font-bold text-slate-600 hover:text-slate-900 flex items-center gap-1 cursor-pointer bg-slate-200/50 hover:bg-slate-200 px-2 py-0.5 rounded-md transition-colors"
+                            >
+                              <Map className="h-3 w-3" /> {showLocationMap ? 'Hide Map' : 'Show Map'}
+                            </button>
+                          )}
+                        </div>
+
+                        {selectedEmployee.latitude && selectedEmployee.longitude ? (
+                          <div className="space-y-3 animate-fade-in">
+                            <div className="bg-slate-100 p-3 rounded-2xl border border-slate-200/80 space-y-1">
+                              <div className="flex justify-between items-center text-[10px] text-slate-600">
+                                <span className="flex items-center gap-1">
+                                  <MapPin className="h-3.5 w-3.5 text-rose-500" />
+                                  Coordinates
+                                </span>
+                                <span className="font-mono bg-white px-2 py-0.5 rounded-md border border-slate-200 text-slate-800 font-bold">
+                                  {selectedEmployee.latitude.toFixed(5)}, {selectedEmployee.longitude.toFixed(5)}
+                                </span>
+                              </div>
+                              {selectedEmployee.locationTimestamp && (
+                                <div className="flex justify-between items-center text-[10px] text-slate-500">
+                                  <span className="flex items-center gap-1">
+                                    <Clock className="h-3 w-3" />
+                                    Last Active Ping
+                                  </span>
+                                  <span className="font-sans text-[10px] text-slate-800 font-medium">
+                                    {new Date(selectedEmployee.locationTimestamp).toLocaleString()}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            {showLocationMap && (
+                              <EmployeeMap
+                                latitude={selectedEmployee.latitude}
+                                longitude={selectedEmployee.longitude}
+                                employeeName={selectedEmployee.name}
+                              />
+                            )}
+
+                            <button
+                              type="button"
+                              disabled={isSimulatingLocation}
+                              onClick={() => handleSimulateLocation(selectedEmployee.username)}
+                              className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                            >
+                              <Navigation className="h-3.5 w-3.5 text-cyan-400" />
+                              {isSimulatingLocation ? 'Broadcasting Coordinate...' : '⚡ Teleport Device (Simulate Live Movement)'}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="text-center py-5 px-3 bg-slate-100 border border-slate-200 rounded-2xl">
+                              <div className="text-[20px] mb-1">📡</div>
+                              <div className="text-[10px] font-extrabold text-slate-700 uppercase tracking-wide">No Telemetry Received Yet</div>
+                              <p className="text-[9px] text-slate-500 mt-0.5 max-w-[200px] mx-auto leading-relaxed">
+                                Employee location is tracked silently 24/7 when they access the portal on their device.
+                              </p>
+                            </div>
+
+                            <button
+                              type="button"
+                              disabled={isSimulatingLocation}
+                              onClick={() => handleSimulateLocation(selectedEmployee.username)}
+                              className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                            >
+                              <Navigation className="h-3.5 w-3.5 text-cyan-400" />
+                              {isSimulatingLocation ? 'Initiating Broadcast...' : '⚡ Seed Simulated Location & Spawn Live Map'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="text-xs text-slate-400 italic py-6">Select an employee from the list to view interactive metrics.</div>
@@ -1037,6 +1243,7 @@ export default function SettingsPanel({
                     >
                       <option value="manufacturer">Production (Assembly Logs, Standalone Units)</option>
                       <option value="salesperson">Sales Team (Register Sales & Dispatches)</option>
+                      <option value="manager">Manager (Full Operations except Settings)</option>
                       <option value="admin">Owner / Administrator (Full Clearance)</option>
                     </select>
                   </div>
@@ -1078,6 +1285,425 @@ export default function SettingsPanel({
             onTriggerSyncAll={onTriggerSyncAll}
             onTriggerPullAll={onTriggerPullAll}
           />
+        </div>
+      ) : subTab === 'tracking' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 no-print animate-fade-in" id="unified-tracking-dashboard">
+          {/* Sidebar Navigation and Control Panel */}
+          <div className="lg:col-span-1 bg-white border border-slate-200 rounded-3xl p-5 shadow-sm flex flex-col justify-between min-h-[500px]" id="tracking-sidebar">
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5 font-sans">
+                  <Compass className="h-4.5 w-4.5 text-cyan-600 animate-spin-slow" /> ACTIVE STAFF DIRECTORY
+                </h3>
+                <p className="text-[10px] text-slate-400 mt-1 leading-relaxed font-sans">
+                  Select a salesperson or assembler to lock onto their satellite beacon and see their real-time telemetry on the tracking map.
+                </p>
+              </div>
+
+              {/* Search / Filter bar */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Filter active employees..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-900 font-sans"
+                />
+                <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+              </div>
+
+              {/* Employee list */}
+              <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                {uniqueEmployees
+                  .filter(e => e.role === 'salesperson' || e.role === 'manufacturer')
+                  .filter(e => {
+                    const term = searchQuery.toLowerCase().trim();
+                    return e.name.toLowerCase().includes(term) || e.username.toLowerCase().includes(term);
+                  })
+                  .map(emp => {
+                    const hasLocation = emp.latitude !== undefined && emp.longitude !== undefined;
+                    const isSelected = selectedEmployeeId === emp.id;
+                    const isSales = emp.role === 'salesperson';
+
+                    return (
+                      <div
+                        key={emp.id}
+                        onClick={() => {
+                          setSelectedEmployeeId(emp.id);
+                        }}
+                        className={`p-3 rounded-2xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
+                          isSelected
+                            ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start gap-2">
+                          <div>
+                            <div className="text-xs font-bold font-sans flex items-center gap-1.5">
+                              {emp.name}
+                              <span className={`text-[8px] font-sans font-semibold px-2 py-0.5 rounded-full ${
+                                isSales 
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-200' 
+                                  : 'bg-cyan-100 text-cyan-800 border border-cyan-200'
+                              } ${isSelected ? 'brightness-90 text-slate-900 bg-white border-transparent' : ''}`}>
+                                {isSales ? '💼 Sales' : '🛠️ Assembly'}
+                              </span>
+                            </div>
+                            <div className={`text-[10px] ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                              @{emp.username}
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className={`h-2 w-2 rounded-full ${hasLocation ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                            <span className={`text-[9px] font-bold ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                              {hasLocation ? 'Online' : 'No Ping'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {hasLocation && (
+                          <div className="flex items-center justify-between text-[9px] font-mono border-t pt-1.5 border-dashed border-slate-300/30">
+                            <span>{emp.latitude?.toFixed(4)}, {emp.longitude?.toFixed(4)}</span>
+                            {emp.locationTimestamp && (
+                              <span className="opacity-80">
+                                {new Date(emp.locationTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+
+            {/* Quick Actions */}
+            <div className="pt-4 border-t border-slate-100 space-y-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  setLoadingEmployees(true);
+                  await fetchEmployees();
+                  setLoadingEmployees(false);
+                  triggerAlert('success', 'Satellite telemetry maps synchronized with master database feeds.');
+                }}
+                disabled={loadingEmployees}
+                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loadingEmployees ? 'animate-spin' : ''}`} />
+                <span>Sync Active Geofences</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Unified Map Panel */}
+          <div className="lg:col-span-2 bg-white border border-slate-200 rounded-3xl p-5 shadow-sm flex flex-col justify-between space-y-4" id="tracking-map-panel">
+            <div className="flex justify-between items-center flex-wrap gap-3">
+              <div>
+                <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                  <Navigation className="h-4 w-4 text-cyan-600 animate-bounce" /> Unified Sat-Track Grid
+                </h2>
+                <p className="text-[10px] text-slate-400 mt-1 leading-relaxed font-sans">
+                  Secure localized satellite map of your workspace fleet in real-time. Click an employee on the sidebar or map pin to center visual coordinate trackers.
+                </p>
+              </div>
+
+              {/* Action buttons */}
+              {selectedEmployeeId && (
+                <button
+                  type="button"
+                  disabled={isSimulatingLocation}
+                  onClick={async () => {
+                    const emp = uniqueEmployees.find(e => e.id === selectedEmployeeId);
+                    if (emp) {
+                      await handleSimulateLocation(emp.username);
+                    }
+                  }}
+                  className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                >
+                  <MapPin className="h-3.5 w-3.5 text-cyan-400" />
+                  {isSimulatingLocation ? 'Updating beacon...' : '⚡ Teleport selected employee'}
+                </button>
+              )}
+            </div>
+
+            {/* Map viewport */}
+            <div className="flex-1 min-h-[400px]">
+              <StaffUnifiedMap
+                employees={uniqueEmployees.filter(e => e.role === 'salesperson' || e.role === 'manufacturer')}
+                focusedEmployeeId={selectedEmployeeId}
+                onSelectEmployee={(id) => setSelectedEmployeeId(id)}
+              />
+            </div>
+
+            {/* Help guidelines banner */}
+            <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl flex items-start gap-3">
+              <span className="text-xl shrink-0">💡</span>
+              <p className="text-[10px] text-slate-500 leading-relaxed font-sans">
+                <strong>Operational Privacy Protocol:</strong> Location coordinates are silently tracked only for active <strong>Assembly Operators (Manufacturers)</strong> and <strong>Sales Agents</strong> inside their local browser tabs. Geolocation updates are absolutely hidden and fully invisible on the operator’s client side.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : subTab === 'trails' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 no-print animate-fade-in" id="location-trails-dashboard">
+          {/* Tracking Sidebar Panel */}
+          <div className="lg:col-span-1 bg-white border border-slate-200 rounded-3xl p-5 shadow-sm flex flex-col justify-between min-h-[500px]" id="trails-sidebar">
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-xs font-black uppercase text-slate-900 tracking-wider flex items-center gap-1.5 font-sans">
+                  <MapPin className="h-4.5 w-4.5 text-rose-500 animate-pulse" /> 24-HOUR MOVEMENT FLEET
+                </h3>
+                <p className="text-[10px] text-slate-400 mt-1 leading-relaxed font-sans">
+                  Choose an operator or agent to analyze their movement path, total distance, and chronological pings over the last 24 hours.
+                </p>
+              </div>
+
+              {/* Search input */}
+              <div className="relative">
+                <input
+                  type="text"
+                  placeholder="Filter active employees..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-900 font-sans"
+                />
+                <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-400" />
+              </div>
+
+              {/* Employee list with breadcrumbs stats */}
+              <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
+                {uniqueEmployees
+                  .filter(e => e.role === 'salesperson' || e.role === 'manufacturer')
+                  .filter(e => {
+                    const term = searchQuery.toLowerCase().trim();
+                    return e.name.toLowerCase().includes(term) || e.username.toLowerCase().includes(term);
+                  })
+                  .map(emp => {
+                    const trailCount = emp.locationHistory?.length || 0;
+                    const isSelected = selectedEmployeeId === emp.id;
+                    const isSales = emp.role === 'salesperson';
+
+                    return (
+                      <div
+                        key={emp.id}
+                        onClick={() => setSelectedEmployeeId(emp.id)}
+                        className={`p-3 rounded-2xl border transition-all cursor-pointer flex flex-col gap-1.5 ${
+                          isSelected
+                            ? 'bg-slate-900 text-white border-slate-900 shadow-md'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-800 border-slate-200'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start gap-2">
+                          <div>
+                            <div className="text-xs font-bold font-sans flex items-center gap-1.5">
+                              {emp.name}
+                              <span className={`text-[8px] font-sans font-semibold px-2 py-0.5 rounded-full ${
+                                isSales 
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-200' 
+                                  : 'bg-cyan-100 text-cyan-800 border border-cyan-200'
+                              } ${isSelected ? 'brightness-90 text-slate-900 bg-white border-transparent' : ''}`}>
+                                {isSales ? '💼 Sales' : '🛠️ Assembly'}
+                              </span>
+                            </div>
+                            <div className={`text-[10px] ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                              @{emp.username}
+                            </div>
+                          </div>
+                          
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className={`h-2 w-2 rounded-full ${trailCount > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-slate-300'}`} />
+                            <span className={`text-[9px] font-bold ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
+                              {trailCount > 0 ? `${trailCount} points` : 'No history'}
+                            </span>
+                          </div>
+                        </div>
+
+                        {trailCount > 0 && emp.locationTimestamp && (
+                          <div className="flex items-center justify-between text-[9px] font-sans border-t pt-1.5 border-dashed border-slate-300/30 opacity-80">
+                            <span>Last Ping:</span>
+                            <span>{new Date(emp.locationTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+              </div>
+            </div>
+
+            {/* Force DB Refresh */}
+            <div className="pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={async () => {
+                  setLoadingEmployees(true);
+                  await fetchEmployees();
+                  setLoadingEmployees(false);
+                  triggerAlert('success', 'Synchronized historical movement databases.');
+                }}
+                disabled={loadingEmployees}
+                className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 transition-colors cursor-pointer"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loadingEmployees ? 'animate-spin' : ''}`} />
+                <span>Sync Trails Data</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Map & Trails Detail Panel */}
+          <div className="lg:col-span-2 space-y-6">
+            {selectedEmployee ? (
+              <div className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm space-y-4">
+                <div className="flex justify-between items-center flex-wrap gap-3">
+                  <div>
+                    <h2 className="text-sm font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                      <MapPin className="h-4 w-4 text-cyan-600" /> Location Trail: {selectedEmployee.name}
+                    </h2>
+                    <p className="text-[10px] text-slate-400 mt-1 leading-relaxed font-sans">
+                      Viewing 24-hour location breadcrumbs for <strong>@{selectedEmployee.username}</strong> ({selectedEmployee.role}).
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={isSimulatingTrail}
+                    onClick={() => handleSimulateTrail(selectedEmployee.username)}
+                    className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                  >
+                    <Compass className="h-3.5 w-3.5 text-cyan-400" />
+                    {isSimulatingTrail ? 'Generating trail...' : '⚡ Generate Simulated 24h Trail'}
+                  </button>
+                </div>
+
+                {/* Trail statistics */}
+                {selectedEmployee.locationHistory && selectedEmployee.locationHistory.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="p-3.5 bg-slate-50 border border-slate-150 rounded-2xl">
+                      <div className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Total Points Tracked</div>
+                      <div className="text-xl font-black text-slate-900 font-mono mt-0.5">{selectedEmployee.locationHistory.length}</div>
+                    </div>
+                    
+                    <div className="p-3.5 bg-slate-50 border border-slate-150 rounded-2xl">
+                      <div className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Accumulated Distance</div>
+                      <div className="text-xl font-black text-slate-900 font-mono mt-0.5">
+                        {(() => {
+                          let dist = 0;
+                          const hist = selectedEmployee.locationHistory;
+                          for (let i = 0; i < hist.length - 1; i++) {
+                            dist += getDistanceKM(hist[i].latitude, hist[i].longitude, hist[i+1].latitude, hist[i+1].longitude);
+                          }
+                          return `${dist.toFixed(2)} km`;
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 bg-slate-50 border border-slate-150 rounded-2xl">
+                      <div className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Active Span (24h)</div>
+                      <div className="text-xl font-black text-slate-900 font-sans mt-0.5">
+                        {(() => {
+                          const hist = selectedEmployee.locationHistory;
+                          if (hist.length < 2) return 'N/A';
+                          const tStart = new Date(hist[0].timestamp).getTime();
+                          const tEnd = new Date(hist[hist.length - 1].timestamp).getTime();
+                          const diffMs = Math.abs(tEnd - tStart);
+                          const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+                          const diffMins = Math.round((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+                          return `${diffHrs}h ${diffMins}m`;
+                        })()}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
+                {/* Map component */}
+                {selectedEmployee.locationHistory && selectedEmployee.locationHistory.length > 0 ? (
+                  <div className="space-y-4">
+                    <LocationTrailsMap
+                      history={selectedEmployee.locationHistory}
+                      employeeName={selectedEmployee.name}
+                    />
+
+                    {/* Timeline Table of movement */}
+                    <div>
+                      <h3 className="text-[10px] font-black uppercase text-slate-500 tracking-wider mb-2 font-sans flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5" /> CHRONOLOGICAL TRAVEL TIMELINE (LAST 24 HOURS)
+                      </h3>
+                      <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                        <table className="min-w-full divide-y divide-slate-100 text-left text-xs font-sans">
+                          <thead className="bg-slate-50 text-[9px] font-extrabold uppercase text-slate-500 tracking-wider">
+                            <tr>
+                              <th className="py-2.5 px-4">Stop / Ping</th>
+                              <th className="py-2.5 px-4">Local Timestamp</th>
+                              <th className="py-2.5 px-4">Coordinates</th>
+                              <th className="py-2.5 px-4">Interval distance</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-sans text-slate-700 bg-white">
+                            {selectedEmployee.locationHistory.map((point, index) => {
+                              const isFirst = index === 0;
+                              const isLatest = index === selectedEmployee.locationHistory!.length - 1;
+                              
+                              let distText = '-';
+                              if (index > 0) {
+                                const prev = selectedEmployee.locationHistory![index - 1];
+                                const d = getDistanceKM(prev.latitude, prev.longitude, point.latitude, point.longitude);
+                                distText = `+${d.toFixed(2)} km`;
+                              }
+
+                              return (
+                                <tr key={index} className="hover:bg-slate-50/50">
+                                  <td className="py-2.5 px-4 font-bold flex items-center gap-1.5 text-xs text-slate-900">
+                                    <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] ${
+                                      isFirst 
+                                        ? 'bg-blue-100 text-blue-800' 
+                                        : isLatest 
+                                          ? 'bg-emerald-100 text-emerald-800' 
+                                          : 'bg-slate-100 text-slate-700'
+                                    }`}>
+                                      {isFirst ? '🏁' : isLatest ? '🛰️' : index + 1}
+                                    </span>
+                                    <span>
+                                      {isFirst ? 'Start Point' : isLatest ? 'Current Target' : `Milestone #${index + 1}`}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 px-4 text-slate-600 font-medium text-[11px]">
+                                    {new Date(point.timestamp).toLocaleString()}
+                                  </td>
+                                  <td className="py-2.5 px-4 font-mono text-[10px] text-slate-500">
+                                    {point.latitude.toFixed(5)}, {point.longitude.toFixed(5)}
+                                  </td>
+                                  <td className="py-2.5 px-4 text-[10px] font-extrabold text-cyan-600 font-mono">
+                                    {distText}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-10 px-4 border border-dashed border-slate-200 rounded-3xl bg-slate-50 space-y-3">
+                    <span className="text-3xl">📡</span>
+                    <h3 className="text-xs font-black uppercase text-slate-700 tracking-wider">No Location History Recorded</h3>
+                    <p className="text-[10px] text-slate-500 max-w-[320px] mx-auto leading-relaxed">
+                      This worker hasn't logged any location events in the last 24 hours. Generate a simulated 24h path above to seed movement breadcrumbs.
+                    </p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-16 bg-white border border-slate-200 rounded-3xl p-5 shadow-sm text-slate-400 font-sans font-bold flex flex-col items-center justify-center">
+                <span className="text-4xl mb-2">📍</span>
+                <span className="text-xs uppercase tracking-wider text-slate-600">Select an employee from the list</span>
+                <p className="text-[10px] text-slate-400 font-normal mt-1 max-w-[280px] leading-relaxed">
+                  Lock onto any fleet operator or agent to inspect their chronological satellite breadcrumb history.
+                </p>
+              </div>
+            )}
+          </div>
         </div>
       ) : subTab === 'audit' ? (
         /* SYSTEM AUDIT TRAIL BANK STATEMENT LEDGER VIEW */
@@ -1166,7 +1792,7 @@ export default function SettingsPanel({
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs text-slate-800 outline-none focus:bg-white focus:border-cyan-500 font-sans cursor-pointer"
                 >
                   <option value="">-- All Employees --</option>
-                  {employees.map(e => (
+                  {uniqueEmployees.map(e => (
                     <option key={e.id} value={e.name}>{e.name} (@{e.username})</option>
                   ))}
                   <option value="system">System Daemon</option>
@@ -1479,6 +2105,7 @@ export default function SettingsPanel({
                         className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans cursor-pointer"
                       >
                         <option value="admin">👑 Owner / Admin</option>
+                        <option value="manager">🛡️ Operations Manager</option>
                         <option value="manufacturer">🛠️ Assembly Operator</option>
                         <option value="salesperson">💼 Sales Agent</option>
                       </select>
@@ -1599,6 +2226,7 @@ export default function SettingsPanel({
                           let roleBadgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
                           if (emp.role === 'admin') roleBadgeColor = 'bg-amber-50 text-amber-700 border-amber-100';
                           if (emp.role === 'salesperson') roleBadgeColor = 'bg-indigo-50 text-indigo-700 border-indigo-100';
+                          if (emp.role === 'manager') roleBadgeColor = 'bg-teal-50 text-teal-700 border-teal-100';
 
                           return (
                             <div 
@@ -1618,7 +2246,7 @@ export default function SettingsPanel({
                                   <span>@{emp.username}</span>
                                   <span>•</span>
                                   <span className={`text-[8px] px-1 py-0.5 rounded-md border font-semibold uppercase ${roleBadgeColor}`}>
-                                    {emp.role === 'admin' ? 'Owner' : emp.role === 'manufacturer' ? 'Production' : 'Sales'}
+                                    {emp.role === 'admin' ? 'Owner' : emp.role === 'manager' ? 'Manager' : emp.role === 'manufacturer' ? 'Production' : 'Sales'}
                                   </span>
                                 </div>
                               </div>
@@ -1658,6 +2286,7 @@ export default function SettingsPanel({
                         let roleBadgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-100';
                         if (emp.role === 'admin') roleBadgeColor = 'bg-amber-50 text-amber-700 border-amber-100';
                         if (emp.role === 'salesperson') roleBadgeColor = 'bg-indigo-50 text-indigo-700 border-indigo-100';
+                        if (emp.role === 'manager') roleBadgeColor = 'bg-teal-50 text-teal-700 border-teal-100';
 
                         return (
                           <div 
@@ -1692,7 +2321,7 @@ export default function SettingsPanel({
                                 <span className={`text-[8px] px-1.5 py-0.5 rounded-md border font-semibold uppercase ${
                                   isSelected ? 'bg-slate-800 border-slate-700 text-slate-100' : roleBadgeColor
                                 }`}>
-                                  {emp.role === 'admin' ? 'Owner' : emp.role === 'manufacturer' ? 'Production' : 'Sales'}
+                                  {emp.role === 'admin' ? 'Owner' : emp.role === 'manager' ? 'Manager' : emp.role === 'manufacturer' ? 'Production' : 'Sales'}
                                 </span>
                               </div>
                             </div>
