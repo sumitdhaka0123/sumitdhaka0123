@@ -11,25 +11,32 @@ const app = express();
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), 'warehouse_db.json');
 
-// Initialize Firebase using the config file
-// On Render (production), always initialize. Locally, only init if config file exists.
+// ─── FIREBASE INITIALIZATION ──────────────────────────────────────────────────
+// DISABLE_FIREBASE=true → fully local mode, no Firebase, safe for AI Studio dev.
+// RENDER=true           → always connect Firebase (production on Render).
+// Default (local dev)   → connect only if firebase-applet-config.json exists.
 const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
 let firebaseApp: any = null;
 let firebaseDb: any = null;
 
-const shouldInitFirebase = process.env.RENDER === 'true' || fs.existsSync(firebaseConfigPath);
+const DISABLE_FIREBASE = process.env.DISABLE_FIREBASE === 'true';
 
-if (shouldInitFirebase && fs.existsSync(firebaseConfigPath)) {
-  try {
-    const config = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
-    firebaseApp = initializeApp(config);
-    firebaseDb = getFirestore(firebaseApp);
-    console.log('Firebase App and Firestore successfully initialized!');
-  } catch (err) {
-    console.error('Error initializing Firebase in server.ts:', err);
-  }
+if (DISABLE_FIREBASE) {
+  console.log('⚠️  DISABLE_FIREBASE=true — Running in fully local mode. Firebase is OFF. No live data will be touched.');
 } else {
-  console.log('No firebase-applet-config.json found. Running in local/offline mode.');
+  const shouldInitFirebase = process.env.RENDER === 'true' || fs.existsSync(firebaseConfigPath);
+  if (shouldInitFirebase && fs.existsSync(firebaseConfigPath)) {
+    try {
+      const config = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
+      firebaseApp = initializeApp(config);
+      firebaseDb = getFirestore(firebaseApp);
+      console.log('✅ Firebase App and Firestore successfully initialized!');
+    } catch (err) {
+      console.error('Error initializing Firebase in server.ts:', err);
+    }
+  } else {
+    console.log('No firebase-applet-config.json found. Running in local/offline mode.');
+  }
 }
 
 let globalDBState: DBState | null = null;
