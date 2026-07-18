@@ -16,6 +16,8 @@ export interface User {
   longitude?: number;
   locationTimestamp?: string;
   locationHistory?: LocationHistoryEntry[];
+  pullLocationRequested?: boolean;
+  pullLocationTimestamp?: string;
 }
 
 export interface Product {
@@ -64,7 +66,6 @@ export interface ScooterUnit {
   batteryWarrantyMonths?: number[]; // Warranty duration in months (12 or 13, or 0 for none)
   status: 'available' | 'sold' | 'hold';
   saleDate?: string;
-  salesPrice?: number;
   heldFor?: string;
   heldBy?: string;
   holdDate?: string;

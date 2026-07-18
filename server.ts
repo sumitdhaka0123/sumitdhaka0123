@@ -1729,7 +1729,6 @@ app.get('/api/users', (req, res) => {
   res.json(safeUsers);
 });
 
-// Auth: Update User Location (For silent employee geolocation updates)
 app.post('/api/users/location', validateBody(userLocationSchema), (req, res) => {
   const { username, latitude, longitude } = req.body;
   const db = readDB();
@@ -1739,6 +1738,7 @@ app.post('/api/users/location', validateBody(userLocationSchema), (req, res) => 
     db.users[normalized].latitude = latitude;
     db.users[normalized].longitude = longitude;
     db.users[normalized].locationTimestamp = timestamp;
+    db.users[normalized].pullLocationRequested = false; // Reset the pull request once coordinate is received
     
     if (!db.users[normalized].locationHistory) {
       db.users[normalized].locationHistory = [];
@@ -1757,6 +1757,37 @@ app.post('/api/users/location', validateBody(userLocationSchema), (req, res) => 
 
     writeDB(db);
     return res.json({ success: true });
+  }
+  return res.status(404).json({ error: 'User not found' });
+});
+
+// Auth: Trigger a live high-accuracy GPS pull for an employee (Admin/Manager only)
+app.post('/api/users/pull-location', (req, res) => {
+  const { username } = req.body;
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+  const db = readDB();
+  const normalized = username.toLowerCase().trim();
+  if (db.users[normalized]) {
+    db.users[normalized].pullLocationRequested = true;
+    db.users[normalized].pullLocationTimestamp = new Date().toISOString();
+    writeDB(db);
+    return res.json({ success: true, message: `Live tracking beacon activated for @${username}. Pinging device for fresh GPS coordinates...` });
+  }
+  return res.status(404).json({ error: 'User not found' });
+});
+
+// Auth: Check if a live location pull is requested for the current logged in employee
+app.get('/api/users/check-pull', (req, res) => {
+  const username = req.query.username as string;
+  if (!username) {
+    return res.status(400).json({ error: 'Username is required' });
+  }
+  const db = readDB();
+  const normalized = username.toLowerCase().trim();
+  if (db.users[normalized]) {
+    return res.json({ pullRequested: !!db.users[normalized].pullLocationRequested });
   }
   return res.status(404).json({ error: 'User not found' });
 });
@@ -3509,7 +3540,7 @@ app.post('/api/sheet-config/pull-all', async (req, res) => {
 // Upload the new app-release.apk to the public/ folder and push to GitHub.
 app.get('/api/version', (req, res) => {
   res.json({
-    version: "1.0.2",
+    version: "1.0.3",
     apkUrl: "https://sumitdhaka0123.onrender.com/app-release.apk"
   });
 });

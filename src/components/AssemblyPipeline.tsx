@@ -203,7 +203,6 @@ export default function AssemblyPipeline({
   const [s3BuyerName, setS3BuyerName] = useState('');
   const [s3BuyerContact, setS3BuyerContact] = useState('');
   const [s3BuyerAddress, setS3BuyerAddress] = useState('');
-  const [s3Price, setS3Price] = useState('');
   const [s3BillNo, setS3BillNo] = useState('');
   const [s3DeliveryChallanNo, setS3DeliveryChallanNo] = useState('');
 
@@ -588,7 +587,6 @@ export default function AssemblyPipeline({
         body: JSON.stringify({
           buyerName: s3BuyerName,
           buyerContact: s3BuyerContact,
-          salesPrice: s3Price ? Number(s3Price) : undefined,
           scooterWarrantyStatus: s5ScooterWarrantyActive ? 'Active' : 'None',
           scooterWarrantyExpiry: s5ScooterWarrantyActive ? s5ScooterExpiry : undefined,
           batteryWarrantyStatus: 'None',
@@ -614,7 +612,6 @@ export default function AssemblyPipeline({
         setS3BuyerName('');
         setS3BuyerContact('');
         setS3BuyerAddress('');
-        setS3Price('');
         setS3BillNo('');
         setS3DeliveryChallanNo('');
         setS5Notes('');
@@ -953,7 +950,6 @@ export default function AssemblyPipeline({
       actionType: 'pos_stage3_4',
       buyerName: s3BuyerName,
       buyerContact: s3BuyerContact,
-      salesPrice: s3Price ? Number(s3Price) : undefined,
       salesBillNo: s3BillNo.trim(),
       deliveryChallanNo: s3DeliveryChallanNo.trim(),
       batterySerials: cleanBatteries,
@@ -983,7 +979,6 @@ export default function AssemblyPipeline({
       setS3BuyerName('');
       setS3BuyerContact('');
       setS3BuyerAddress('');
-      setS3Price('');
       setS3BillNo('');
       setS3DeliveryChallanNo('');
       setS4Batteries(['']);
@@ -1050,7 +1045,6 @@ export default function AssemblyPipeline({
       setS3BuyerName('');
       setS3BuyerContact('');
       setS3BuyerAddress('');
-      setS3Price('');
       setSelectedPOSScooterId('');
       onRefresh();
     } else {

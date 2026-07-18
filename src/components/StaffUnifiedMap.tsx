@@ -21,6 +21,39 @@ export default function StaffUnifiedMap({ employees, focusedEmployeeId, onSelect
   const mapRef = useRef<any>(null);
   const markersRef = useRef<{ [key: string]: any }>({});
   const [leafletLoaded, setLeafletLoaded] = useState(false);
+  const [userLocation, setUserLocation] = useState<[number, number] | null>(null);
+
+  // Fetch viewer's real coordinates once on mount to avoid defaulting to Delhi if no tracks are available
+  useEffect(() => {
+    const fetchIpCentering = async () => {
+      try {
+        const ipRes = await fetch('https://ipapi.co/json/');
+        if (ipRes.ok) {
+          const ipData = await ipRes.json();
+          if (ipData.latitude && ipData.longitude) {
+            setUserLocation([ipData.latitude, ipData.longitude]);
+          }
+        }
+      } catch (err) {
+        console.log('IP Map Centering fallback failed:', err);
+      }
+    };
+
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setUserLocation([pos.coords.latitude, pos.coords.longitude]);
+        },
+        (err) => {
+          console.log('Map default centering skipped, running IP lookup:', err);
+          fetchIpCentering();
+        },
+        { enableHighAccuracy: true, timeout: 8000 }
+      );
+    } else {
+      fetchIpCentering();
+    }
+  }, []);
 
   // Load Leaflet CDN Assets dynamically if not already loaded globally
   useEffect(() => {
@@ -69,9 +102,9 @@ export default function StaffUnifiedMap({ employees, focusedEmployeeId, onSelect
     // Filter employees with valid geolocation coordinates
     const activeEmployees = employees.filter(e => e.latitude !== undefined && e.longitude !== undefined);
 
-    // Default center to Delhi, India (or first active employee)
-    let centerLat = 28.6139;
-    let centerLng = 77.2090;
+    // Default center to viewer's real location if available, otherwise fallback to Delhi
+    let centerLat = userLocation ? userLocation[0] : 28.6139;
+    let centerLng = userLocation ? userLocation[1] : 77.2090;
 
     if (activeEmployees.length > 0) {
       // Focus on the explicitly focused employee, or calculate average
@@ -96,6 +129,19 @@ export default function StaffUnifiedMap({ employees, focusedEmployeeId, onSelect
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
       }).addTo(mapRef.current);
+
+      // If no active employees with tracking data exist, center on the viewer's physical GPS location
+      if (activeEmployees.length === 0 && 'geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            if (mapRef.current) {
+              mapRef.current.setView([pos.coords.latitude, pos.coords.longitude], 12);
+            }
+          },
+          (err) => console.log('Map self-centering skipped:', err),
+          { enableHighAccuracy: true, timeout: 5000 }
+        );
+      }
     }
 
     const map = mapRef.current;
@@ -118,12 +164,12 @@ export default function StaffUnifiedMap({ employees, focusedEmployeeId, onSelect
       if (latitude === undefined || longitude === undefined) return;
 
       const isFocused = id === focusedEmployeeId;
-      const isSales = role === 'salesperson';
       
-      // Distinct visual styles: Cyan for Assembly, Emerald/Orange for Sales
-      const badgeColor = isSales ? 'bg-orange-500' : 'bg-cyan-500';
-      const labelText = isSales ? '💼 Sales' : '🛠️ Assembly';
-      const pulseColor = isSales ? 'bg-orange-400' : 'bg-cyan-400';
+      // Distinct visual styles: Cyan for Assembly, Orange for Sales, Teal for Managers
+      const badgeColor = role === 'salesperson' ? 'bg-orange-500' : role === 'manager' ? 'bg-teal-500' : 'bg-cyan-500';
+      const labelText = role === 'salesperson' ? '💼 Sales' : role === 'manager' ? '📈 Manager' : '🛠️ Assembly';
+      const pulseColor = role === 'salesperson' ? 'bg-orange-400' : role === 'manager' ? 'bg-teal-400' : 'bg-cyan-400';
+      const roleEmoji = role === 'salesperson' ? '💼' : role === 'manager' ? '📈' : '🛠️';
 
       const customIcon = L.divIcon({
         className: 'custom-staff-icon',
@@ -131,7 +177,7 @@ export default function StaffUnifiedMap({ employees, focusedEmployeeId, onSelect
           <div class="relative flex items-center justify-center transition-all duration-300 transform ${isFocused ? 'scale-125 z-[1000]' : 'hover:scale-110'}">
             <span class="absolute inline-flex h-10 w-10 animate-ping rounded-full ${pulseColor} opacity-50"></span>
             <div class="relative flex h-8 w-8 items-center justify-center rounded-full bg-slate-900 border-2 ${isFocused ? 'border-amber-400' : 'border-white'} shadow-lg text-white">
-              <span class="text-[11px]">${isSales ? '💼' : '🛠️'}</span>
+              <span class="text-[11px]">${roleEmoji}</span>
             </div>
             <div class="absolute -bottom-7 bg-slate-900/90 text-[8px] font-sans font-extrabold text-white px-2 py-0.5 rounded-md border border-slate-700 whitespace-nowrap shadow-sm">
               ${name.split(' ')[0]}
@@ -146,7 +192,7 @@ export default function StaffUnifiedMap({ employees, focusedEmployeeId, onSelect
         <div class="p-1.5 font-sans min-w-[160px]">
           <div class="flex items-center gap-1.5 mb-1">
             <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span class="text-[9px] font-extrabold ${isSales ? 'text-orange-600' : 'text-cyan-600'} uppercase tracking-wide">${labelText}</span>
+            <span class="text-[9px] font-extrabold ${role === 'salesperson' ? 'text-orange-600' : role === 'manager' ? 'text-teal-600' : 'text-cyan-600'} uppercase tracking-wide">${labelText}</span>
           </div>
           <div class="font-extrabold text-slate-800 text-xs">${name}</div>
           <div class="text-[9px] text-slate-500 mt-0.5">@${username}</div>

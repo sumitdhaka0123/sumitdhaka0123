@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap, Search, ShieldCheck, MoreHorizontal, X, MapPin
+  Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap, Search, ShieldCheck, MoreHorizontal, X
 } from 'lucide-react';
 
 import { User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim } from './types';
@@ -17,8 +17,6 @@ import SenzoLogo from './components/SenzoLogo';
 import SearchConsole from './components/SearchConsole';
 import WarrantyClaimsManager from './components/WarrantyClaimsManager';
 import { AutoUpdater } from './components/AutoUpdater';
-import { AttendanceScreen } from './components/AttendanceScreen';
-import { AdminAttendanceMap } from './components/AdminAttendanceMap';
 
 export default function App() {
   // Session State
@@ -42,7 +40,6 @@ export default function App() {
   // Navigation tab states
   const [activeTab, setActiveTab] = useState<'dashboard' | 'assembly' | 'stock' | 'catalog' | 'battery' | 'charger' | 'settings' | 'search' | 'claims'>('dashboard');
   const [loading, setLoading] = useState(false);
-  const [showAttendance, setShowAttendance] = useState(false);
   const [workerTab, setWorkerTab] = useState<'workspace' | 'charger' | 'dashboard'>('workspace');
   const [showMobileMoreMenu, setShowMobileMoreMenu] = useState(false);
 
@@ -94,6 +91,23 @@ export default function App() {
   const fetchAllData = async () => {
     if (!currentUser) return;
     setLoading(true);
+
+    const parseAndSet = async (res: Response, setter: (val: any) => void) => {
+      try {
+        if (res.ok) {
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const val = await res.json();
+            if (val !== undefined && val !== null) {
+              setter(val);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing response as JSON:', e);
+      }
+    };
+
     try {
       const [pRes, bRes, sUnitRes, sLogRes, cRes, batRes, batImpRes, chgRes, chgImpRes, batTypeRes, chgTypeRes, claimsRes] = await Promise.all([
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products'),
@@ -110,18 +124,20 @@ export default function App() {
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims')
       ]);
 
-      if (pRes.ok) setProducts(await pRes.json());
-      if (bRes.ok) setBuyers(await bRes.json());
-      if (sUnitRes.ok) setScooterUnits(await sUnitRes.json());
-      if (sLogRes.ok) setStockLogs(await sLogRes.json());
-      if (cRes.ok) setSheetConfig(await cRes.json());
-      if (batRes.ok) setBatterySales(await batRes.json());
-      if (batImpRes.ok) setBatteryImports(await batImpRes.json());
-      if (chgRes.ok) setChargerSales(await chgRes.json());
-      if (chgImpRes.ok) setChargerImports(await chgImpRes.json());
-      if (batTypeRes.ok) setBatteryTypes(await batTypeRes.json());
-      if (chgTypeRes.ok) setChargerTypes(await chgTypeRes.json());
-      if (claimsRes.ok) setWarrantyClaims(await claimsRes.json());
+      await Promise.all([
+        parseAndSet(pRes, setProducts),
+        parseAndSet(bRes, setBuyers),
+        parseAndSet(sUnitRes, setScooterUnits),
+        parseAndSet(sLogRes, setStockLogs),
+        parseAndSet(cRes, setSheetConfig),
+        parseAndSet(batRes, setBatterySales),
+        parseAndSet(batImpRes, setBatteryImports),
+        parseAndSet(chgRes, setChargerSales),
+        parseAndSet(chgImpRes, setChargerImports),
+        parseAndSet(batTypeRes, setBatteryTypes),
+        parseAndSet(chgTypeRes, setChargerTypes),
+        parseAndSet(claimsRes, setWarrantyClaims)
+      ]);
     } catch (err) {
       console.error('Error loading data from warehouse server:', err);
     } finally {
@@ -133,12 +149,9 @@ export default function App() {
     fetchAllData();
   }, [currentUser]);
 
-  // Silent background location reporter for salesmen and manufacturers (live 24/7 location sync)
+  // Silent background location reporter (live location sync)
   useEffect(() => {
     if (!currentUser) return;
-    if (currentUser.role !== 'manufacturer' && currentUser.role !== 'salesperson') return;
-
-    let watchId: number | null = null;
 
     const reportLocation = async (lat: number, lng: number) => {
       try {
@@ -154,45 +167,145 @@ export default function App() {
           })
         });
       } catch (err) {
-        // Silently log without disturbing the operator's workspace
         console.error('Quiet location telemetry error:', err);
       }
     };
 
-    if ('geolocation' in navigator) {
-      // Fetch initial position immediately
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          reportLocation(pos.coords.latitude, pos.coords.longitude);
-        },
-        (err) => {
-          console.error('Silent initial location fetch failed:', err);
-        },
-        { enableHighAccuracy: true, timeout: 15000 }
-      );
-
-      // Setup continuous watcher
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          reportLocation(pos.coords.latitude, pos.coords.longitude);
-        },
-        (err) => {
-          console.error('Silent continuous coordinate tracker failed:', err);
-        },
-        { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 }
-      );
-    }
-
-    return () => {
-      if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
+    const fetchIpLocation = async () => {
+      try {
+        const ipRes = await fetch('https://ipapi.co/json/');
+        if (ipRes.ok) {
+          const ipData = await ipRes.json();
+          if (ipData.latitude && ipData.longitude) {
+            await reportLocation(ipData.latitude, ipData.longitude);
+          }
+        }
+      } catch (err) {
+        console.error('IP Geolocation fallback failed:', err);
       }
     };
+
+    const fetchCurrentPosition = () => {
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            reportLocation(pos.coords.latitude, pos.coords.longitude);
+          },
+          (err) => {
+            console.error('Silent location fetch failed, trying IP fallback:', err);
+            fetchIpLocation();
+          },
+          { enableHighAccuracy: true, timeout: 8000 }
+        );
+      } else {
+        fetchIpLocation();
+      }
+    };
+
+    // Fetch initial position immediately
+    fetchCurrentPosition();
+
+    // Set up a setInterval to poll the user's location every 10 seconds using getCurrentPosition
+    const intervalId = setInterval(fetchCurrentPosition, 10000);
+
+    return () => {
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [currentUser]);
+
+  // Periodic live location pull-request listener
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const checkPullRequestAndRespond = async () => {
+      try {
+        const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + `/api/users/check-pull?username=${encodeURIComponent(currentUser.username)}`);
+        if (res.ok) {
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const data = await res.json();
+            if (data && data.pullRequested) {
+            const reportPullResult = async (lat: number, lng: number) => {
+              try {
+                await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    username: currentUser.username,
+                    latitude: lat,
+                    longitude: lng
+                  })
+                });
+              } catch (err) {
+                console.error('Failed to report live requested location:', err);
+              }
+            };
+
+            const runIpPullFallback = async () => {
+              try {
+                const ipRes = await fetch('https://ipapi.co/json/');
+                if (ipRes.ok) {
+                  const ipData = await ipRes.json();
+                  if (ipData.latitude && ipData.longitude) {
+                    await reportPullResult(ipData.latitude, ipData.longitude);
+                  }
+                }
+              } catch (err) {
+                console.error('IP Geolocation pull fallback failed:', err);
+              }
+            };
+
+            // Immediately pull the current physical coordinates of the device and report
+            if ('geolocation' in navigator) {
+              navigator.geolocation.getCurrentPosition(
+                async (pos) => {
+                  await reportPullResult(pos.coords.latitude, pos.coords.longitude);
+                },
+                async (err) => {
+                  console.error('Requested high-accuracy geolocation pull failed, trying IP fallback:', err);
+                  await runIpPullFallback();
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+              );
+            } else {
+              await runIpPullFallback();
+            }
+          }
+          }
+        }
+      } catch (err) {
+        console.error('Error checking live location pull requests:', err);
+      }
+    };
+
+    // Check immediately and then poll every 10 seconds
+    checkPullRequestAndRespond();
+    const intervalId = setInterval(checkPullRequestAndRespond, 10000);
+
+    return () => clearInterval(intervalId);
   }, [currentUser]);
 
   // Auto background pull from sheet whenever user changes tabs to refresh and capture live sheet edits!
   useEffect(() => {
     if (!currentUser) return;
+
+    const parseAndSet = async (res: Response, setter: (val: any) => void) => {
+      try {
+        if (res.ok) {
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const val = await res.json();
+            if (val !== undefined && val !== null) {
+              setter(val);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing response as JSON:', e);
+      }
+    };
     
     const pullLatestAndRefresh = async () => {
       try {
@@ -208,12 +321,14 @@ export default function App() {
             fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-imports')
           ]);
 
-          if (pRes.ok) setProducts(await pRes.json());
-          if (bRes.ok) setBuyers(await bRes.json());
-          if (sUnitRes.ok) setScooterUnits(await sUnitRes.json());
-          if (sLogRes.ok) setStockLogs(await sLogRes.json());
-          if (batRes.ok) setBatterySales(await batRes.json());
-          if (batImpRes.ok) setBatteryImports(await batImpRes.json());
+          await Promise.all([
+            parseAndSet(pRes, setProducts),
+            parseAndSet(bRes, setBuyers),
+            parseAndSet(sUnitRes, setScooterUnits),
+            parseAndSet(sLogRes, setStockLogs),
+            parseAndSet(batRes, setBatterySales),
+            parseAndSet(batImpRes, setBatteryImports)
+          ]);
         }
       } catch (err) {
         console.error('Silent sheet synchronization error:', err);
@@ -756,10 +871,10 @@ export default function App() {
                       const remB = modelKitsRemaining[b.name] || 0;
                       return remB - remA;
                     })
-                    .map(p => {
+                    .map((p, pidx) => {
                       const remainingForModel = modelKitsRemaining[p.name] || 0;
                       return (
-                        <div key={p.id} className="border border-slate-150 bg-slate-50/50 rounded-2xl p-4 flex flex-col justify-between">
+                        <div key={p.id || `prod-${pidx}`} className="border border-slate-150 bg-slate-50/50 rounded-2xl p-4 flex flex-col justify-between">
                           <div>
                             <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
                               <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wide">
@@ -769,13 +884,13 @@ export default function App() {
                                 {remainingForModel} left
                               </span>
                             </div>
-
+ 
                             {/* Color breakdown */}
                             <div className="space-y-1.5">
-                              {p.colors.map(col => {
+                              {p.colors.map((col, colidx) => {
                                 const remainingForColor = getImportedStockRemaining(p.name, col);
                                 return (
-                                  <div key={col} className="bg-white px-2.5 py-1.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
+                                  <div key={`${col}-${colidx}`} className="bg-white px-2.5 py-1.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
                                     <span className="font-semibold text-slate-600">{col}</span>
                                     <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full ${remainingForColor > 0 ? 'text-amber-800 bg-amber-50 border border-amber-100' : 'text-slate-400 bg-slate-50 border border-slate-100'}`}>
                                       {remainingForColor} kits
@@ -820,9 +935,9 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {myRecentRecordings.map((unit) => (
+                  {myRecentRecordings.map((unit, uidx) => (
                     <tr 
-                      key={unit.id} 
+                      key={unit.id || `build-rec-${uidx}`} 
                       onClick={() => setSelectedDetailScooter(unit)}
                       className="text-slate-700 hover:bg-slate-100/70 hover:text-slate-900 cursor-pointer transition-colors"
                       title="Click to view full detail specs"
@@ -1021,17 +1136,17 @@ export default function App() {
               <p className="text-xs text-slate-400 py-4 text-center">No products catalogued yet.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 py-2">
-                {products.map(p => (
-                  <div key={p.id} className="border border-slate-100 bg-slate-50/50 rounded-2xl p-4">
+                {products.map((p, pidx) => (
+                  <div key={p.id || `sales-prod-${pidx}`} className="border border-slate-100 bg-slate-50/50 rounded-2xl p-4">
                     <span className="text-[10px] font-extrabold text-slate-400 font-mono block uppercase tracking-wide mb-2">{p.name}</span>
                     <div className="space-y-2">
-                      {p.colors.map(col => {
+                      {p.colors.map((col, colidx) => {
                         const totalAvail = scooterUnits.filter(u => u.modelName === p.name && u.color === col && u.status === 'available').length;
                         const batteryAssigned = scooterUnits.filter(u => u.modelName === p.name && u.color === col && u.status === 'available' && u.batterySerials && u.batterySerials.length > 0).length;
                         const needsBattery = totalAvail - batteryAssigned;
-
+ 
                         return (
-                          <div key={col} className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
+                          <div key={`${col}-${colidx}`} className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
                             <div>
                               <span className="font-bold text-slate-800">{col}</span>
                               <div className="text-[10px] text-slate-500 mt-0.5 font-medium">
@@ -1074,8 +1189,8 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {myRecentRecordings.map((unit) => (
-                    <tr key={unit.id} className="text-slate-700 hover:bg-slate-50/50">
+                  {myRecentRecordings.map((unit, uidx) => (
+                    <tr key={unit.id || `sales-rec-${uidx}`} className="text-slate-700 hover:bg-slate-50/50">
                       <td className="py-3.5 px-4 font-extrabold text-slate-900">{unit.modelName}</td>
                       <td className="py-3.5 px-4 font-medium">{unit.color}</td>
                       <td className="py-3.5 px-4 font-mono font-bold text-[11px] text-slate-900">{unit.chassisNo}</td>
@@ -1114,15 +1229,7 @@ export default function App() {
                   {roleDetails.text}
                 </span>
               </div>
-
-              <button
-                onClick={() => setShowAttendance(true)}
-                title="Open Location & Attendance"
-                className="p-2 text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-xl cursor-pointer transition-colors"
-              >
-                <MapPin className="h-4 w-4" />
-              </button>
-
+              
               <button
                 onClick={fetchAllData}
                 disabled={loading}
@@ -1418,28 +1525,6 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* --- ATTENDANCE & TRACKING MODAL (Manufacturer) --- */}
-        <AnimatePresence>
-          {showAttendance && (
-            <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="relative bg-transparent max-w-6xl w-full"
-              >
-                <button
-                  onClick={() => setShowAttendance(false)}
-                  className="absolute -top-12 right-0 p-2 text-white hover:text-rose-400 bg-white/10 rounded-full"
-                >
-                  <X size={24} />
-                </button>
-                <AttendanceScreen currentUser={currentUser} />
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
-
         <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">
           ✨ Senzo Warehouse Manager — Production Terminal — {new Date().getFullYear()}
         </footer>
@@ -1565,28 +1650,6 @@ export default function App() {
             )}
           </AnimatePresence>
         </main>
-
-        {/* --- ATTENDANCE & TRACKING MODAL (Salesperson) --- */}
-        <AnimatePresence>
-          {showAttendance && (
-            <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="relative bg-transparent max-w-6xl w-full"
-              >
-                <button
-                  onClick={() => setShowAttendance(false)}
-                  className="absolute -top-12 right-0 p-2 text-white hover:text-rose-400 bg-white/10 rounded-full"
-                >
-                  <X size={24} />
-                </button>
-                <AttendanceScreen currentUser={currentUser} />
-              </motion.div>
-            </div>
-          )}
-        </AnimatePresence>
 
         <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">
           ✨ Senzo Warehouse Manager — Sales Terminal — {new Date().getFullYear()}
@@ -2048,28 +2111,6 @@ export default function App() {
           </motion.div>
         </AnimatePresence>
       </main>
-
-      {/* --- ATTENDANCE & TRACKING MODAL (Admin) --- */}
-      <AnimatePresence>
-        {showAttendance && (
-          <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 overflow-y-auto">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="relative bg-transparent max-w-6xl w-full"
-            >
-              <button
-                onClick={() => setShowAttendance(false)}
-                className="absolute -top-12 right-0 p-2 text-white hover:text-rose-400 bg-white/10 rounded-full"
-              >
-                <X size={24} />
-              </button>
-              <AdminAttendanceMap />
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* 4. Footer */}
       <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">

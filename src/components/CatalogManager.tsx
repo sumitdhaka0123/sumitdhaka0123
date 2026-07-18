@@ -467,9 +467,9 @@ export default function CatalogManager({
             </div>
 
             <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1" id="models-list">
-              {products.map((p) => (
+              {products.map((p, idx) => (
                 <div 
-                  key={p.id} 
+                  key={p.id || `catalog-prod-${idx}`} 
                   onClick={() => handleOpenEditProduct(p)}
                   className="p-4 bg-slate-50 hover:bg-slate-100/70 border border-slate-100 hover:border-slate-300 rounded-2xl text-xs cursor-pointer transition-all group relative" 
                   id={`registered-model-${p.id}`}
@@ -579,9 +579,9 @@ export default function CatalogManager({
             </div>
 
             <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1" id="buyers-list">
-              {buyers.map((b) => (
+              {buyers.map((b, idx) => (
                 <div 
-                  key={b.id} 
+                  key={b.id || `catalog-buyer-${idx}`} 
                   onClick={() => handleOpenEditBuyer(b)}
                   className="p-3 bg-slate-50 hover:bg-slate-100/70 border border-slate-100 hover:border-slate-300 rounded-2xl text-xs flex justify-between items-center transition-all cursor-pointer group"
                   id={`registered-buyer-${b.id}`}

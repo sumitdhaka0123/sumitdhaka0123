@@ -52,7 +52,7 @@ function doPost(e) {
     
     // Create tabs if they do not exist (with human-readable proper headers)
     getOrCreateSheet(doc, "StockLogs", ["Log ID", "Model Name", "Color", "Type (IN/OUT)", "Source Channel", "Quantity", "Buyer", "Timestamp", "Operator", "Notes"]);
-    getOrCreateSheet(doc, "ScooterUnits", ["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Tires", "Buyer Name", "Buyer Contact", "Sale Price", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Last Updated", "Created By"]);
+    getOrCreateSheet(doc, "ScooterUnits", ["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Tires", "Buyer Name", "Buyer Contact", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Last Updated", "Created By"]);
     getOrCreateSheet(doc, "Products", ["Product ID", "Model Name", "Available Colors"]);
     getOrCreateSheet(doc, "Buyers", ["Buyer ID", "Buyer Name", "Contact Details"]);
     getOrCreateSheet(doc, "BatterySales", ["Sale ID", "Buyer Name", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Sale Date", "Operator", "Notes", "Under Warranty", "Warranty Months", "Status", "Held For", "Held By", "Hold Date"]);
@@ -110,7 +110,6 @@ function doGet(e) {
       tireSize: ["tires", "tire size"],
       buyerName: ["buyer name", "buyer"],
       buyerContact: ["buyer contact", "contact"],
-      salesPrice: ["sale price", "sales price", "price"],
       batterySerials: ["battery serials", "battery serial"],
       status: ["status"],
       scooterWarrantyStatus: ["scooter warranty", "scooter warranty status"],
@@ -135,7 +134,7 @@ function doGet(e) {
         buyers: getSheetDataAsJson(doc, "Buyers", ["id", "name", "contact"], synonymsMap),
         scooterUnits: getSheetDataAsJson(doc, "ScooterUnits", [
           "id", "modelName", "color", "chassisNo", "motorNo", "controllerNo", 
-          "tireSize", "buyerName", "buyerContact", "salesPrice", "batterySerials", 
+          "tireSize", "buyerName", "buyerContact", "batterySerials", 
           "status", "scooterWarrantyStatus", "batteryWarrantyStatus", "lastUpdatedTimestamp", "createdOperator"
         ], synonymsMap),
         stockLogs: getSheetDataAsJson(doc, "StockLogs", [
@@ -202,7 +201,7 @@ function getSheetDataAsJson(doc, sheetName, fields, synonymsMap) {
       
       if (fieldName === "colors" || fieldName === "batterySerials") {
         obj[fieldName] = val ? val.toString().split(",").map(function(c) { return c.trim(); }).filter(Boolean) : [];
-      } else if (fieldName === "quantity" || fieldName === "salesPrice" || fieldName === "availableStock" || fieldName === "buyingPrice" || fieldName === "warrantyDurationMonths") {
+      } else if (fieldName === "quantity" || fieldName === "availableStock" || fieldName === "buyingPrice" || fieldName === "warrantyDurationMonths") {
         obj[fieldName] = (val !== "" && !isNaN(Number(val))) ? Number(val) : 0;
       } else if (fieldName === "isUnderWarranty") {
         obj[fieldName] = (val.toString().toLowerCase() === "yes" || val === true);
@@ -347,7 +346,6 @@ function updateOrAddScooter(doc, scoot) {
     scoot.tireSize,
     scoot.buyerName || "",
     scoot.buyerContact || "",
-    scoot.salesPrice || "",
     (scoot.batterySerials || []).join(", "),
     scoot.status,
     scoot.scooterWarrantyStatus || "None",
@@ -361,7 +359,7 @@ function updateOrAddScooter(doc, scoot) {
   } else {
     sheet.appendRow(rowData);
   }
-  applyProfessionalFormatting(sheet, true, 12); // column 12 is status
+  applyProfessionalFormatting(sheet, true, 11); // column 11 is status
 }
 
 function syncAllData(doc, data) {
@@ -393,9 +391,9 @@ function syncAllData(doc, data) {
   applyProfessionalFormatting(stockSheet, true, 4); // Status index 4 is type (IN/OUT)
   
   // ScooterUnits
-  var scootSheet = getOrCreateSheet(doc, "ScooterUnits", ["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Tires", "Buyer Name", "Buyer Contact", "Sale Price", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Last Updated", "Created By"]);
+  var scootSheet = getOrCreateSheet(doc, "ScooterUnits", ["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Tires", "Buyer Name", "Buyer Contact", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Last Updated", "Created By"]);
   scootSheet.clearContents();
-  scootSheet.appendRow(["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Tires", "Buyer Name", "Buyer Contact", "Sale Price", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Last Updated", "Created By"]);
+  scootSheet.appendRow(["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Tires", "Buyer Name", "Buyer Contact", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Last Updated", "Created By"]);
   (data.scooterUnits || []).forEach(function(scoot) {
     scootSheet.appendRow([
       scoot.id,
@@ -407,7 +405,6 @@ function syncAllData(doc, data) {
       scoot.tireSize,
       scoot.buyerName || "",
       scoot.buyerContact || "",
-      scoot.salesPrice || "",
       (scoot.batterySerials || []).join(", "),
       scoot.status,
       scoot.scooterWarrantyStatus || "None",
@@ -416,7 +413,7 @@ function syncAllData(doc, data) {
       scoot.createdOperator || ""
     ]);
   });
-  applyProfessionalFormatting(scootSheet, true, 12); // Status column 12
+  applyProfessionalFormatting(scootSheet, true, 11); // Status column 11
   
   // BatterySales
   var batSalesSheet = getOrCreateSheet(doc, "BatterySales", ["Sale ID", "Buyer Name", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Sale Date", "Operator", "Notes", "Under Warranty", "Warranty Months", "Status", "Held For", "Held By", "Hold Date"]);

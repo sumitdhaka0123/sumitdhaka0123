@@ -81,68 +81,42 @@ export default function SettingsPanel({
 
   // Live employee location tracking states
   const [showLocationMap, setShowLocationMap] = useState<boolean>(true);
-  const [isSimulatingLocation, setIsSimulatingLocation] = useState<boolean>(false);
+  const [isPullingLocation, setIsPullingLocation] = useState<boolean>(false);
 
-  const handleSimulateLocation = async (username: string) => {
-    setIsSimulatingLocation(true);
+  const handlePullLocation = async (username: string) => {
+    setIsPullingLocation(true);
+    setSuccessMsg(`Sending satellite ping to @${username}'s device...`);
     try {
-      // Delhi, India region (Volt Scooty Distribution Hub)
-      const baseLat = 28.6139; 
-      const baseLng = 77.2090;
-      const randomOffsetLat = (Math.random() - 0.5) * 0.04;
-      const randomOffsetLng = (Math.random() - 0.5) * 0.04;
-      const lat = baseLat + randomOffsetLat;
-      const lng = baseLng + randomOffsetLng;
-
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username,
-          latitude: lat,
-          longitude: lng,
-        }),
-      });
-
-      if (res.ok) {
-        await fetchEmployees();
-        setSuccessMsg(`Simulated live 24/7 telemetry coords updated for @${username}!`);
-        setShowLocationMap(true);
-        setTimeout(() => setSuccessMsg(''), 4000);
-      } else {
-        setErrorMsg('Failed to broadcast simulated telemetry.');
-        setTimeout(() => setErrorMsg(''), 4000);
-      }
-    } catch (err) {
-      setErrorMsg('Error triggering telemetry simulation.');
-      setTimeout(() => setErrorMsg(''), 4000);
-    } finally {
-      setIsSimulatingLocation(false);
-    }
-  };
-
-  // 24-Hour Location Trails Simulation States & Handler
-  const [isSimulatingTrail, setIsSimulatingTrail] = useState<boolean>(false);
-
-  const handleSimulateTrail = async (username: string) => {
-    setIsSimulatingTrail(true);
-    try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/simulate-trail', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/pull-location', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
       });
 
       if (res.ok) {
-        await fetchEmployees();
-        triggerAlert('success', `Simulated 24-hour location trail generated for @${username}!`);
+        setSuccessMsg(`Pinging device @${username} live. Waiting for high-accuracy GPS coordinates...`);
+        // Poll the server every 1.5s for 9 seconds to catch the updated coordinates
+        let attempts = 0;
+        const maxAttempts = 6;
+        const intervalId = setInterval(async () => {
+          attempts++;
+          await fetchEmployees();
+          if (attempts >= maxAttempts) {
+            clearInterval(intervalId);
+            setIsPullingLocation(false);
+            setSuccessMsg(`Device ping sequence complete. Showing most up-to-date coordinate of @${username}.`);
+            setTimeout(() => setSuccessMsg(''), 5000);
+          }
+        }, 1500);
       } else {
-        triggerAlert('error', 'Failed to generate simulated location trail.');
+        setErrorMsg(`Failed to establish connection to @${username}'s GPS transmitter.`);
+        setIsPullingLocation(false);
+        setTimeout(() => setErrorMsg(''), 4000);
       }
     } catch (err) {
-      triggerAlert('error', 'Error generating trail simulation.');
-    } finally {
-      setIsSimulatingTrail(false);
+      setErrorMsg('Error requesting live GPS coordinate pull.');
+      setIsPullingLocation(false);
+      setTimeout(() => setErrorMsg(''), 4000);
     }
   };
 
@@ -186,8 +160,8 @@ export default function SettingsPanel({
   const [auditEndDate, setAuditEndDate] = useState('');
 
   // Load employees from server
-  const fetchEmployees = async () => {
-    setLoadingEmployees(true);
+  const fetchEmployees = async (silent = false) => {
+    if (!silent) setLoadingEmployees(true);
     try {
       const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users');
       if (res.ok) {
@@ -199,12 +173,12 @@ export default function SettingsPanel({
           setSelectedEmployeeId(currentInList ? currentInList.id : data[0].id);
         }
       } else {
-        setErrorMsg('Failed to load employee directory.');
+        if (!silent) setErrorMsg('Failed to load employee directory.');
       }
     } catch (err) {
-      setErrorMsg('Error contacting server for employees.');
+      if (!silent) setErrorMsg('Error contacting server for employees.');
     } finally {
-      setLoadingEmployees(false);
+      if (!silent) setLoadingEmployees(false);
     }
   };
 
@@ -229,6 +203,16 @@ export default function SettingsPanel({
   useEffect(() => {
     fetchEmployees();
   }, []);
+
+  // Poll employee location updates seamlessly in real-time every 10 seconds while tracking/trails maps are open
+  useEffect(() => {
+    if (subTab === 'tracking' || subTab === 'trails') {
+      const intervalId = setInterval(() => {
+        fetchEmployees(true);
+      }, 10000);
+      return () => clearInterval(intervalId);
+    }
+  }, [subTab, selectedEmployeeId]);
 
   useEffect(() => {
     if (subTab === 'audit') {
@@ -1112,12 +1096,12 @@ export default function SettingsPanel({
 
                             <button
                               type="button"
-                              disabled={isSimulatingLocation}
-                              onClick={() => handleSimulateLocation(selectedEmployee.username)}
+                              disabled={isPullingLocation}
+                              onClick={() => handlePullLocation(selectedEmployee.username)}
                               className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
                             >
-                              <Navigation className="h-3.5 w-3.5 text-cyan-400" />
-                              {isSimulatingLocation ? 'Broadcasting Coordinate...' : '⚡ Teleport Device (Simulate Live Movement)'}
+                              <Compass className="h-3.5 w-3.5 text-cyan-400 animate-spin-slow" />
+                              {isPullingLocation ? 'Establishing satellite connection...' : '🛰️ Pull Device Live Location'}
                             </button>
                           </div>
                         ) : (
@@ -1126,18 +1110,18 @@ export default function SettingsPanel({
                               <div className="text-[20px] mb-1">📡</div>
                               <div className="text-[10px] font-extrabold text-slate-700 uppercase tracking-wide">No Telemetry Received Yet</div>
                               <p className="text-[9px] text-slate-500 mt-0.5 max-w-[200px] mx-auto leading-relaxed">
-                                Employee location is tracked silently 24/7 when they access the portal on their device.
+                                Location can be requested directly. Once the employee is active, their physical GPS transmitter will report.
                               </p>
                             </div>
 
                             <button
                               type="button"
-                              disabled={isSimulatingLocation}
-                              onClick={() => handleSimulateLocation(selectedEmployee.username)}
+                              disabled={isPullingLocation}
+                              onClick={() => handlePullLocation(selectedEmployee.username)}
                               className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
                             >
-                              <Navigation className="h-3.5 w-3.5 text-cyan-400" />
-                              {isSimulatingLocation ? 'Initiating Broadcast...' : '⚡ Seed Simulated Location & Spawn Live Map'}
+                              <Compass className="h-3.5 w-3.5 text-cyan-400 animate-spin-slow" />
+                              {isPullingLocation ? 'Pinging device...' : '🛰️ Pull Live Location & Spawn Map'}
                             </button>
                           </div>
                         )}
@@ -1315,7 +1299,7 @@ export default function SettingsPanel({
               {/* Employee list */}
               <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
                 {uniqueEmployees
-                  .filter(e => e.role === 'salesperson' || e.role === 'manufacturer')
+                  .filter(e => e.role === 'salesperson' || e.role === 'manufacturer' || e.role === 'manager')
                   .filter(e => {
                     const term = searchQuery.toLowerCase().trim();
                     return e.name.toLowerCase().includes(term) || e.username.toLowerCase().includes(term);
@@ -1323,7 +1307,6 @@ export default function SettingsPanel({
                   .map(emp => {
                     const hasLocation = emp.latitude !== undefined && emp.longitude !== undefined;
                     const isSelected = selectedEmployeeId === emp.id;
-                    const isSales = emp.role === 'salesperson';
 
                     return (
                       <div
@@ -1342,11 +1325,13 @@ export default function SettingsPanel({
                             <div className="text-xs font-bold font-sans flex items-center gap-1.5">
                               {emp.name}
                               <span className={`text-[8px] font-sans font-semibold px-2 py-0.5 rounded-full ${
-                                isSales 
+                                emp.role === 'salesperson' 
                                   ? 'bg-amber-100 text-amber-800 border border-amber-200' 
+                                  : emp.role === 'manager'
+                                  ? 'bg-teal-100 text-teal-800 border border-teal-200'
                                   : 'bg-cyan-100 text-cyan-800 border border-cyan-200'
                               } ${isSelected ? 'brightness-90 text-slate-900 bg-white border-transparent' : ''}`}>
-                                {isSales ? '💼 Sales' : '🛠️ Assembly'}
+                                {emp.role === 'salesperson' ? '💼 Sales' : emp.role === 'manager' ? '📈 Manager' : '🛠️ Assembly'}
                               </span>
                             </div>
                             <div className={`text-[10px] ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
@@ -1413,17 +1398,17 @@ export default function SettingsPanel({
               {selectedEmployeeId && (
                 <button
                   type="button"
-                  disabled={isSimulatingLocation}
+                  disabled={isPullingLocation}
                   onClick={async () => {
                     const emp = uniqueEmployees.find(e => e.id === selectedEmployeeId);
                     if (emp) {
-                      await handleSimulateLocation(emp.username);
+                      await handlePullLocation(emp.username);
                     }
                   }}
                   className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
                 >
-                  <MapPin className="h-3.5 w-3.5 text-cyan-400" />
-                  {isSimulatingLocation ? 'Updating beacon...' : '⚡ Teleport selected employee'}
+                  <Compass className="h-3.5 w-3.5 text-cyan-400 animate-spin-slow" />
+                  {isPullingLocation ? 'Pinging Live Location...' : '🛰️ Pull Live Location'}
                 </button>
               )}
             </div>
@@ -1431,7 +1416,7 @@ export default function SettingsPanel({
             {/* Map viewport */}
             <div className="flex-1 min-h-[400px]">
               <StaffUnifiedMap
-                employees={uniqueEmployees.filter(e => e.role === 'salesperson' || e.role === 'manufacturer')}
+                employees={uniqueEmployees.filter(e => e.role === 'salesperson' || e.role === 'manufacturer' || e.role === 'manager')}
                 focusedEmployeeId={selectedEmployeeId}
                 onSelectEmployee={(id) => setSelectedEmployeeId(id)}
               />
@@ -1441,7 +1426,7 @@ export default function SettingsPanel({
             <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl flex items-start gap-3">
               <span className="text-xl shrink-0">💡</span>
               <p className="text-[10px] text-slate-500 leading-relaxed font-sans">
-                <strong>Operational Privacy Protocol:</strong> Location coordinates are silently tracked only for active <strong>Assembly Operators (Manufacturers)</strong> and <strong>Sales Agents</strong> inside their local browser tabs. Geolocation updates are absolutely hidden and fully invisible on the operator’s client side.
+                <strong>Operational Privacy Protocol:</strong> Location coordinates are silently tracked only for active <strong>Assembly Operators (Manufacturers)</strong>, <strong>Sales Agents</strong>, and <strong>Managers</strong> inside their local browser tabs. Geolocation updates are absolutely hidden and fully invisible on the operator’s client side.
               </p>
             </div>
           </div>
@@ -1475,7 +1460,7 @@ export default function SettingsPanel({
               {/* Employee list with breadcrumbs stats */}
               <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
                 {uniqueEmployees
-                  .filter(e => e.role === 'salesperson' || e.role === 'manufacturer')
+                  .filter(e => e.role === 'salesperson' || e.role === 'manufacturer' || e.role === 'manager')
                   .filter(e => {
                     const term = searchQuery.toLowerCase().trim();
                     return e.name.toLowerCase().includes(term) || e.username.toLowerCase().includes(term);
@@ -1483,7 +1468,6 @@ export default function SettingsPanel({
                   .map(emp => {
                     const trailCount = emp.locationHistory?.length || 0;
                     const isSelected = selectedEmployeeId === emp.id;
-                    const isSales = emp.role === 'salesperson';
 
                     return (
                       <div
@@ -1500,11 +1484,13 @@ export default function SettingsPanel({
                             <div className="text-xs font-bold font-sans flex items-center gap-1.5">
                               {emp.name}
                               <span className={`text-[8px] font-sans font-semibold px-2 py-0.5 rounded-full ${
-                                isSales 
+                                emp.role === 'salesperson' 
                                   ? 'bg-amber-100 text-amber-800 border border-amber-200' 
+                                  : emp.role === 'manager'
+                                  ? 'bg-teal-100 text-teal-800 border border-teal-200'
                                   : 'bg-cyan-100 text-cyan-800 border border-cyan-200'
                               } ${isSelected ? 'brightness-90 text-slate-900 bg-white border-transparent' : ''}`}>
-                                {isSales ? '💼 Sales' : '🛠️ Assembly'}
+                                {emp.role === 'salesperson' ? '💼 Sales' : emp.role === 'manager' ? '📈 Manager' : '🛠️ Assembly'}
                               </span>
                             </div>
                             <div className={`text-[10px] ${isSelected ? 'text-slate-300' : 'text-slate-500'}`}>
@@ -1565,15 +1551,9 @@ export default function SettingsPanel({
                     </p>
                   </div>
 
-                  <button
-                    type="button"
-                    disabled={isSimulatingTrail}
-                    onClick={() => handleSimulateTrail(selectedEmployee.username)}
-                    className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
-                  >
-                    <Compass className="h-3.5 w-3.5 text-cyan-400" />
-                    {isSimulatingTrail ? 'Generating trail...' : '⚡ Generate Simulated 24h Trail'}
-                  </button>
+                  <div className="bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-[10px] font-semibold text-slate-500 flex items-center gap-1">
+                    <span className="text-cyan-500">🛡️</span> Real Device GPS Stream Only
+                  </div>
                 </div>
 
                 {/* Trail statistics */}
@@ -1689,7 +1669,7 @@ export default function SettingsPanel({
                     <span className="text-3xl">📡</span>
                     <h3 className="text-xs font-black uppercase text-slate-700 tracking-wider">No Location History Recorded</h3>
                     <p className="text-[10px] text-slate-500 max-w-[320px] mx-auto leading-relaxed">
-                      This worker hasn't logged any location events in the last 24 hours. Generate a simulated 24h path above to seed movement breadcrumbs.
+                      This worker hasn't logged any location events in the last 24 hours. Click "Pull Live Location" on the tracking panel or active list to request real-time satellite coordinates directly from their device.
                     </p>
                   </div>
                 )}
