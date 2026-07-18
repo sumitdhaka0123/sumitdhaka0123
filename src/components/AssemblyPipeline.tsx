@@ -1747,7 +1747,7 @@ export default function AssemblyPipeline({
                         <SearchableDropdown
                           options={availableScooters.map((scoot) => ({
                             value: scoot.id,
-                            label: `${scoot.modelName} (${scoot.color}) - Chassis: ${scoot.chassisNo}`
+                            label: `Chassis: ${scoot.chassisNo} (${scoot.modelName} - ${scoot.color})`
                           }))}
                           value={selectedPrepScooterId}
                           onChange={(val) => handlePrepScooterSelect(val)}
@@ -1895,7 +1895,7 @@ export default function AssemblyPipeline({
                               .filter(u => (u.status === 'available' || u.status === 'hold') && (!s3ModelSelected || u.modelName === s3ModelSelected))
                               .map((scoot) => ({
                                 value: scoot.id,
-                                label: `${scoot.modelName} (${scoot.color}) - Chassis: ${scoot.chassisNo}${scoot.status === 'hold' ? ` [🤝 HELD FOR ${scoot.heldFor?.toUpperCase()}]` : ''}`
+                                label: `Chassis: ${scoot.chassisNo} (${scoot.modelName} - ${scoot.color})${scoot.status === 'hold' ? ` [🤝 HELD FOR ${scoot.heldFor?.toUpperCase()}]` : ''}`
                               }))}
                             value={selectedPOSScooterId}
                             onChange={(val) => handlePOSScooterSelect(val)}
@@ -2977,7 +2977,7 @@ export default function AssemblyPipeline({
                     <SearchableDropdown
                       options={scooterUnits.map((scoot) => ({
                         value: scoot.id,
-                        label: `${scoot.modelName} (${scoot.color}) - Chassis: ${scoot.chassisNo} [${scoot.status.toUpperCase()}]`
+                        label: `Chassis: ${scoot.chassisNo} (${scoot.modelName} - ${scoot.color}) [${scoot.status.toUpperCase()}]`
                       }))}
                       value={selectedCustomizeScooterId}
                       onChange={(val) => handleCustomizeScooterSelect(val)}
