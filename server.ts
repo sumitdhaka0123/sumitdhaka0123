@@ -654,10 +654,12 @@ function readDBFromFile(): DBState {
 
 function readDB(): DBState {
   if (globalDBState) {
-    return globalDBState;
+    // Return a deep copy so API handlers do not mutate the global state before writeDB is called.
+    // This allows writeDB to correctly capture the oldState for Firestore comparison.
+    return JSON.parse(JSON.stringify(globalDBState));
   }
   globalDBState = readDBFromFile();
-  return globalDBState;
+  return JSON.parse(JSON.stringify(globalDBState));
 }
 
 function cleanForFirestore(obj: any): any {
