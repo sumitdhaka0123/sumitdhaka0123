@@ -10,6 +10,7 @@ import BatterySalesManager from './BatterySalesManager';
 import ChargerSalesManager from './ChargerSalesManager';
 import QRSerialScanner from './QRSerialScanner';
 import { SearchableDropdown } from './SearchableDropdown';
+import { formatUserMessage } from '../utils/errorHelper';
 
 interface AssemblyPipelineProps {
   products: Product[];
@@ -710,12 +711,14 @@ export default function AssemblyPipeline({
   };
 
   // Clear feed-back alerts helper
-  const triggerAlert = (type: 'success' | 'error', text: string) => {
+  const triggerAlert = (type: 'success' | 'error', textOrError: any) => {
     if (type === 'success') {
-      setSuccessMsg(text);
+      setSuccessMsg(String(textOrError));
       setErrorMsg('');
     } else {
-      setErrorMsg(text);
+      const isAdmin = currentUser.role === 'admin';
+      const formatted = formatUserMessage(textOrError, isAdmin);
+      setErrorMsg(formatted);
       setSuccessMsg('');
     }
     // Auto clear after 6 seconds

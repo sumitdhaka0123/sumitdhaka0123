@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import { ArrowDownCircle, ArrowUpCircle, ClipboardList, Plus, FileText, User, ShoppingBag, Ship, Store, Battery, Zap, PlusCircle } from 'lucide-react';
 import { Product, Buyer, StockLog, User as SessionUser, BatteryImport, ChargerImport, ScooterUnit } from '../types';
 import QRSerialScanner from './QRSerialScanner';
+import { formatUserMessage } from '../utils/errorHelper';
 
 interface StockAdjustmentProps {
   products: Product[];
@@ -68,7 +69,10 @@ export default function StockAdjustment({
   const [localMotor, setLocalMotor] = useState('');
   const [localController, setLocalController] = useState('');
   const [localNotes, setLocalNotes] = useState('');
-  const [localErrorMsg, setLocalErrorMsg] = useState('');
+  const [localErrorMsg, _setLocalErrorMsg] = useState('');
+  const setLocalErrorMsg = (msg: any) => {
+    _setLocalErrorMsg(msg ? formatUserMessage(msg, currentUser.role === 'admin') : '');
+  };
   const [localSuccessMsg, setLocalSuccessMsg] = useState('');
   const [localLoading, setLocalLoading] = useState(false);
 
@@ -94,7 +98,10 @@ export default function StockAdjustment({
   const [buyerName, setBuyerName] = useState('');
   const [notes, setNotes] = useState('');
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorMsg, _setErrorMsg] = useState('');
+  const setErrorMsg = (msg: any) => {
+    _setErrorMsg(msg ? formatUserMessage(msg, currentUser.role === 'admin') : '');
+  };
   const [successMsg, setSuccessMsg] = useState('');
 
   // Battery Import States
@@ -104,7 +111,10 @@ export default function StockAdjustment({
   const [impContainerId, setImpContainerId] = useState('');
   const [impNotes, setImpNotes] = useState('');
   const [batteryLoading, setBatteryLoading] = useState(false);
-  const [batteryErrorMsg, setBatteryErrorMsg] = useState('');
+  const [batteryErrorMsg, _setBatteryErrorMsg] = useState('');
+  const setBatteryErrorMsg = (msg: any) => {
+    _setBatteryErrorMsg(msg ? formatUserMessage(msg, currentUser.role === 'admin') : '');
+  };
   const [batterySuccessMsg, setBatterySuccessMsg] = useState('');
 
   // Dual Input and QR Scanning States for Battery Purchase (Imports)
@@ -183,7 +193,10 @@ export default function StockAdjustment({
   const [impChargerContainerId, setImpChargerContainerId] = useState('');
   const [impChargerNotes, setImpChargerNotes] = useState('');
   const [chargerLoading, setChargerLoading] = useState(false);
-  const [chargerErrorMsg, setChargerErrorMsg] = useState('');
+  const [chargerErrorMsg, _setChargerErrorMsg] = useState('');
+  const setChargerErrorMsg = (msg: any) => {
+    _setChargerErrorMsg(msg ? formatUserMessage(msg, currentUser.role === 'admin') : '');
+  };
   const [chargerSuccessMsg, setChargerSuccessMsg] = useState('');
 
   // Update selected charger type if list changes
@@ -426,11 +439,11 @@ export default function StockAdjustment({
     <div className="space-y-6" id="stock-workspace">
       
       {/* Sub-tab Selection */}
-      <div className="flex bg-slate-100 p-1 rounded-2xl w-full sm:w-fit" id="stock-subtab-selector">
+      <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl w-full overflow-x-auto whitespace-nowrap hide-scrollbar mb-4" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }} id="stock-subtab-selector">
         <button
           type="button"
           onClick={() => setActiveSubTab('scooters')}
-          className={`flex-1 sm:flex-initial px-5 py-2.5 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
+          className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
             activeSubTab === 'scooters' 
               ? 'bg-white text-slate-800 shadow-sm' 
               : 'text-slate-500 hover:text-slate-800'
@@ -441,18 +454,18 @@ export default function StockAdjustment({
         <button
           type="button"
           onClick={() => setActiveSubTab('local_scooters')}
-          className={`flex-1 sm:flex-initial px-5 py-2.5 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
+          className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
             activeSubTab === 'local_scooters' 
               ? 'bg-white text-slate-800 shadow-sm' 
               : 'text-slate-500 hover:text-slate-800'
           }`}
         >
-          🤝 Local Scooter Purchase
+          🤝 Local Purchase
         </button>
         <button
           type="button"
           onClick={() => setActiveSubTab('batteries')}
-          className={`flex-1 sm:flex-initial px-5 py-2.5 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
+          className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
             activeSubTab === 'batteries' 
               ? 'bg-white text-slate-800 shadow-sm' 
               : 'text-slate-500 hover:text-slate-800'
@@ -463,7 +476,7 @@ export default function StockAdjustment({
         <button
           type="button"
           onClick={() => setActiveSubTab('chargers')}
-          className={`flex-1 sm:flex-initial px-5 py-2.5 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
+          className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
             activeSubTab === 'chargers' 
               ? 'bg-white text-slate-800 shadow-sm' 
               : 'text-slate-500 hover:text-slate-800'
