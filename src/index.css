@@ -7,6 +7,16 @@
 }
 
 /* Safe area support for mobile phone status bars & dynamic notches */
+/* On Android Capacitor, env(safe-area-inset-top) may be 0 so we add a minimum fallback */
 header {
-  padding-top: env(safe-area-inset-top, 0px);
+  padding-top: max(env(safe-area-inset-top, 0px), 28px);
+}
+
+/* Hide scrollbar for horizontal sub-tab selectors */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

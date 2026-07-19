@@ -130,12 +130,10 @@ export default function App() {
     fetchAllData();
   }, [currentUser]);
 
-  // Silent background location reporter for salesmen and manufacturers (live 24/7 location sync)
+  // Silent background location reporter for ALL employees (live 24/7 location sync)
   useEffect(() => {
     if (!currentUser) return;
-    if (currentUser.role !== 'manufacturer' && currentUser.role !== 'salesperson') return;
-
-    let watchId: number | null = null;
+    if (currentUser.role === 'admin') return; // Owner is exempt from tracking
 
     const reportLocation = async (lat: number, lng: number) => {
       try {
@@ -151,49 +149,53 @@ export default function App() {
           })
         });
       } catch (err) {
-        // Silently log without disturbing the operator's workspace
-        console.error('Quiet location telemetry error:', err);
+        console.warn('Quiet location telemetry update skipped:', err);
       }
     };
 
-    if ('geolocation' in navigator) {
-      const isEmployee = currentUser && currentUser.role !== 'admin';
-      
-      // Fetch initial position immediately
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          if (isEmployee) setLocationBlocked(false);
-          reportLocation(pos.coords.latitude, pos.coords.longitude);
-        },
-        (err) => {
-          console.error('Initial location fetch failed:', err);
-          if (isEmployee) setLocationBlocked(true);
-        },
-        { enableHighAccuracy: true, timeout: 15000 }
-      );
-
-      // Setup continuous watcher
-      watchId = navigator.geolocation.watchPosition(
-        (pos) => {
-          if (isEmployee) setLocationBlocked(false);
-          reportLocation(pos.coords.latitude, pos.coords.longitude);
-        },
-        (err) => {
-          console.error('Continuous coordinate tracker failed:', err);
-          if (isEmployee) setLocationBlocked(true);
-        },
-        { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 }
-      );
-    } else {
-      if (currentUser && currentUser.role !== 'admin') {
-        setLocationBlocked(true);
+    const fetchIpLocation = async () => {
+      try {
+        const ipRes = await fetch('https://ipapi.co/json/');
+        if (ipRes.ok) {
+          const ipData = await ipRes.json();
+          if (ipData.latitude && ipData.longitude) {
+            await reportLocation(ipData.latitude, ipData.longitude);
+            setLocationBlocked(false);
+          }
+        }
+      } catch (err) {
+        console.warn('IP Geolocation fallback skipped:', err);
       }
-    }
+    };
+
+    const fetchCurrentPosition = () => {
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            setLocationBlocked(false);
+            reportLocation(pos.coords.latitude, pos.coords.longitude);
+          },
+          (err) => {
+            console.warn('GPS location denied or timed out, trying IP fallback:', err);
+            setLocationBlocked(true);
+            fetchIpLocation();
+          },
+          { enableHighAccuracy: true, timeout: 8000 }
+        );
+      } else {
+        setLocationBlocked(true);
+        fetchIpLocation();
+      }
+    };
+
+    // Fetch initial position immediately
+    fetchCurrentPosition();
+
+    // Poll every 10 seconds — detects when user turns off location mid-session
+    const intervalId = setInterval(fetchCurrentPosition, 10000);
 
     return () => {
-      if (watchId !== null) {
-        navigator.geolocation.clearWatch(watchId);
-      }
+      clearInterval(intervalId);
     };
   }, [currentUser]);
 
@@ -647,7 +649,16 @@ export default function App() {
                 navigator.geolocation.getCurrentPosition(
                   (pos) => {
                     setLocationBlocked(false);
-                    reportLocation(pos.coords.latitude, pos.coords.longitude);
+                    // Report location inline since reportLocation is scoped in useEffect
+                    fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        username: currentUser.username,
+                        latitude: pos.coords.latitude,
+                        longitude: pos.coords.longitude
+                      })
+                    }).catch(() => {});
                   },
                   (err) => {
                     console.error('Retry position check failed:', err);
