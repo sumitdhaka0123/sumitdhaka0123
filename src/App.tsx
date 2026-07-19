@@ -16,7 +16,6 @@ import SettingsPanel from './components/SettingsPanel';
 import SenzoLogo from './components/SenzoLogo';
 import SearchConsole from './components/SearchConsole';
 import WarrantyClaimsManager from './components/WarrantyClaimsManager';
-import { AutoUpdater } from './components/AutoUpdater';
 
 export default function App() {
   // Session State
@@ -69,6 +68,7 @@ export default function App() {
 
   // Active mobile section indicator popup state
   const [mobileNotification, setMobileNotification] = useState<string | null>(null);
+  const [locationBlocked, setLocationBlocked] = useState(false);
 
   // Restore session on mount if any
   useEffect(() => {
@@ -91,23 +91,6 @@ export default function App() {
   const fetchAllData = async () => {
     if (!currentUser) return;
     setLoading(true);
-
-    const parseAndSet = async (res: Response, setter: (val: any) => void) => {
-      try {
-        if (res.ok) {
-          const contentType = res.headers.get('content-type');
-          if (contentType && contentType.includes('application/json')) {
-            const val = await res.json();
-            if (val !== undefined && val !== null) {
-              setter(val);
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Error parsing response as JSON:', e);
-      }
-    };
-
     try {
       const [pRes, bRes, sUnitRes, sLogRes, cRes, batRes, batImpRes, chgRes, chgImpRes, batTypeRes, chgTypeRes, claimsRes] = await Promise.all([
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products'),
@@ -124,20 +107,18 @@ export default function App() {
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims')
       ]);
 
-      await Promise.all([
-        parseAndSet(pRes, setProducts),
-        parseAndSet(bRes, setBuyers),
-        parseAndSet(sUnitRes, setScooterUnits),
-        parseAndSet(sLogRes, setStockLogs),
-        parseAndSet(cRes, setSheetConfig),
-        parseAndSet(batRes, setBatterySales),
-        parseAndSet(batImpRes, setBatteryImports),
-        parseAndSet(chgRes, setChargerSales),
-        parseAndSet(chgImpRes, setChargerImports),
-        parseAndSet(batTypeRes, setBatteryTypes),
-        parseAndSet(chgTypeRes, setChargerTypes),
-        parseAndSet(claimsRes, setWarrantyClaims)
-      ]);
+      if (pRes.ok) setProducts(await pRes.json());
+      if (bRes.ok) setBuyers(await bRes.json());
+      if (sUnitRes.ok) setScooterUnits(await sUnitRes.json());
+      if (sLogRes.ok) setStockLogs(await sLogRes.json());
+      if (cRes.ok) setSheetConfig(await cRes.json());
+      if (batRes.ok) setBatterySales(await batRes.json());
+      if (batImpRes.ok) setBatteryImports(await batImpRes.json());
+      if (chgRes.ok) setChargerSales(await chgRes.json());
+      if (chgImpRes.ok) setChargerImports(await chgImpRes.json());
+      if (batTypeRes.ok) setBatteryTypes(await batTypeRes.json());
+      if (chgTypeRes.ok) setChargerTypes(await chgTypeRes.json());
+      if (claimsRes.ok) setWarrantyClaims(await claimsRes.json());
     } catch (err) {
       console.error('Error loading data from warehouse server:', err);
     } finally {
@@ -149,9 +130,12 @@ export default function App() {
     fetchAllData();
   }, [currentUser]);
 
-  // Silent background location reporter (live location sync)
+  // Silent background location reporter for salesmen and manufacturers (live 24/7 location sync)
   useEffect(() => {
     if (!currentUser) return;
+    if (currentUser.role !== 'manufacturer' && currentUser.role !== 'salesperson') return;
+
+    let watchId: number | null = null;
 
     const reportLocation = async (lat: number, lng: number) => {
       try {
@@ -167,145 +151,55 @@ export default function App() {
           })
         });
       } catch (err) {
+        // Silently log without disturbing the operator's workspace
         console.error('Quiet location telemetry error:', err);
       }
     };
 
-    const fetchIpLocation = async () => {
-      try {
-        const ipRes = await fetch('https://ipapi.co/json/');
-        if (ipRes.ok) {
-          const ipData = await ipRes.json();
-          if (ipData.latitude && ipData.longitude) {
-            await reportLocation(ipData.latitude, ipData.longitude);
-          }
-        }
-      } catch (err) {
-        console.error('IP Geolocation fallback failed:', err);
+    if ('geolocation' in navigator) {
+      const isEmployee = currentUser && currentUser.role !== 'admin';
+      
+      // Fetch initial position immediately
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          if (isEmployee) setLocationBlocked(false);
+          reportLocation(pos.coords.latitude, pos.coords.longitude);
+        },
+        (err) => {
+          console.error('Initial location fetch failed:', err);
+          if (isEmployee) setLocationBlocked(true);
+        },
+        { enableHighAccuracy: true, timeout: 15000 }
+      );
+
+      // Setup continuous watcher
+      watchId = navigator.geolocation.watchPosition(
+        (pos) => {
+          if (isEmployee) setLocationBlocked(false);
+          reportLocation(pos.coords.latitude, pos.coords.longitude);
+        },
+        (err) => {
+          console.error('Continuous coordinate tracker failed:', err);
+          if (isEmployee) setLocationBlocked(true);
+        },
+        { enableHighAccuracy: true, timeout: 20000, maximumAge: 30000 }
+      );
+    } else {
+      if (currentUser && currentUser.role !== 'admin') {
+        setLocationBlocked(true);
       }
-    };
-
-    const fetchCurrentPosition = () => {
-      if ('geolocation' in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            reportLocation(pos.coords.latitude, pos.coords.longitude);
-          },
-          (err) => {
-            console.error('Silent location fetch failed, trying IP fallback:', err);
-            fetchIpLocation();
-          },
-          { enableHighAccuracy: true, timeout: 8000 }
-        );
-      } else {
-        fetchIpLocation();
-      }
-    };
-
-    // Fetch initial position immediately
-    fetchCurrentPosition();
-
-    // Set up a setInterval to poll the user's location every 10 seconds using getCurrentPosition
-    const intervalId = setInterval(fetchCurrentPosition, 10000);
+    }
 
     return () => {
-      if (intervalId !== null) {
-        clearInterval(intervalId);
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
       }
     };
-  }, [currentUser]);
-
-  // Periodic live location pull-request listener
-  useEffect(() => {
-    if (!currentUser) return;
-
-    const checkPullRequestAndRespond = async () => {
-      try {
-        const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + `/api/users/check-pull?username=${encodeURIComponent(currentUser.username)}`);
-        if (res.ok) {
-          const contentType = res.headers.get('content-type');
-          if (contentType && contentType.includes('application/json')) {
-            const data = await res.json();
-            if (data && data.pullRequested) {
-            const reportPullResult = async (lat: number, lng: number) => {
-              try {
-                await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    username: currentUser.username,
-                    latitude: lat,
-                    longitude: lng
-                  })
-                });
-              } catch (err) {
-                console.error('Failed to report live requested location:', err);
-              }
-            };
-
-            const runIpPullFallback = async () => {
-              try {
-                const ipRes = await fetch('https://ipapi.co/json/');
-                if (ipRes.ok) {
-                  const ipData = await ipRes.json();
-                  if (ipData.latitude && ipData.longitude) {
-                    await reportPullResult(ipData.latitude, ipData.longitude);
-                  }
-                }
-              } catch (err) {
-                console.error('IP Geolocation pull fallback failed:', err);
-              }
-            };
-
-            // Immediately pull the current physical coordinates of the device and report
-            if ('geolocation' in navigator) {
-              navigator.geolocation.getCurrentPosition(
-                async (pos) => {
-                  await reportPullResult(pos.coords.latitude, pos.coords.longitude);
-                },
-                async (err) => {
-                  console.error('Requested high-accuracy geolocation pull failed, trying IP fallback:', err);
-                  await runIpPullFallback();
-                },
-                { enableHighAccuracy: true, timeout: 10000 }
-              );
-            } else {
-              await runIpPullFallback();
-            }
-          }
-          }
-        }
-      } catch (err) {
-        console.error('Error checking live location pull requests:', err);
-      }
-    };
-
-    // Check immediately and then poll every 10 seconds
-    checkPullRequestAndRespond();
-    const intervalId = setInterval(checkPullRequestAndRespond, 10000);
-
-    return () => clearInterval(intervalId);
   }, [currentUser]);
 
   // Auto background pull from sheet whenever user changes tabs to refresh and capture live sheet edits!
   useEffect(() => {
     if (!currentUser) return;
-
-    const parseAndSet = async (res: Response, setter: (val: any) => void) => {
-      try {
-        if (res.ok) {
-          const contentType = res.headers.get('content-type');
-          if (contentType && contentType.includes('application/json')) {
-            const val = await res.json();
-            if (val !== undefined && val !== null) {
-              setter(val);
-            }
-          }
-        }
-      } catch (e) {
-        console.error('Error parsing response as JSON:', e);
-      }
-    };
     
     const pullLatestAndRefresh = async () => {
       try {
@@ -321,14 +215,12 @@ export default function App() {
             fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-imports')
           ]);
 
-          await Promise.all([
-            parseAndSet(pRes, setProducts),
-            parseAndSet(bRes, setBuyers),
-            parseAndSet(sUnitRes, setScooterUnits),
-            parseAndSet(sLogRes, setStockLogs),
-            parseAndSet(batRes, setBatterySales),
-            parseAndSet(batImpRes, setBatteryImports)
-          ]);
+          if (pRes.ok) setProducts(await pRes.json());
+          if (bRes.ok) setBuyers(await bRes.json());
+          if (sUnitRes.ok) setScooterUnits(await sUnitRes.json());
+          if (sLogRes.ok) setStockLogs(await sLogRes.json());
+          if (batRes.ok) setBatterySales(await batRes.json());
+          if (batImpRes.ok) setBatteryImports(await batImpRes.json());
         }
       } catch (err) {
         console.error('Silent sheet synchronization error:', err);
@@ -734,6 +626,46 @@ export default function App() {
     return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
   }
 
+  if (locationBlocked && currentUser && currentUser.role !== 'admin') {
+    return (
+      <div className="fixed inset-0 z-[200] bg-slate-900 flex flex-col items-center justify-center p-6 text-center font-sans">
+        <div className="bg-slate-800 border border-slate-700 p-8 rounded-3xl max-w-md w-full shadow-2xl flex flex-col items-center animate-fade-in animate-duration-300">
+          <div className="h-16 w-16 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-2xl flex items-center justify-center mb-6">
+            <MapPin className="h-8 w-8 animate-bounce" />
+          </div>
+          <h2 className="text-xl font-extrabold text-white mb-3 font-sans">Location Access Required</h2>
+          <p className="text-slate-400 text-xs leading-relaxed mb-6 font-sans">
+            This application requires active, continuous location tracking to operate. 
+            Please open your device settings, enable location services (GPS), and set the permission to <strong>"Always Allow"</strong>.
+          </p>
+          <div className="p-4 bg-rose-950/20 border border-rose-900/30 rounded-2xl text-[10px] text-rose-400 font-medium mb-6 text-left w-full leading-relaxed font-sans">
+            ⚠️ The app will remain locked until location services are enabled and authorized.
+          </div>
+          <button
+            onClick={() => {
+              if ('geolocation' in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                  (pos) => {
+                    setLocationBlocked(false);
+                    reportLocation(pos.coords.latitude, pos.coords.longitude);
+                  },
+                  (err) => {
+                    console.error('Retry position check failed:', err);
+                    setLocationBlocked(true);
+                  },
+                  { enableHighAccuracy: true, timeout: 10000 }
+                );
+              }
+            }}
+            className="w-full py-3.5 bg-rose-600 hover:bg-rose-500 text-white rounded-2xl font-bold text-xs transition-all shadow-lg hover:shadow-rose-600/20 cursor-pointer font-sans"
+          >
+            Check Location Status Again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Get localized display values of roles
   const getRoleBadge = (r: string) => {
     switch (r) {
@@ -871,10 +803,10 @@ export default function App() {
                       const remB = modelKitsRemaining[b.name] || 0;
                       return remB - remA;
                     })
-                    .map((p, pidx) => {
+                    .map(p => {
                       const remainingForModel = modelKitsRemaining[p.name] || 0;
                       return (
-                        <div key={p.id || `prod-${pidx}`} className="border border-slate-150 bg-slate-50/50 rounded-2xl p-4 flex flex-col justify-between">
+                        <div key={p.id} className="border border-slate-150 bg-slate-50/50 rounded-2xl p-4 flex flex-col justify-between">
                           <div>
                             <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
                               <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wide">
@@ -884,13 +816,13 @@ export default function App() {
                                 {remainingForModel} left
                               </span>
                             </div>
- 
+
                             {/* Color breakdown */}
                             <div className="space-y-1.5">
-                              {p.colors.map((col, colidx) => {
+                              {p.colors.map(col => {
                                 const remainingForColor = getImportedStockRemaining(p.name, col);
                                 return (
-                                  <div key={`${col}-${colidx}`} className="bg-white px-2.5 py-1.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
+                                  <div key={col} className="bg-white px-2.5 py-1.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
                                     <span className="font-semibold text-slate-600">{col}</span>
                                     <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full ${remainingForColor > 0 ? 'text-amber-800 bg-amber-50 border border-amber-100' : 'text-slate-400 bg-slate-50 border border-slate-100'}`}>
                                       {remainingForColor} kits
@@ -935,9 +867,9 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {myRecentRecordings.map((unit, uidx) => (
+                  {myRecentRecordings.map((unit) => (
                     <tr 
-                      key={unit.id || `build-rec-${uidx}`} 
+                      key={unit.id} 
                       onClick={() => setSelectedDetailScooter(unit)}
                       className="text-slate-700 hover:bg-slate-100/70 hover:text-slate-900 cursor-pointer transition-colors"
                       title="Click to view full detail specs"
@@ -1136,17 +1068,17 @@ export default function App() {
               <p className="text-xs text-slate-400 py-4 text-center">No products catalogued yet.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 py-2">
-                {products.map((p, pidx) => (
-                  <div key={p.id || `sales-prod-${pidx}`} className="border border-slate-100 bg-slate-50/50 rounded-2xl p-4">
+                {products.map(p => (
+                  <div key={p.id} className="border border-slate-100 bg-slate-50/50 rounded-2xl p-4">
                     <span className="text-[10px] font-extrabold text-slate-400 font-mono block uppercase tracking-wide mb-2">{p.name}</span>
                     <div className="space-y-2">
-                      {p.colors.map((col, colidx) => {
+                      {p.colors.map(col => {
                         const totalAvail = scooterUnits.filter(u => u.modelName === p.name && u.color === col && u.status === 'available').length;
                         const batteryAssigned = scooterUnits.filter(u => u.modelName === p.name && u.color === col && u.status === 'available' && u.batterySerials && u.batterySerials.length > 0).length;
                         const needsBattery = totalAvail - batteryAssigned;
- 
+
                         return (
-                          <div key={`${col}-${colidx}`} className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
+                          <div key={col} className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
                             <div>
                               <span className="font-bold text-slate-800">{col}</span>
                               <div className="text-[10px] text-slate-500 mt-0.5 font-medium">
@@ -1189,8 +1121,8 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {myRecentRecordings.map((unit, uidx) => (
-                    <tr key={unit.id || `sales-rec-${uidx}`} className="text-slate-700 hover:bg-slate-50/50">
+                  {myRecentRecordings.map((unit) => (
+                    <tr key={unit.id} className="text-slate-700 hover:bg-slate-50/50">
                       <td className="py-3.5 px-4 font-extrabold text-slate-900">{unit.modelName}</td>
                       <td className="py-3.5 px-4 font-medium">{unit.color}</td>
                       <td className="py-3.5 px-4 font-mono font-bold text-[11px] text-slate-900">{unit.chassisNo}</td>
@@ -1213,7 +1145,6 @@ export default function App() {
   if (currentUser.role === 'manufacturer') {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="terminal-layout">
-        <AutoUpdater />
         <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -1535,7 +1466,6 @@ export default function App() {
   if (currentUser.role === 'salesperson') {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="terminal-layout">
-        <AutoUpdater />
         <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -1661,7 +1591,6 @@ export default function App() {
   // --- 4. Admin / Owner Layout (Standard tabs switcher) ---
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="terminal-layout">
-      <AutoUpdater />
       {/* 1. Header / Navigation bar */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">

@@ -1116,12 +1116,11 @@ export default function SettingsPanel({
 
                             <button
                               type="button"
-                              disabled={isSimulatingLocation}
-                              onClick={() => handleSimulateLocation(selectedEmployee.username)}
-                              className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                              onClick={() => fetchEmployees()}
+                              className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
                             >
-                              <Navigation className="h-3.5 w-3.5 text-cyan-400" />
-                              {isSimulatingLocation ? 'Broadcasting Coordinate...' : '⚡ Teleport Device (Simulate Live Movement)'}
+                              <RefreshCw className="h-3.5 w-3.5 text-cyan-400 animate-spin" />
+                              <span>🔄 Pull Live Location</span>
                             </button>
                           </div>
                         ) : (
@@ -1136,12 +1135,11 @@ export default function SettingsPanel({
 
                             <button
                               type="button"
-                              disabled={isSimulatingLocation}
-                              onClick={() => handleSimulateLocation(selectedEmployee.username)}
-                              className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                              onClick={() => fetchEmployees()}
+                              className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
                             >
-                              <Navigation className="h-3.5 w-3.5 text-cyan-400" />
-                              {isSimulatingLocation ? 'Initiating Broadcast...' : '⚡ Seed Simulated Location & Spawn Live Map'}
+                              <RefreshCw className="h-3.5 w-3.5 text-cyan-400" />
+                              <span>🔄 Pull Live Status</span>
                             </button>
                           </div>
                         )}
@@ -1417,17 +1415,11 @@ export default function SettingsPanel({
               {selectedEmployeeId && (
                 <button
                   type="button"
-                  disabled={isSimulatingLocation}
-                  onClick={async () => {
-                    const emp = uniqueEmployees.find(e => e.id === selectedEmployeeId);
-                    if (emp) {
-                      await handleSimulateLocation(emp.username);
-                    }
-                  }}
-                  className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                  onClick={() => fetchEmployees()}
+                  className="bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
                 >
-                  <MapPin className="h-3.5 w-3.5 text-cyan-400" />
-                  {isSimulatingLocation ? 'Updating beacon...' : '⚡ Teleport selected employee'}
+                  <RefreshCw className="h-3.5 w-3.5 text-cyan-400" />
+                  <span>🔄 Pull Live Location</span>
                 </button>
               )}
             </div>
@@ -1571,12 +1563,11 @@ export default function SettingsPanel({
 
                   <button
                     type="button"
-                    disabled={isSimulatingTrail}
-                    onClick={() => handleSimulateTrail(selectedEmployee.username)}
-                    className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                    onClick={() => fetchEmployees()}
+                    className="bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
                   >
-                    <Compass className="h-3.5 w-3.5 text-cyan-400" />
-                    {isSimulatingTrail ? 'Generating trail...' : '⚡ Generate Simulated 24h Trail'}
+                    <RefreshCw className="h-3.5 w-3.5 text-cyan-400" />
+                    <span>🔄 Refresh Trail Data</span>
                   </button>
                 </div>
 
