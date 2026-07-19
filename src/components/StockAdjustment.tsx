@@ -65,7 +65,6 @@ export default function StockAdjustment({
   const [localChassis, setLocalChassis] = useState('');
   const [localFrontTireSize, setLocalFrontTireSize] = useState<'10-inch' | '12-inch'>('10-inch');
   const [localRearTireSize, setLocalRearTireSize] = useState<'10-inch' | '12-inch'>('10-inch');
-  const [localBrakeType, setLocalBrakeType] = useState<'Disk' | 'Drum'>('Disk');
   const [localMotor, setLocalMotor] = useState('');
   const [localController, setLocalController] = useState('');
   const [localNotes, setLocalNotes] = useState('');
@@ -382,7 +381,6 @@ export default function StockAdjustment({
           controllerNo: localController.trim().toUpperCase(),
           frontTireSize: localFrontTireSize,
           rearTireSize: localRearTireSize,
-          brakeType: localBrakeType,
           sourceChannel: 'local_seller',
           operator: currentUser.username,
           notes: localNotes.trim() || undefined,
@@ -1483,7 +1481,7 @@ export default function StockAdjustment({
                     />
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
                         Front Tyre Size
@@ -1510,20 +1508,6 @@ export default function StockAdjustment({
                       >
                         <option value="10-inch">10-inches</option>
                         <option value="12-inch">12-inches</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                        Brake Type
-                      </label>
-                      <select
-                        value={localBrakeType}
-                        onChange={(e) => setLocalBrakeType(e.target.value as 'Disk' | 'Drum')}
-                        className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-base sm:text-xs text-slate-800 focus:border-amber-500 outline-none cursor-pointer font-sans"
-                        required
-                      >
-                        <option value="Disk">Disk</option>
-                        <option value="Drum">Drum</option>
                       </select>
                     </div>
                   </div>

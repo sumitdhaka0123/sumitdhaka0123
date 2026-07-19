@@ -157,7 +157,6 @@ export default function AssemblyPipeline({
   const [s1Controller, setS1Controller] = useState('');
   const [s1FrontTireSize, setS1FrontTireSize] = useState<'10-inch' | '12-inch'>('12-inch');
   const [s1RearTireSize, setS1RearTireSize] = useState<'10-inch' | '12-inch'>('12-inch');
-  const [s1BrakeType, setS1BrakeType] = useState<'Disk' | 'Drum'>('Disk');
   const [s1Source, setS1Source] = useState<'container_freight' | 'local_seller'>('container_freight');
 
   // Dynamic list of bulk scooter slots
@@ -203,6 +202,7 @@ export default function AssemblyPipeline({
   const [s3BuyerName, setS3BuyerName] = useState('');
   const [s3BuyerContact, setS3BuyerContact] = useState('');
   const [s3BuyerAddress, setS3BuyerAddress] = useState('');
+  const [s3Price, setS3Price] = useState('');
   const [s3BillNo, setS3BillNo] = useState('');
   const [s3DeliveryChallanNo, setS3DeliveryChallanNo] = useState('');
 
@@ -587,6 +587,7 @@ export default function AssemblyPipeline({
         body: JSON.stringify({
           buyerName: s3BuyerName,
           buyerContact: s3BuyerContact,
+          salesPrice: s3Price ? Number(s3Price) : undefined,
           scooterWarrantyStatus: s5ScooterWarrantyActive ? 'Active' : 'None',
           scooterWarrantyExpiry: s5ScooterWarrantyActive ? s5ScooterExpiry : undefined,
           batteryWarrantyStatus: 'None',
@@ -612,6 +613,7 @@ export default function AssemblyPipeline({
         setS3BuyerName('');
         setS3BuyerContact('');
         setS3BuyerAddress('');
+        setS3Price('');
         setS3BillNo('');
         setS3DeliveryChallanNo('');
         setS5Notes('');
@@ -743,7 +745,6 @@ export default function AssemblyPipeline({
       controllerNo: s1Controller.trim().toUpperCase(),
       frontTireSize: s1FrontTireSize,
       rearTireSize: s1RearTireSize,
-      brakeType: s1BrakeType,
       sourceChannel: 'container_freight',
       operator: currentUser.username
     });
@@ -791,7 +792,6 @@ export default function AssemblyPipeline({
           sourceChannel: 'container_freight',
           frontTireSize: s1FrontTireSize,
           rearTireSize: s1RearTireSize,
-          brakeType: s1BrakeType,
           items: activeItems.map(item => ({
             chassisNo: item.chassisNo.trim().toUpperCase(),
             motorNo: item.motorNo.trim().toUpperCase(),
@@ -950,6 +950,7 @@ export default function AssemblyPipeline({
       actionType: 'pos_stage3_4',
       buyerName: s3BuyerName,
       buyerContact: s3BuyerContact,
+      salesPrice: s3Price ? Number(s3Price) : undefined,
       salesBillNo: s3BillNo.trim(),
       deliveryChallanNo: s3DeliveryChallanNo.trim(),
       batterySerials: cleanBatteries,
@@ -979,6 +980,7 @@ export default function AssemblyPipeline({
       setS3BuyerName('');
       setS3BuyerContact('');
       setS3BuyerAddress('');
+      setS3Price('');
       setS3BillNo('');
       setS3DeliveryChallanNo('');
       setS4Batteries(['']);
@@ -1045,6 +1047,7 @@ export default function AssemblyPipeline({
       setS3BuyerName('');
       setS3BuyerContact('');
       setS3BuyerAddress('');
+      setS3Price('');
       setSelectedPOSScooterId('');
       onRefresh();
     } else {
@@ -1674,11 +1677,11 @@ export default function AssemblyPipeline({
                 <div>
                   {/* Toggle between Single, Bulk, and Standalone Battery/Charger POS Sales */}
                   {currentUser.role !== 'manufacturer' && (
-                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-1 bg-slate-100 p-1 rounded-2xl mb-4" id="stage3-mode-selector">
+                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl mb-4 overflow-x-auto whitespace-nowrap hide-scrollbar" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }} id="stage3-mode-selector">
                       <button
                         type="button"
                         onClick={() => { setS3IsBulk(false); setS3Mode('single'); }}
-                        className={`py-2.5 px-2 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
+                        className={`flex-1 flex-shrink-0 min-w-max py-2.5 px-3 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
                           s3Mode === 'single' 
                             ? 'bg-white text-slate-800 shadow-sm' 
                             : 'text-slate-500 hover:text-slate-800'
@@ -1689,7 +1692,7 @@ export default function AssemblyPipeline({
                       <button
                         type="button"
                         onClick={() => { setS3IsBulk(true); setS3Mode('bulk'); }}
-                        className={`py-2.5 px-2 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
+                        className={`flex-1 flex-shrink-0 min-w-max py-2.5 px-3 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
                           s3Mode === 'bulk' 
                             ? 'bg-white text-slate-800 shadow-sm' 
                             : 'text-slate-500 hover:text-slate-800'
@@ -1700,7 +1703,7 @@ export default function AssemblyPipeline({
                       <button
                         type="button"
                         onClick={() => { setS3IsBulk(false); setS3Mode('battery'); }}
-                        className={`py-2.5 px-2 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
+                        className={`flex-1 flex-shrink-0 min-w-max py-2.5 px-3 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
                           s3Mode === 'battery' 
                             ? 'bg-white text-slate-800 shadow-sm' 
                             : 'text-slate-500 hover:text-slate-800'
@@ -1711,7 +1714,7 @@ export default function AssemblyPipeline({
                       <button
                         type="button"
                         onClick={() => { setS3IsBulk(false); setS3Mode('charger'); }}
-                        className={`py-2.5 px-2 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
+                        className={`flex-1 flex-shrink-0 min-w-max py-2.5 px-3 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
                           s3Mode === 'charger' 
                             ? 'bg-white text-slate-800 shadow-sm' 
                             : 'text-slate-500 hover:text-slate-800'
@@ -1722,7 +1725,7 @@ export default function AssemblyPipeline({
                       <button
                         type="button"
                         onClick={() => { setS3IsBulk(false); setS3Mode('assign_battery'); }}
-                        className={`py-2.5 px-2 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
+                        className={`flex-1 flex-shrink-0 min-w-max py-2.5 px-3 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
                           s3Mode === 'assign_battery' 
                             ? 'bg-white text-slate-800 shadow-sm' 
                             : 'text-slate-500 hover:text-slate-800'
@@ -1747,7 +1750,7 @@ export default function AssemblyPipeline({
                         <SearchableDropdown
                           options={availableScooters.map((scoot) => ({
                             value: scoot.id,
-                            label: `Chassis: ${scoot.chassisNo} (${scoot.modelName} - ${scoot.color})`
+                            label: `${scoot.modelName} (${scoot.color}) - Chassis: ${scoot.chassisNo}`
                           }))}
                           value={selectedPrepScooterId}
                           onChange={(val) => handlePrepScooterSelect(val)}
@@ -1895,7 +1898,7 @@ export default function AssemblyPipeline({
                               .filter(u => (u.status === 'available' || u.status === 'hold') && (!s3ModelSelected || u.modelName === s3ModelSelected))
                               .map((scoot) => ({
                                 value: scoot.id,
-                                label: `Chassis: ${scoot.chassisNo} (${scoot.modelName} - ${scoot.color})${scoot.status === 'hold' ? ` [🤝 HELD FOR ${scoot.heldFor?.toUpperCase()}]` : ''}`
+                                label: `${scoot.modelName} (${scoot.color}) - Chassis: ${scoot.chassisNo}${scoot.status === 'hold' ? ` [🤝 HELD FOR ${scoot.heldFor?.toUpperCase()}]` : ''}`
                               }))}
                             value={selectedPOSScooterId}
                             onChange={(val) => handlePOSScooterSelect(val)}
@@ -2977,7 +2980,7 @@ export default function AssemblyPipeline({
                     <SearchableDropdown
                       options={scooterUnits.map((scoot) => ({
                         value: scoot.id,
-                        label: `Chassis: ${scoot.chassisNo} (${scoot.modelName} - ${scoot.color}) [${scoot.status.toUpperCase()}]`
+                        label: `${scoot.modelName} (${scoot.color}) - Chassis: ${scoot.chassisNo} [${scoot.status.toUpperCase()}]`
                       }))}
                       value={selectedCustomizeScooterId}
                       onChange={(val) => handleCustomizeScooterSelect(val)}
