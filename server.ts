@@ -1582,16 +1582,26 @@ app.post('/api/auth/login', authIpRateLimiter, validateBody(loginSchema), (req, 
       recordAuthFailure(normalizedUserKey);
 
       const record = authAccountTracker.get(normalizedUserKey)!;
-      const power = Math.max(0, record.failedCount - 1);
-      const nextDelayMs = Math.min(AUTH_MAX_BACKOFF_MS, AUTH_BACKOFF_BASE_MS * Math.pow(AUTH_BACKOFF_FACTOR, power));
-      const nextDelaySecs = Math.ceil(nextDelayMs / 1000);
-
-      const errorMsg = `Invalid username or password. Due to consecutive failed attempts, your next login attempt will be delayed by ${nextDelaySecs} seconds.`;
-
-      addAuditLog(db, user.username, user.name, 'login_failed_wrong_password', `Wrong password attempt. Successive failed count is now ${record.failedCount}.`);
-
-      // Update failedAttempts to align with backoff tracker count
       user.failedAttempts = record.failedCount;
+
+      let errorMsg = '';
+
+      // If the user is not the master admin, check for hard lockout
+      if (user.role !== 'admin' && user.failedAttempts >= 3) {
+        user.locked = true;
+        errorMsg = 'This account has been locked due to too many failed login attempts. Please contact the warehouse owner to unlock it.';
+        addAuditLog(db, user.username, user.name, 'login_failed_locked_out', 'Account permanently locked due to 3 failed password attempts.');
+      } else {
+        // Admin user OR non-admin with < 3 attempts -> use exponential backoff message
+        const power = Math.max(0, record.failedCount - 1);
+        const nextDelayMs = Math.min(AUTH_MAX_BACKOFF_MS, AUTH_BACKOFF_BASE_MS * Math.pow(AUTH_BACKOFF_FACTOR, power));
+        const nextDelaySecs = Math.ceil(nextDelayMs / 1000);
+
+        errorMsg = `Invalid username or password. Due to consecutive failed attempts, your next login attempt will be delayed by ${nextDelaySecs} seconds.`;
+        addAuditLog(db, user.username, user.name, 'login_failed_wrong_password', `Wrong password attempt. Successive failed count is now ${record.failedCount}.`);
+      }
+
+      // Save user state
       db.users[normalizedUserKey] = user;
       writeDB(db);
 

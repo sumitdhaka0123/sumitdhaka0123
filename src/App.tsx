@@ -136,7 +136,7 @@ export default function App() {
       setLocationBlocked(false);
       return;
     }
-    if (currentUser.role === 'admin') {
+    if (currentUser.username === 'admin') {
       setLocationBlocked(false);
       return;
     }

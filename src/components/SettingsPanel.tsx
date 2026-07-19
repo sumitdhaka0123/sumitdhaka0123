@@ -1102,7 +1102,7 @@ export default function SettingsPanel({
                     </div>
 
                     {/* Live Geolocation Tracker Block */}
-                    {selectedEmployee.role !== 'admin' && (
+                    {selectedEmployee.username !== 'admin' && (
                       <div className="border-t border-slate-200 pt-4 mt-4 space-y-3" id="employee-location-monitoring">
                         <div className="flex justify-between items-center">
                           <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
