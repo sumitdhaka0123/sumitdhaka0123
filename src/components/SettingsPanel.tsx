@@ -79,6 +79,44 @@ export default function SettingsPanel({
   };
   const [successMsg, setSuccessMsg] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isPullingLocation, setIsPullingLocation] = useState<boolean>(false);
+
+  const handlePullLocation = async (username: string) => {
+    setIsPullingLocation(true);
+    setSuccessMsg(`Sending satellite ping to @${username}'s device...`);
+    try {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/pull-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+
+      if (res.ok) {
+        setSuccessMsg(`Pinging device @${username} live. Waiting for high-accuracy GPS coordinates...`);
+        // Poll the server every 1.5s for 9 seconds to catch the updated coordinates
+        let attempts = 0;
+        const maxAttempts = 6;
+        const intervalId = setInterval(async () => {
+          attempts++;
+          await fetchEmployees();
+          if (attempts >= maxAttempts) {
+            clearInterval(intervalId);
+            setIsPullingLocation(false);
+            setSuccessMsg(`Device ping sequence complete. Showing most up-to-date coordinate of @${username}.`);
+            setTimeout(() => setSuccessMsg(''), 5000);
+          }
+        }, 1500);
+      } else {
+        setErrorMsg(`Failed to establish connection to @${username}'s GPS transmitter.`);
+        setIsPullingLocation(false);
+        setTimeout(() => setErrorMsg(''), 4000);
+      }
+    } catch (err) {
+      setErrorMsg('Error requesting live GPS coordinate pull.');
+      setIsPullingLocation(false);
+      setTimeout(() => setErrorMsg(''), 4000);
+    }
+  };
 
   // Selected employee for detailed intelligence
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | null>(null);
@@ -1116,11 +1154,12 @@ export default function SettingsPanel({
 
                             <button
                               type="button"
-                              onClick={() => fetchEmployees()}
-                              className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                              disabled={isPullingLocation}
+                              onClick={() => handlePullLocation(selectedEmployee.username)}
+                              className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
                             >
-                              <RefreshCw className="h-3.5 w-3.5 text-cyan-400 animate-spin" />
-                              <span>🔄 Pull Live Location</span>
+                              <Compass className="h-3.5 w-3.5 text-cyan-400 animate-spin-slow" />
+                              {isPullingLocation ? 'Establishing satellite connection...' : '🔄 Pull Device Live Location'}
                             </button>
                           </div>
                         ) : (
@@ -1135,11 +1174,12 @@ export default function SettingsPanel({
 
                             <button
                               type="button"
-                              onClick={() => fetchEmployees()}
-                              className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
+                              disabled={isPullingLocation}
+                              onClick={() => handlePullLocation(selectedEmployee.username)}
+                              className="w-full text-center py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-extrabold rounded-xl text-[10px] uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all shadow-sm cursor-pointer"
                             >
-                              <RefreshCw className="h-3.5 w-3.5 text-cyan-400" />
-                              <span>🔄 Pull Live Status</span>
+                              <Compass className="h-3.5 w-3.5 text-cyan-400 animate-spin-slow" />
+                              {isPullingLocation ? 'Pinging device...' : '🔄 Pull Live Location & Spawn Map'}
                             </button>
                           </div>
                         )}
@@ -1415,11 +1455,17 @@ export default function SettingsPanel({
               {selectedEmployeeId && (
                 <button
                   type="button"
-                  onClick={() => fetchEmployees()}
-                  className="bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
+                  disabled={isPullingLocation}
+                  onClick={async () => {
+                    const emp = uniqueEmployees.find(e => e.id === selectedEmployeeId);
+                    if (emp) {
+                      await handlePullLocation(emp.username);
+                    }
+                  }}
+                  className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-1.5 rounded-xl transition-all shadow-sm cursor-pointer flex items-center gap-1.5"
                 >
-                  <RefreshCw className="h-3.5 w-3.5 text-cyan-400" />
-                  <span>🔄 Pull Live Location</span>
+                  <Compass className="h-3.5 w-3.5 text-cyan-400 animate-spin-slow" />
+                  {isPullingLocation ? 'Requesting position...' : '🔄 Pull Live Location'}
                 </button>
               )}
             </div>
