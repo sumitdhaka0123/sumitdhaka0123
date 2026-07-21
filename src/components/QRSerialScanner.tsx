@@ -1,106 +1,97 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 
 interface QRSerialScannerProps {
   title: string;
-  targetQuantity?: number;
-  existingSerials?: string[];
-  allRegisteredSerials?: string[]; // Serials already registered in DB (to prevent duplicates)
-  onConfirm: (serials: string[]) => void;
-  onCancel: () => void;
   type: 'battery' | 'charger';
+  onScanSuccess: (serial: string) => void;
+  onClose: () => void;
+  existingSerials?: string[];
+  targetQuantity?: number;
 }
 
 export default function QRSerialScanner({
   title,
-  targetQuantity,
+  type,
+  onScanSuccess,
+  onClose,
   existingSerials = [],
-  allRegisteredSerials = [],
-  onConfirm,
-  onCancel,
-  type
+  targetQuantity
 }: QRSerialScannerProps) {
   const [scannedList, setScannedList] = useState<string[]>(existingSerials);
   const [manualInput, setManualInput] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [cameraActive, setCameraActive] = useState(true);
-  const [scannerLineDirection, setScannerLineDirection] = useState<'down' | 'up'>('down');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isScanning, setIsScanning] = useState(false);
   const [tintState, setTintState] = useState<'none' | 'success' | 'error'>('none');
-  const tintTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
-
-  // Bulk Series Range State
+  
   const [seriesPrefix, setSeriesPrefix] = useState(type === 'battery' ? 'LIT-BAT-' : 'CHG-');
   const [seriesStart, setSeriesStart] = useState('');
   const [seriesEnd, setSeriesEnd] = useState('');
+  
+  const tintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const scannedListRef = useRef<string[]>(existingSerials);
+  const isScanningRef = useRef(false);
+  const lastScannedTimeRef = useRef<number>(0);
+  const lastScannedTextRef = useRef<string>('');
+  
+  const qrReaderId = 'qr-reader-viewport';
 
-  // Clear messages after 3 seconds
   useEffect(() => {
-    if (errorMessage) {
-      const timer = setTimeout(() => setErrorMessage(null), 3000);
+    scannedListRef.current = scannedList;
+  }, [scannedList]);
+
+  useEffect(() => {
+    if (errorMessage || successMessage) {
+      const timer = setTimeout(() => {
+        setErrorMessage(null);
+        setSuccessMessage(null);
+      }, 3000);
       return () => clearTimeout(timer);
     }
-  }, [errorMessage]);
-
-  useEffect(() => {
-    if (successMessage) {
-      const timer = setTimeout(() => setSuccessMessage(null), 2500);
-      return () => clearTimeout(timer);
-    }
-  }, [successMessage]);
+  }, [errorMessage, successMessage]);
 
   const triggerTint = (status: 'success' | 'error') => {
-    setTintState(status);
     if (tintTimeoutRef.current) {
       clearTimeout(tintTimeoutRef.current);
     }
+    setTintState(status);
     tintTimeoutRef.current = setTimeout(() => {
       setTintState('none');
-    }, 450); // fast visual flash duration
+    }, 800);
   };
-
-  const addSerialRef = useRef<((serial: string) => boolean) | null>(null);
 
   const addSerial = (serial: string) => {
     const cleanSerial = serial.trim().toUpperCase();
     if (!cleanSerial) return false;
 
-    // Check if duplicate in session
-    if (scannedList.includes(cleanSerial)) {
+    const now = Date.now();
+    if (cleanSerial === lastScannedTextRef.current && now - lastScannedTimeRef.current < 2500) {
+      return false;
+    }
+    lastScannedTextRef.current = cleanSerial;
+    lastScannedTimeRef.current = now;
+
+    if (scannedListRef.current.includes(cleanSerial)) {
       setErrorMessage(`Duplicate Code: "${cleanSerial}" is already in your current scan list!`);
       triggerTint('error');
       return false;
     }
 
-    // Check if duplicate in registered database
-    if (allRegisteredSerials.map(s => s.trim().toUpperCase()).includes(cleanSerial)) {
-      setErrorMessage(`System Error: "${cleanSerial}" is already registered in the warehouse database!`);
-      triggerTint('error');
-      return false;
-    }
-
-    // Limit to target quantity if provided
-    if (targetQuantity && scannedList.length >= targetQuantity) {
+    if (targetQuantity && scannedListRef.current.length >= targetQuantity) {
       setErrorMessage(`Limit Reached: Already scanned the target quantity of ${targetQuantity} units.`);
       triggerTint('error');
       return false;
     }
 
     setScannedList(prev => [...prev, cleanSerial]);
-    setSuccessMessage(`Scanned successfully: ${cleanSerial}`);
-    setErrorMessage(null);
+    onScanSuccess(cleanSerial);
+    setSuccessMessage(`Scanned successfully: "${cleanSerial}"`);
     triggerTint('success');
     return true;
-  };
-
-  addSerialRef.current = addSerial;
-
-  const handleManualAdd = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (addSerial(manualInput)) {
-      setManualInput('');
-    }
   };
 
   const handleAddSeries = (e: React.FormEvent) => {
@@ -116,13 +107,12 @@ export default function QRSerialScanner({
 
     let addedCount = 0;
     for (let i = startNum; i <= endNum; i++) {
-      // Pad with leading zeros based on start number length (optional, but good for serials)
       const numStr = i.toString().padStart(seriesStart.length, '0');
       const serial = `${seriesPrefix}${numStr}`;
       
       const success = addSerial(serial);
       if (success) addedCount++;
-      else break; // stop if we hit target quantity or error
+      else break; 
     }
 
     if (addedCount > 0) {
@@ -132,59 +122,121 @@ export default function QRSerialScanner({
     }
   };
 
-  const handleRemoveSerial = (index: number) => {
+  useEffect(() => {
+    let html5QrCode: Html5Qrcode | null = null;
+
+    if (cameraActive) {
+      setCameraError(null);
+      const timer = setTimeout(() => {
+        try {
+          const element = document.getElementById(qrReaderId);
+          if (!element) return;
+          
+          html5QrCode = new Html5Qrcode(qrReaderId);
+          
+          html5QrCode.start(
+            { facingMode: "environment" },
+            {
+              fps: 24,
+              qrbox: (width, height) => {
+                const size = Math.min(width, height) * 0.8;
+                return { width: Math.floor(size), height: Math.floor(size) };
+              },
+              videoConstraints: {
+                width: { min: 640, ideal: 1280, max: 1920 },
+                height: { min: 480, ideal: 720, max: 1080 },
+                facingMode: "environment"
+              }
+            },
+            (decodedText) => {
+              addSerial(decodedText);
+            },
+            () => {}
+          ).then(() => {
+            isScanningRef.current = true;
+            setIsScanning(true);
+          }).catch((err) => {
+            console.warn("Failing back to user/default camera facing mode:", err);
+            html5QrCode?.start(
+              { facingMode: "user" },
+              {
+                fps: 24,
+                qrbox: (width, height) => {
+                  const size = Math.min(width, height) * 0.8;
+                  return { width: Math.floor(size), height: Math.floor(size) };
+                },
+                videoConstraints: {
+                  width: { min: 640, ideal: 1280, max: 1920 },
+                  height: { min: 480, ideal: 720, max: 1080 },
+                  facingMode: "user"
+                }
+              },
+              (decodedText) => {
+                addSerial(decodedText);
+              },
+              () => {}
+            ).then(() => {
+              isScanningRef.current = true;
+              setIsScanning(true);
+            }).catch((fallbackErr) => {
+              console.error("Camera access failed entirely:", fallbackErr);
+              setCameraError("Camera access failed. Please ensure camera permissions are granted.");
+            });
+          });
+        } catch (e: any) {
+          console.error("Scanner instantiation failed:", e);
+          setCameraError("Failed to initialize system camera scanner.");
+        }
+      }, 400);
+
+      return () => {
+        clearTimeout(timer);
+        if (html5QrCode) {
+          const cleanupScanner = async () => {
+            try {
+              if (isScanningRef.current) {
+                isScanningRef.current = false;
+                setIsScanning(false);
+                await html5QrCode?.stop();
+              }
+            } catch (e) {
+              console.warn("Camera scan stop call deferred:", e);
+            }
+          };
+          cleanupScanner();
+        }
+      };
+    } else {
+      setIsScanning(false);
+    }
+  }, [cameraActive]);
+
+  const handleManualAdd = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (addSerial(manualInput)) {
+      setManualInput('');
+    }
+  };
+
+  const removeScannedItem = (index: number) => {
     setScannedList(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleAutoGenerate = () => {
-    const prefix = type === 'battery' ? 'LIT-BAT' : 'LIT-CHG';
-    const rand = Math.floor(100000 + Math.random() * 900000);
-    const newSerial = `${prefix}-${rand}`;
-    addSerial(newSerial);
-  };
-
-
-
-  // Real barcode scanner effect
-  useEffect(() => {
-    if (!cameraActive) return;
-
-    const scanner = new Html5QrcodeScanner(
-      "qr-reader",
-      { fps: 10, qrbox: { width: 250, height: 250 }, rememberLastUsedCamera: true },
-      /* verbose= */ false
-    );
-
-    scanner.render((decodedText) => {
-      // Html5QrcodeScanner can scan very fast, we need to pause or handle dupes
-      if (addSerialRef.current) addSerialRef.current(decodedText);
-    }, (error) => {
-      // Ignored: this fires constantly as it scans empty frames
-    });
-
-    return () => {
-      try {
-        scanner.clear();
-      } catch (e) {
-        console.error("Failed to clear scanner on unmount", e);
-      }
-    };
-  }, [cameraActive]);
-
   return (
     <div className="bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden max-w-2xl w-full">
-      {/* Header - Fixed layout overlap by adding pt-10 */}
-      <div className="bg-slate-900 text-white p-4 pt-10 flex justify-between items-center">
+      <div className="bg-slate-900 text-white px-5 py-4 pt-10 flex items-center justify-between">
         <div>
-          <h3 className="font-bold text-lg font-sans flex items-center gap-2">
-            <span>📷</span> {title}
+          <h3 className="text-sm font-black uppercase tracking-wider font-sans">
+            📷 {title}
           </h3>
-          <p className="text-xs text-slate-400">
-            {targetQuantity ? `Scan matching units: ${scannedList.length} / ${targetQuantity}` : `Scanned list: ${scannedList.length} total units`}
-          </p>
+          {targetQuantity && (
+            <p className="text-[10px] text-slate-400 font-medium mt-0.5">
+              Scan Target: {scannedList.length} of {targetQuantity} units verified
+            </p>
+          )}
         </div>
-        <button 
-          onClick={onCancel}
+        <button
+          onClick={onClose}
           className="text-slate-400 hover:text-white text-sm p-1 rounded hover:bg-slate-800 transition bg-slate-800/50"
         >
           Cancel
@@ -192,31 +244,54 @@ export default function QRSerialScanner({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
-        {/* Left column: Real Camera Scanner */}
         <div className="space-y-3">
-          <div className="relative bg-slate-100 rounded-lg overflow-hidden border border-slate-300">
+          <div className="relative aspect-square md:aspect-video bg-slate-950 rounded-lg overflow-hidden flex flex-col justify-center items-center border border-slate-800">
             {tintState !== 'none' && (
               <div 
                 className={`absolute inset-0 z-50 pointer-events-none flex items-center justify-center transition-all duration-75 ${
-                  tintState === 'success' 
-                    ? 'bg-emerald-500/35 ring-8 ring-emerald-500 ring-inset' 
-                    : 'bg-rose-500/35 ring-8 ring-rose-500 ring-inset'
+                  tintState === 'success' ? 'bg-emerald-500/20 ring-4 ring-emerald-500 ring-inset' : 'bg-rose-500/20 ring-4 ring-rose-500 ring-inset'
                 }`}
               >
-                <div className={`px-4 py-2 rounded-xl text-white font-extrabold text-sm uppercase tracking-wider shadow-lg flex items-center gap-1.5 animate-bounce ${
-                  tintState === 'success' ? 'bg-emerald-600' : 'bg-rose-600'
-                }`}>
-                  {tintState === 'success' ? '✅ OK' : '⚠️ DUPLICATE / ERROR'}
+                <div className="bg-slate-900/90 text-white font-mono text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-lg">
+                  {tintState === 'success' ? '⚡ SCANNED OK' : '⚠️ SCAN REJECTED'}
                 </div>
               </div>
             )}
 
-            {cameraActive ? (
-              <div id="qr-reader" className="w-full" />
-            ) : (
-              <div className="aspect-video flex flex-col justify-center items-center text-center text-slate-500 space-y-1 bg-slate-950">
+            {cameraActive && !cameraError ? (
+              <div 
+                id={qrReaderId} 
+                className="absolute inset-0 w-full h-full [&_video]:w-full [&_video]:h-full [&_video]:object-cover" 
+              />
+            ) : null}
+
+            {cameraActive && !cameraError && isScanning && (
+              <>
+                <div className="absolute inset-4 border-2 border-emerald-500 rounded border-dashed opacity-40 pointer-events-none z-10" />
+                <motion.div 
+                  className="absolute left-0 right-0 h-1 bg-emerald-500 shadow-[0_0_10px_#10b981] pointer-events-none z-10"
+                  animate={{ top: ['10%', '90%', '10%'] }}
+                  transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+                />
+                <div className="absolute top-2 left-2 z-20 flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/90 text-white text-[9px] font-bold tracking-wider uppercase">
+                  <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
+                  Live Video
+                </div>
+              </>
+            )}
+
+            {cameraError && (
+              <div className="absolute inset-0 z-40 bg-slate-900/95 flex flex-col items-center justify-center p-4 text-center space-y-2">
+                <span className="text-2xl animate-bounce">⚠️</span>
+                <p className="text-xs font-mono text-rose-400 font-bold max-w-[85%]">{cameraError}</p>
+                <p className="text-[10px] text-slate-400">Please verify camera permissions in your browser or switch to Manual input.</p>
+              </div>
+            )}
+
+            {!cameraActive && (
+              <div className="text-center text-slate-500 space-y-1 z-10">
                 <div className="text-3xl">🚫</div>
-                <div className="text-xs font-mono">Camera Disconnected</div>
+                <div className="text-xs font-mono">Camera Paused</div>
               </div>
             )}
           </div>
@@ -225,15 +300,14 @@ export default function QRSerialScanner({
             <button
               type="button"
               onClick={() => setCameraActive(!cameraActive)}
-              className={`w-full text-xs py-1.5 px-3 rounded font-medium transition ${
+              className={`w-full text-xs py-1.5 px-3 rounded font-medium transition cursor-pointer ${
                 cameraActive ? 'bg-slate-100 hover:bg-slate-200 text-slate-700' : 'bg-emerald-600 hover:bg-emerald-700 text-white'
               }`}
             >
-              {cameraActive ? '🔌 Pause Scanner' : '⚡ Start Scanner'}
+              {cameraActive ? '🔌 Pause Camera' : '⚡ Start Camera'}
             </button>
           </div>
-
-          {/* Bulk Range Form */}
+          
           <div className="border border-slate-100 bg-slate-50/50 rounded-lg p-3 mt-4">
             <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Scan by Range:</h4>
             <form onSubmit={handleAddSeries} className="flex flex-col gap-2">
@@ -243,7 +317,7 @@ export default function QRSerialScanner({
                   value={seriesPrefix}
                   onChange={(e) => setSeriesPrefix(e.target.value)}
                   placeholder="Prefix"
-                  className="flex-1 text-xs px-2 py-1 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono min-w-[70px]"
+                  className="w-16 text-xs px-2 py-1 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
                 />
                 <input
                   type="number"
@@ -265,7 +339,7 @@ export default function QRSerialScanner({
               </div>
               <button
                 type="submit"
-                className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs px-3 py-1.5 rounded font-medium transition"
+                className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs px-3 py-1.5 rounded font-medium transition cursor-pointer"
               >
                 Add Range
               </button>
@@ -273,38 +347,32 @@ export default function QRSerialScanner({
           </div>
         </div>
 
-        {/* Right column: Scanned list & manual entry */}
         <div className="flex flex-col h-full space-y-3">
-          {/* Manual input fallback */}
-          <form onSubmit={handleManualAdd} className="space-y-1">
-            <label className="text-xs font-bold text-slate-700">Manual Serial/QR Code:</label>
-            <div className="flex gap-1.5">
-              <input
-                type="text"
-                value={manualInput}
-                onChange={(e) => setManualInput(e.target.value)}
-                placeholder="Type or paste serial code"
-                className="flex-1 text-xs px-3 py-1.5 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
-              />
-              <button
-                type="submit"
-                className="bg-slate-900 hover:bg-slate-800 text-white text-xs px-3 py-1.5 rounded font-medium transition shrink-0"
-              >
-                Register
-              </button>
-            </div>
+          <form onSubmit={handleManualAdd} className="flex gap-2">
+            <input
+              type="text"
+              value={manualInput}
+              onChange={(e) => setManualInput(e.target.value)}
+              placeholder="Or enter serial code manually..."
+              className="flex-1 bg-slate-50 border border-slate-200 text-xs px-3 py-2 rounded-lg font-mono focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900"
+            />
+            <button
+              type="submit"
+              className="bg-slate-900 hover:bg-slate-800 text-white px-3 py-2 text-xs font-bold rounded-lg uppercase tracking-wider transition cursor-pointer"
+            >
+              Add
+            </button>
           </form>
 
-          {/* Feedback messages */}
           <AnimatePresence mode="wait">
             {errorMessage && (
               <motion.div
                 initial={{ opacity: 0, y: -5 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -5 }}
-                className="bg-rose-50 border-l-4 border-rose-500 text-rose-700 p-2.5 rounded text-xs leading-relaxed"
+                className="bg-rose-50 border border-rose-100 text-rose-600 px-3 py-2 rounded-lg text-[11px] font-semibold"
               >
-                <strong>⚠️ {errorMessage}</strong>
+                ⚠️ {errorMessage}
               </motion.div>
             )}
             {successMessage && (
@@ -312,60 +380,45 @@ export default function QRSerialScanner({
                 initial={{ opacity: 0, y: -5 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -5 }}
-                className="bg-emerald-50 border-l-4 border-emerald-500 text-emerald-800 p-2.5 rounded text-xs"
+                className="bg-emerald-50 border border-emerald-100 text-emerald-700 px-3 py-2 rounded-lg text-[11px] font-semibold"
               >
-                <strong>✅ {successMessage}</strong>
+                ✓ {successMessage}
               </motion.div>
             )}
           </AnimatePresence>
 
-          {/* List display */}
-          <div className="flex-1 border border-slate-200 rounded-lg overflow-hidden flex flex-col bg-slate-50 min-h-[160px] max-h-[220px]">
-            <div className="bg-slate-100 px-3 py-1.5 text-slate-600 text-[11px] font-bold border-b border-slate-200 flex justify-between">
+          <div className="flex-1 flex flex-col min-h-[140px] border border-slate-200 rounded-lg overflow-hidden bg-slate-50/50">
+            <div className="bg-slate-100 px-3 py-1.5 border-b border-slate-200 flex justify-between text-[10px] font-bold text-slate-500 uppercase tracking-wider">
               <span>Scanned Items ({scannedList.length})</span>
               {targetQuantity && <span>Target: {targetQuantity}</span>}
             </div>
-
-            <div className="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin">
+            
+            <div className="flex-1 overflow-y-auto p-2 space-y-1 max-h-[180px]">
               {scannedList.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-slate-400 text-xs p-4 text-center">
-                  <span>📭</span>
-                  <span>No serial numbers registered yet. Scan or type codes to populate.</span>
+                <div className="h-full flex items-center justify-center text-[11px] text-slate-400 font-mono italic">
+                  No items scanned yet.
                 </div>
               ) : (
-                scannedList.map((serial, idx) => (
-                  <div 
-                    key={`${serial}-${idx}`} 
-                    className="flex justify-between items-center bg-white px-2 py-1.5 rounded border border-slate-200 shadow-sm text-xs font-mono"
+                scannedList.map((code, index) => (
+                  <div
+                    key={`${code}-${index}`}
+                    className="flex items-center justify-between bg-white border border-slate-150 px-2.5 py-1.5 rounded-md shadow-sm"
                   >
-                    <span className="text-slate-800 truncate pr-2">
-                      <span className="text-slate-400 select-none mr-1">{idx + 1}.</span>
-                      {serial}
+                    <span className="text-[11px] font-mono font-bold text-slate-800">
+                      {index + 1}. <span className="text-emerald-600">{code}</span>
                     </span>
                     <button
                       type="button"
-                      onClick={() => handleRemoveSerial(idx)}
-                      className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 p-1 rounded font-sans transition"
-                      title="Remove"
+                      onClick={() => removeScannedItem(index)}
+                      className="text-slate-400 hover:text-rose-500 text-[10px] font-bold transition px-1"
                     >
-                      ❌
+                      ✕
                     </button>
                   </div>
                 ))
               )}
             </div>
           </div>
-
-          {/* Confirm panel */}
-          <button
-            type="button"
-            onClick={() => onConfirm(scannedList)}
-            disabled={targetQuantity ? scannedList.length !== targetQuantity : scannedList.length === 0}
-            className={`w-full text-xs py-2 px-4 rounded font-bold transition flex justify-center items-center gap-2 ${
-              (targetQuantity ? scannedList.length === targetQuantity : scannedList.length > 0)
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow'
-                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-            }`}
           >
             🏁 Confirm {scannedList.length} Scanned Serial(s)
           </button>
