@@ -5,18 +5,20 @@ import { Html5Qrcode } from 'html5-qrcode';
 interface QRSerialScannerProps {
   title: string;
   type: 'battery' | 'charger';
-  onScanSuccess: (serial: string) => void;
-  onClose: () => void;
+  onConfirm: (serials: string[]) => void;
+  onCancel: () => void;
   existingSerials?: string[];
+  allRegisteredSerials?: string[];
   targetQuantity?: number;
 }
 
 export default function QRSerialScanner({
   title,
   type,
-  onScanSuccess,
-  onClose,
+  onConfirm,
+  onCancel,
   existingSerials = [],
+  allRegisteredSerials = [],
   targetQuantity
 }: QRSerialScannerProps) {
   const [scannedList, setScannedList] = useState<string[]>(existingSerials);
@@ -81,6 +83,13 @@ export default function QRSerialScanner({
       return false;
     }
 
+    // Check if duplicate in registered database
+    if (allRegisteredSerials.map(s => s.trim().toUpperCase()).includes(cleanSerial)) {
+      setErrorMessage(`System Error: "${cleanSerial}" is already registered in the warehouse database!`);
+      triggerTint('error');
+      return false;
+    }
+
     if (targetQuantity && scannedListRef.current.length >= targetQuantity) {
       setErrorMessage(`Limit Reached: Already scanned the target quantity of ${targetQuantity} units.`);
       triggerTint('error');
@@ -88,7 +97,6 @@ export default function QRSerialScanner({
     }
 
     setScannedList(prev => [...prev, cleanSerial]);
-    onScanSuccess(cleanSerial);
     setSuccessMessage(`Scanned successfully: "${cleanSerial}"`);
     triggerTint('success');
     return true;
@@ -236,7 +244,7 @@ export default function QRSerialScanner({
           )}
         </div>
         <button
-          onClick={onClose}
+          onClick={onCancel}
           className="text-slate-400 hover:text-white text-sm p-1 rounded hover:bg-slate-800 transition bg-slate-800/50"
         >
           Cancel
@@ -419,6 +427,16 @@ export default function QRSerialScanner({
               )}
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => onConfirm(scannedList)}
+            disabled={targetQuantity ? scannedList.length !== targetQuantity : scannedList.length === 0}
+            className={`w-full text-xs py-2 px-4 rounded font-bold transition flex justify-center items-center gap-2 ${
+              (targetQuantity ? scannedList.length === targetQuantity : scannedList.length > 0)
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow cursor-pointer'
+                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
+            }`}
           >
             🏁 Confirm {scannedList.length} Scanned Serial(s)
           </button>

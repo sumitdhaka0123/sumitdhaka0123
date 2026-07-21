@@ -92,6 +92,7 @@ export interface ScooterUnit {
   // Sales Fields
   salesBillNo?: string;
   deliveryChallanNo?: string;
+  salesPrice?: number;
 
   // Audit Trail Metadata
   createdOperator: string;
