@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 
 interface QRSerialScannerProps {
   title: string;
@@ -54,9 +55,11 @@ export default function QRSerialScanner({
     }, 450); // fast visual flash duration
   };
 
+  const addSerialRef = useRef<((serial: string) => boolean) | null>(null);
+
   const addSerial = (serial: string) => {
     const cleanSerial = serial.trim().toUpperCase();
-    if (!cleanSerial) return;
+    if (!cleanSerial) return false;
 
     // Check if duplicate in session
     if (scannedList.includes(cleanSerial)) {
@@ -86,6 +89,8 @@ export default function QRSerialScanner({
     return true;
   };
 
+  addSerialRef.current = addSerial;
+
   const handleManualAdd = (e: React.FormEvent) => {
     e.preventDefault();
     if (addSerial(manualInput)) {
@@ -109,10 +114,36 @@ export default function QRSerialScanner({
     ? ['LIT-60V24AH-88219A', 'LIT-60V30AH-41120B', 'LIT-48V30AH-55209X', 'LIT-72V42AH-00128C', 'LIT-60V10AH-22019Y']
     : ['CHG-54V6A-88129B', 'CHG-69V6A-40028C', 'CHG-67V6A-55110X', 'CHG-LA-48V-99218F', 'CHG-LA-72V-01129E'];
 
+  // Real barcode scanner effect
+  useEffect(() => {
+    if (!cameraActive) return;
+
+    const scanner = new Html5QrcodeScanner(
+      "qr-reader",
+      { fps: 10, qrbox: { width: 250, height: 250 }, rememberLastUsedCamera: true },
+      /* verbose= */ false
+    );
+
+    scanner.render((decodedText) => {
+      // Html5QrcodeScanner can scan very fast, we need to pause or handle dupes
+      if (addSerialRef.current) addSerialRef.current(decodedText);
+    }, (error) => {
+      // Ignored: this fires constantly as it scans empty frames
+    });
+
+    return () => {
+      try {
+        scanner.clear();
+      } catch (e) {
+        console.error("Failed to clear scanner on unmount", e);
+      }
+    };
+  }, [cameraActive]);
+
   return (
     <div className="bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden max-w-2xl w-full">
-      {/* Header */}
-      <div className="bg-slate-900 text-white p-4 flex justify-between items-center">
+      {/* Header - Fixed layout overlap by adding pt-10 */}
+      <div className="bg-slate-900 text-white p-4 pt-10 flex justify-between items-center">
         <div>
           <h3 className="font-bold text-lg font-sans flex items-center gap-2">
             <span>📷</span> {title}
@@ -123,16 +154,16 @@ export default function QRSerialScanner({
         </div>
         <button 
           onClick={onCancel}
-          className="text-slate-400 hover:text-white text-sm p-1 rounded hover:bg-slate-800 transition"
+          className="text-slate-400 hover:text-white text-sm p-1 rounded hover:bg-slate-800 transition bg-slate-800/50"
         >
           Cancel
         </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
-        {/* Left column: Simulated Camera Scanner */}
+        {/* Left column: Real Camera Scanner */}
         <div className="space-y-3">
-          <div className="relative aspect-video bg-slate-950 rounded-lg overflow-hidden flex flex-col justify-center items-center border border-slate-800">
+          <div className="relative bg-slate-100 rounded-lg overflow-hidden border border-slate-300">
             {tintState !== 'none' && (
               <div 
                 className={`absolute inset-0 z-50 pointer-events-none flex items-center justify-center transition-all duration-75 ${
@@ -150,32 +181,9 @@ export default function QRSerialScanner({
             )}
 
             {cameraActive ? (
-              <>
-                {/* Active scan frame effect */}
-                <div className="absolute inset-4 border-2 border-emerald-500 rounded border-dashed opacity-40 pointer-events-none" />
-                
-                {/* Scanning green line animation */}
-                <motion.div 
-                  className="absolute left-0 right-0 h-1 bg-emerald-500 shadow-[0_0_10px_#10b981] pointer-events-none"
-                  animate={{ top: ['10%', '90%', '10%'] }}
-                  transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                />
-
-                <div className="text-center text-slate-400 space-y-1 select-none pointer-events-none z-10">
-                  <div className="text-4xl animate-pulse">📷</div>
-                  <div className="text-xs font-mono tracking-wider text-emerald-400">CAMERA STREAM ACTIVE</div>
-                  <div className="text-[10px] text-slate-500">Position QR code inside bounds</div>
-                </div>
-
-                {/* Subtitle with dynamic sensor readout */}
-                <div className="absolute bottom-2 left-2 right-2 flex justify-between text-[9px] font-mono text-slate-500 bg-slate-900/80 px-2 py-0.5 rounded">
-                  <span>RES: 1080P</span>
-                  <span>FPS: 30</span>
-                  <span>DUAL_LEN: OK</span>
-                </div>
-              </>
+              <div id="qr-reader" className="w-full" />
             ) : (
-              <div className="text-center text-slate-500 space-y-1">
+              <div className="aspect-video flex flex-col justify-center items-center text-center text-slate-500 space-y-1 bg-slate-950">
                 <div className="text-3xl">🚫</div>
                 <div className="text-xs font-mono">Camera Disconnected</div>
               </div>
