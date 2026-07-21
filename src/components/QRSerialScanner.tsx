@@ -30,6 +30,11 @@ export default function QRSerialScanner({
   const [tintState, setTintState] = useState<'none' | 'success' | 'error'>('none');
   const tintTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
 
+  // Bulk Series Range State
+  const [seriesPrefix, setSeriesPrefix] = useState(type === 'battery' ? 'LIT-BAT-' : 'CHG-');
+  const [seriesStart, setSeriesStart] = useState('');
+  const [seriesEnd, setSeriesEnd] = useState('');
+
   // Clear messages after 3 seconds
   useEffect(() => {
     if (errorMessage) {
@@ -95,6 +100,35 @@ export default function QRSerialScanner({
     e.preventDefault();
     if (addSerial(manualInput)) {
       setManualInput('');
+    }
+  };
+
+  const handleAddSeries = (e: React.FormEvent) => {
+    e.preventDefault();
+    const startNum = parseInt(seriesStart, 10);
+    const endNum = parseInt(seriesEnd, 10);
+    
+    if (isNaN(startNum) || isNaN(endNum) || startNum > endNum) {
+      setErrorMessage('Invalid range: Start number must be less than or equal to End number.');
+      triggerTint('error');
+      return;
+    }
+
+    let addedCount = 0;
+    for (let i = startNum; i <= endNum; i++) {
+      // Pad with leading zeros based on start number length (optional, but good for serials)
+      const numStr = i.toString().padStart(seriesStart.length, '0');
+      const serial = `${seriesPrefix}${numStr}`;
+      
+      const success = addSerial(serial);
+      if (success) addedCount++;
+      else break; // stop if we hit target quantity or error
+    }
+
+    if (addedCount > 0) {
+      setSuccessMessage(`Successfully added ${addedCount} serials in range.`);
+      setSeriesStart('');
+      setSeriesEnd('');
     }
   };
 
@@ -202,21 +236,43 @@ export default function QRSerialScanner({
             </button>
           </div>
 
-          {/* Preset QR triggers */}
-          <div className="border border-slate-100 bg-slate-50/50 rounded-lg p-3">
-            <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Simulate QR Scan (Click to Scan):</h4>
-            <div className="flex flex-wrap gap-1.5">
-              {simulationPresets.map((code) => (
-                <button
-                  key={code}
-                  type="button"
-                  onClick={() => addSerial(code)}
-                  className="bg-white border border-slate-200 hover:border-emerald-500 hover:bg-emerald-50 text-[10px] font-mono px-2 py-1 rounded transition shadow-sm text-slate-700"
-                >
-                  📥 {code}
-                </button>
-              ))}
-            </div>
+          {/* Bulk Range Form */}
+          <div className="border border-slate-100 bg-slate-50/50 rounded-lg p-3 mt-4">
+            <h4 className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2">Scan by Range:</h4>
+            <form onSubmit={handleAddSeries} className="flex flex-col gap-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={seriesPrefix}
+                  onChange={(e) => setSeriesPrefix(e.target.value)}
+                  placeholder="Prefix"
+                  className="flex-1 text-xs px-2 py-1 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono min-w-[70px]"
+                />
+                <input
+                  type="number"
+                  value={seriesStart}
+                  onChange={(e) => setSeriesStart(e.target.value)}
+                  placeholder="Start"
+                  className="w-16 text-xs px-2 py-1 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
+                  required
+                />
+                <span className="text-slate-400 self-center text-xs">to</span>
+                <input
+                  type="number"
+                  value={seriesEnd}
+                  onChange={(e) => setSeriesEnd(e.target.value)}
+                  placeholder="End"
+                  className="w-16 text-xs px-2 py-1 rounded border border-slate-300 focus:outline-none focus:ring-1 focus:ring-slate-900 font-mono"
+                  required
+                />
+              </div>
+              <button
+                type="submit"
+                className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs px-3 py-1.5 rounded font-medium transition"
+              >
+                Add Range
+              </button>
+            </form>
           </div>
         </div>
 
