@@ -3550,7 +3550,7 @@ app.post('/api/sheet-config/pull-all', async (req, res) => {
 // Upload the new app-release.apk to the public/ folder and push to GitHub.
 app.get('/api/version', (req, res) => {
   res.json({
-    version: "1.0.6",
+    version: "1.0.7",
     apkUrl: "https://sumitdhaka0123.onrender.com/app-release.apk"
   });
 });

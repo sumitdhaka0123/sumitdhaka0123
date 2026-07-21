@@ -143,10 +143,7 @@ export default function QRSerialScanner({
     addSerial(newSerial);
   };
 
-  // Pre-set simulation codes
-  const simulationPresets = type === 'battery' 
-    ? ['LIT-60V24AH-88219A', 'LIT-60V30AH-41120B', 'LIT-48V30AH-55209X', 'LIT-72V42AH-00128C', 'LIT-60V10AH-22019Y']
-    : ['CHG-54V6A-88129B', 'CHG-69V6A-40028C', 'CHG-67V6A-55110X', 'CHG-LA-48V-99218F', 'CHG-LA-72V-01129E'];
+
 
   // Real barcode scanner effect
   useEffect(() => {
