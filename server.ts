@@ -4431,10 +4431,13 @@ async function startServer() {
 
   const dbOnBoot = readDB();
   // Auto seed mock dataset if database lacks data
+  // Auto seed mock dataset disabled per user request to eliminate mock data
+  /*
   if (!dbOnBoot.scooterUnits || dbOnBoot.scooterUnits.length === 0) {
     console.log('Populating test mock dataset on boot...');
     seedMockDataToDB(dbOnBoot);
   }
+  */
   const startupSheetUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL || dbOnBoot.sheetConfig.webhookUrl;
   if (startupSheetUrl && (process.env.GOOGLE_SHEET_WEBHOOK_URL || dbOnBoot.sheetConfig.enabled)) {
     console.log('Detected Google Sheets URL on startup. Hydrating database from Sheets...');

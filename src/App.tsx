@@ -194,11 +194,16 @@ export default function App() {
       if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
+            setLocationBlocked(false);
             reportLocation(pos.coords.latitude, pos.coords.longitude);
           },
           (err) => {
-            console.warn('Silent location fetch skipped, trying IP fallback:', err);
-            fetchIpLocation();
+            if (err.code === err.PERMISSION_DENIED) {
+              setLocationBlocked(true);
+            } else {
+              console.warn('Silent location fetch skipped, trying IP fallback:', err);
+              fetchIpLocation();
+            }
           },
           { enableHighAccuracy: true, timeout: 8000 }
         );
@@ -292,11 +297,7 @@ export default function App() {
     return () => clearInterval(intervalId);
   }, [currentUser]);
 
-  // LOCATION SYSTEM TEMPORARILY TURNED OFF PER USER REQUEST FOR TESTING
-  // Will be re-enabled when user requests to remove mock data.
-  useEffect(() => {
-    setLocationBlocked(false);
-  }, [currentUser]);
+
 
   // Auto background pull from sheet whenever user changes tabs to refresh and capture live sheet edits!
   useEffect(() => {
