@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { DBState, User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim, AuditLog } from './src/types';
+import { MOCK_BUYERS, MOCK_STOCK_LOGS, MOCK_SCOOTER_UNITS, MOCK_BATTERY_IMPORTS, MOCK_BATTERY_SALES, MOCK_CHARGER_IMPORTS, MOCK_CHARGER_SALES, MOCK_WARRANTY_CLAIMS } from './src/utils/mockData';
 import { z } from 'zod';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc, getDocs, collection, writeBatch } from 'firebase/firestore';
@@ -11,51 +12,32 @@ const app = express();
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), 'warehouse_db.json');
 
-// ─── FIREBASE INITIALIZATION ──────────────────────────────────────────────────
-// DISABLE_FIREBASE=true → fully local mode, no Firebase, safe for AI Studio dev.
-// RENDER=true           → always connect Firebase (production on Render).
-// Default (local dev)   → connect only if firebase-applet-config.json exists.
+// Initialize Firebase using the config file
 const firebaseConfigPath = path.join(process.cwd(), 'firebase-applet-config.json');
 let firebaseApp: any = null;
 let firebaseDb: any = null;
 
-const DISABLE_FIREBASE = process.env.DISABLE_FIREBASE === 'true';
-
-if (DISABLE_FIREBASE) {
-  console.log('⚠️  DISABLE_FIREBASE=true — Running in fully local mode. Firebase is OFF. No live data will be touched.');
-} else {
-  const shouldInitFirebase = process.env.RENDER === 'true' || fs.existsSync(firebaseConfigPath);
-  if (shouldInitFirebase && fs.existsSync(firebaseConfigPath)) {
-    try {
-      const config = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
-      firebaseApp = initializeApp(config);
+if (fs.existsSync(firebaseConfigPath)) {
+  try {
+    const config = JSON.parse(fs.readFileSync(firebaseConfigPath, 'utf8'));
+    firebaseApp = initializeApp(config);
+    if (config.firestoreDatabaseId && config.firestoreDatabaseId !== '(default)') {
+      firebaseDb = getFirestore(firebaseApp, config.firestoreDatabaseId);
+    } else {
       firebaseDb = getFirestore(firebaseApp);
-      console.log('✅ Firebase App and Firestore successfully initialized!');
-    } catch (err) {
-      console.error('Error initializing Firebase in server.ts:', err);
     }
-  } else {
-    console.log('No firebase-applet-config.json found. Running in local/offline mode.');
+    console.log('Firebase App and Firestore successfully initialized!');
+  } catch (err) {
+    console.error('Error initializing Firebase in server.ts:', err);
   }
+} else {
+  console.log('No firebase-applet-config.json found. Running in local/offline mode.');
 }
 
 let globalDBState: DBState | null = null;
 
 
 app.use(express.json());
-
-// ─── CORS: Allow Android APK (Capacitor) and all web origins ────────────────
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
-
-
 
 // Helper to write to Google Sheets Webhook asynchronously (Disabled per user request)
 async function postToGoogleSheets(webhookUrl: string, payload: any) {
@@ -85,7 +67,6 @@ const SCOOTER_UNIT_MAPPING = {
   tireSize: ['Tires', 'Tire Size', 'tireSize'],
   buyerName: ['Buyer Name', 'Buyer', 'buyerName'],
   buyerContact: ['Buyer Contact', 'Contact', 'buyerContact'],
-  salesPrice: ['Sale Price', 'Sales Price', 'Price', 'salesPrice'],
   batterySerials: ['Battery Serials', 'Battery Serial', 'batterySerials'],
   status: ['Status', 'status'],
   scooterWarrantyStatus: ['Scooter Warranty', 'Scooter Warranty Status', 'scooterWarrantyStatus'],
@@ -227,7 +208,7 @@ function mapNormalizedRow(row: any, fieldMapping: { [field: string]: string[] })
     
     if (field === 'colors' || field === 'batterySerials') {
       result[field] = val ? val.toString().split(',').map((c: string) => c.trim()).filter(Boolean) : [];
-    } else if (field === 'quantity' || field === 'salesPrice' || field === 'availableStock' || field === 'buyingPrice' || field === 'warrantyDurationMonths') {
+    } else if (field === 'quantity' || field === 'availableStock' || field === 'buyingPrice' || field === 'warrantyDurationMonths') {
       result[field] = (val !== '' && !isNaN(Number(val))) ? Number(val) : 0;
     } else if (field === 'isUnderWarranty') {
       result[field] = val ? (val.toString().toLowerCase() === 'yes' || val === true) : false;
@@ -340,44 +321,29 @@ async function pullFromGoogleSheets(webhookUrl: string) {
 
   // 2. Otherwise, treat as an Apps Script Web App URL and execute the standard GET pull
   try {
-    console.log('Attempting to pull latest data from Google Sheet Apps Script Web App:', webhookUrl);
+    console.log('Attempting to pull latest data from Google Sheet Web App:', webhookUrl);
     
-    let currentUrl = webhookUrl;
-    let redirects = 0;
-    const maxRedirects = 5;
     let response: any = null;
-
-    while (redirects < maxRedirects) {
-      response = await fetch(currentUrl, {
+    try {
+      response = await fetch(webhookUrl, {
         method: 'GET',
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Accept': 'application/json, text/plain, */*'
         },
-        redirect: 'manual'
+        redirect: 'follow'
       });
+    } catch (err) {
+      console.warn('Direct fetch with redirect follow failed:', err);
+    }
 
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get('location');
-        if (!location) {
-          console.warn(`Redirect status ${response.status} received but no location header found.`);
-          break;
-        }
-        currentUrl = new URL(location, currentUrl).toString();
-        redirects++;
-        console.log(`Following redirect to: ${currentUrl}`);
-        continue;
+    if (!response || !response.ok) {
+      if (response && response.status === 404) {
+        console.warn(`Google Sheet Webapp URL returned 404 (Not Found): ${webhookUrl}. The web app deployment may be inactive or un-deployed.`);
+      } else if (response) {
+        console.warn(`Google Sheet Webapp responded with HTTP status ${response.status} (${response.statusText}).`);
+      } else {
+        console.warn('No response received from Google Sheet Webapp.');
       }
-      break;
-    }
-
-    if (!response) {
-      console.error('No response received from Google Sheets URL.');
-      return null;
-    }
-
-    if (!response.ok) {
-      console.error('Failed to fetch from Google Sheet Webapp:', response.statusText, 'Status:', response.status);
       return null;
     }
 
@@ -385,20 +351,27 @@ async function pullFromGoogleSheets(webhookUrl: string) {
     const responseText = await response.text();
 
     if (!contentType.includes('application/json') && !responseText.trim().startsWith('{')) {
-      console.error('Expected JSON response but received non-JSON/HTML content:', responseText.slice(0, 500));
+      console.warn('Expected JSON response from Google Sheet Webapp but received non-JSON/HTML content.');
       return null;
     }
 
-    const result = JSON.parse(responseText);
+    let result: any = null;
+    try {
+      result = JSON.parse(responseText);
+    } catch (e) {
+      console.warn('Could not parse JSON response from Google Sheet Webapp.');
+      return null;
+    }
+
     if (result && result.success && result.data) {
       console.log('Successfully pulled data from Google Sheet Webapp!');
       return result.data;
     } else {
-      console.error('Failed to parse Google Sheet data or success is false:', result);
+      console.warn('Google Sheet Webapp payload missing success or data:', result);
       return null;
     }
   } catch (error) {
-    console.error('Error fetching data from Google Sheet Webapp:', error);
+    console.warn('Error fetching data from Google Sheet Webapp:', error);
     return null;
   }
 }
@@ -661,12 +634,10 @@ function readDBFromFile(): DBState {
 
 function readDB(): DBState {
   if (globalDBState) {
-    // Return a deep copy so API handlers do not mutate the global state before writeDB is called.
-    // This allows writeDB to correctly capture the oldState for Firestore comparison.
-    return JSON.parse(JSON.stringify(globalDBState));
+    return globalDBState;
   }
   globalDBState = readDBFromFile();
-  return JSON.parse(JSON.stringify(globalDBState));
+  return globalDBState;
 }
 
 function cleanForFirestore(obj: any): any {
@@ -879,32 +850,6 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
 
   try {
     console.log('Hydrating local database cache from cloud Firestore...');
-
-    // ─── PRIMARY: Try to load the single main_state document (new method) ───
-    const mainStateSnap = await getDoc(doc(firebaseDb, 'warehouse', 'main_state'));
-    if (mainStateSnap.exists()) {
-      const data = mainStateSnap.data() as DBState;
-      console.log(`Loaded from Firestore main_state: ${data.scooterUnits?.length || 0} scooters, ${data.products?.length || 0} products.`);
-      return {
-        users: data.users || DEFAULT_USERS,
-        products: data.products || [],
-        buyers: data.buyers || [],
-        scooterUnits: data.scooterUnits || [],
-        stockLogs: data.stockLogs || [],
-        sheetConfig: data.sheetConfig || { webhookUrl: '', enabled: false },
-        batterySales: data.batterySales || [],
-        batteryImports: data.batteryImports || [],
-        chargerSales: data.chargerSales || [],
-        chargerImports: data.chargerImports || [],
-        batterySeriesList: data.batterySeriesList || ['Lithium 60V, 24AH', 'Lithium 60V, 30AH'],
-        chargerTypeList: data.chargerTypeList || ['Lithium Charger 54.6V/6A'],
-        auditLogs: data.auditLogs || [],
-        warrantyClaims: data.warrantyClaims || []
-      };
-    }
-
-    // ─── FALLBACK: Read from individual collections (legacy method) ──────────
-    console.log('No main_state found. Falling back to collection-based hydration...');
     const state: Partial<DBState> = {};
 
     const usersSnap = await getDocs(collection(firebaseDb, 'users'));
@@ -949,6 +894,17 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
       state.sheetConfig = sheetConfigSnap.data() as SheetConfig;
     }
 
+    const isEmpty = (!state.users || Object.keys(state.users).length === 0) &&
+                    (!state.products || state.products.length === 0) &&
+                    (!state.scooterUnits || state.scooterUnits.length === 0);
+
+    if (isEmpty) {
+      console.log('Cloud Firestore database appears empty. Seeding with local backup file contents...');
+      const localState = readDBFromFile();
+      await seedFirestore(localState);
+      return localState;
+    }
+
     const finalState: DBState = {
       users: state.users || DEFAULT_USERS,
       products: state.products && state.products.length > 0 ? state.products : DEFAULT_PRODUCTS,
@@ -966,14 +922,6 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
       warrantyClaims: state.warrantyClaims || []
     };
 
-    // If we got real data from collections, save it to main_state for future use
-    if (finalState.products.length > 0 || finalState.scooterUnits.length > 0) {
-      const { setDoc, doc: fsDoc } = await import('firebase/firestore');
-      setDoc(fsDoc(firebaseDb, 'warehouse', 'main_state'), JSON.parse(JSON.stringify(finalState)))
-        .then(() => console.log('Migrated legacy collection data to main_state.'))
-        .catch((err: any) => console.error('Migration to main_state failed:', err));
-    }
-
     return finalState;
   } catch (error) {
     console.error('Error hydrating database from Firestore:', error);
@@ -981,12 +929,9 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
   }
 }
 
-
-
 function writeDB(state: DBState) {
+  const oldState = globalDBState ? JSON.parse(JSON.stringify(globalDBState)) : null;
   globalDBState = state;
-
-  // Write backup to local file (async, non-blocking)
   try {
     fs.writeFile(DB_FILE, JSON.stringify(state, null, 2), 'utf8', (err) => {
       if (err) console.error('Error writing backup database file:', err);
@@ -995,18 +940,35 @@ function writeDB(state: DBState) {
     console.error('Error starting backup database file write:', err);
   }
 
-  // ─── GUARANTEED Firestore Sync ────────────────────────────────────────────
-  // Instead of a diff-based sync (which was broken), write the full database
-  // state to a single Firestore document. This is 100% reliable.
-  if (firebaseDb) {
-    const { doc, setDoc } = require('firebase/firestore');
-    const stateToSave = JSON.parse(JSON.stringify(state)); // clean copy
-    setDoc(doc(firebaseDb, 'warehouse', 'main_state'), stateToSave)
-      .then(() => console.log('Firestore main_state synced successfully.'))
-      .catch((err: any) => console.error('Firestore main_state sync error:', err));
-  }
+  // Push to cloud Firestore in background
+  syncToFirestore(state, oldState).catch(err => {
+    console.error('Error in background Firestore sync:', err);
+  });
 }
 
+function seedMockDataToDB(db: DBState) {
+  db.buyers = [...MOCK_BUYERS];
+  db.stockLogs = [...MOCK_STOCK_LOGS];
+  db.scooterUnits = [...MOCK_SCOOTER_UNITS];
+  db.batteryImports = [...MOCK_BATTERY_IMPORTS];
+  db.batterySales = [...MOCK_BATTERY_SALES];
+  db.chargerImports = [...MOCK_CHARGER_IMPORTS];
+  db.chargerSales = [...MOCK_CHARGER_SALES];
+  db.warrantyClaims = [...MOCK_WARRANTY_CLAIMS];
+  writeDB(db);
+}
+
+function clearMockDataFromDB(db: DBState) {
+  db.buyers = [];
+  db.stockLogs = [];
+  db.scooterUnits = [];
+  db.batteryImports = [];
+  db.batterySales = [];
+  db.chargerImports = [];
+  db.chargerSales = [];
+  db.warrantyClaims = [];
+  writeDB(db);
+}
 
 // Helper to log user/system action in the Audit Log list
 function addAuditLog(db: DBState, username: string, operatorName: string, action: string, details?: string) {
@@ -1345,6 +1307,11 @@ const batterySaleReleaseSchema = z.object({
 const batterySaleFinalizeSchema = z.object({
   id: z.string().min(1, "Battery sale ID is required").max(100),
   operator: z.string().max(150).optional(),
+  buyerName: z.string().max(150).optional(),
+  buyerContact: z.string().max(150).optional(),
+  billNo: z.string().max(100).optional().or(z.literal('')),
+  deliveryChallanNo: z.string().max(100).optional().or(z.literal('')),
+  notes: z.string().max(1000).optional(),
 });
 
 const batteryImportSchema = z.object({
@@ -1387,6 +1354,19 @@ const chargerSaleReleaseSchema = z.object({
 const chargerSaleFinalizeSchema = z.object({
   id: z.string().min(1, "Charger sale ID is required").max(100),
   operator: z.string().max(150).optional(),
+  buyerName: z.string().max(150).optional(),
+  buyerContact: z.string().max(150).optional(),
+  billNo: z.string().max(100).optional().or(z.literal('')),
+  deliveryChallanNo: z.string().max(100).optional().or(z.literal('')),
+  notes: z.string().max(1000).optional(),
+});
+
+const wholesalePackageReleaseSchema = z.object({
+  customerName: z.string().min(1, "Customer Name is required").max(150),
+  scooterIds: z.array(z.string()).optional(),
+  batteryIds: z.array(z.string()).optional(),
+  chargerIds: z.array(z.string()).optional(),
+  operator: z.string().max(150).optional(),
 });
 
 const chargerImportSchema = z.object({
@@ -1421,11 +1401,10 @@ const scooterUnitSchema = z.object({
   tireSize: z.string().max(100).optional(),
   frontTireSize: z.string().max(100).optional(),
   rearTireSize: z.string().max(100).optional(),
-  brakeType: z.enum(['Disk', 'Drum']).optional(),
+  brakeType: z.string().optional(),
   customizationNotes: z.string().max(1000).optional(),
   buyerName: z.string().max(150).trim().optional(),
   buyerContact: z.string().max(150).trim().optional(),
-  salesPrice: z.coerce.number().nonnegative().optional(),
   batterySerials: z.array(z.string().max(100).trim().toUpperCase()).optional(),
   scooterWarrantyStatus: z.string().max(100).optional(),
   scooterWarrantyExpiry: z.string().max(100).optional(),
@@ -1447,6 +1426,14 @@ const scooterUnitSchema = z.object({
   stockInNo: z.string().max(100).optional().or(z.literal('')),
   salesBillNo: z.string().max(100).optional().or(z.literal('')),
   deliveryChallanNo: z.string().max(100).optional().or(z.literal('')),
+  status: z.string().optional(),
+  heldFor: z.string().nullable().optional(),
+  heldBy: z.string().nullable().optional(),
+  holdDate: z.string().nullable().optional(),
+  salePrice: z.coerce.number().optional(),
+  billingNo: z.string().optional().or(z.literal('')),
+  notes: z.string().optional(),
+  saleDate: z.string().optional(),
 });
 
 const scooterBulkCreateSchema = z.object({
@@ -1455,7 +1442,7 @@ const scooterBulkCreateSchema = z.object({
   sourceChannel: z.string().max(100).optional(),
   frontTireSize: z.string().max(100).optional(),
   rearTireSize: z.string().max(100).optional(),
-  brakeType: z.enum(['Disk', 'Drum']).optional(),
+  brakeType: z.string().optional(),
   items: z.array(z.object({
     chassisNo: z.string().min(1, "Chassis number cannot be empty").max(100).trim().toUpperCase(),
     motorNo: z.string().min(1, "Motor number cannot be empty").max(100).trim().toUpperCase(),
@@ -1469,7 +1456,6 @@ const scooterBulkCreateSchema = z.object({
 const scooterBulkPosSchema = z.object({
   buyerName: z.string().min(1, "Buyer Name is required").max(150).trim(),
   buyerContact: z.string().max(150).trim().optional(),
-  salesPrice: z.coerce.number().nonnegative().optional(),
   scooterWarrantyStatus: z.string().max(100).optional(),
   scooterWarrantyExpiry: z.string().max(100).optional(),
   batteryWarrantyStatus: z.string().max(100).optional(),
@@ -1504,6 +1490,124 @@ const sheetConfigSchema = z.object({
   enabled: z.boolean(),
 });
 
+const emptySchema = z.object({}).strict();
+
+const clearAuditLogsSchema = z.object({
+  operator: z.string().max(100).optional(),
+});
+
+const userPullLocationSchema = z.object({
+  username: z.string().min(1, "Username is required").max(100, "Username too long").toLowerCase().trim(),
+});
+
+const scooterReleaseHoldSchema = z.object({
+  id: z.string().min(1, "Scooter ID is required").max(100),
+  operator: z.string().max(100).optional(),
+});
+
+const scooterFinalizeHoldSchema = z.object({
+  id: z.string().min(1, "ID is required").max(100),
+  buyerName: z.string().min(1, "Buyer Name is required").max(200, "Buyer Name is too long"),
+  buyerContact: z.string().min(1, "Buyer Contact is required").max(50, "Buyer Contact is too long"),
+  salePrice: z.coerce.number().positive("Sale Price must be positive"),
+  billingNo: z.string().min(1, "Billing Number is required").max(100, "Billing Number too long"),
+  deliveryChallanNo: z.string().min(1, "Delivery Challan Number is required").max(100, "Challan Number too long"),
+  notes: z.string().max(1000).optional(),
+  operator: z.string().max(100).optional(),
+});
+
+const batteryUpdateHoldSchema = z.object({
+  id: z.string().min(1, "Record ID is required").max(100),
+  quantity: z.coerce.number().int("Quantity must be an integer").positive("Quantity must be positive"),
+  heldFor: z.string().max(100).optional(),
+  buyerName: z.string().min(1, "Buyer Name is required").max(200, "Buyer Name is too long"),
+  notes: z.string().max(1000).optional(),
+  batterySeries: z.string().min(1, "Battery Series is required").max(200, "Battery Series is too long"),
+  operator: z.string().max(100).optional(),
+});
+
+const chargerUpdateHoldSchema = z.object({
+  id: z.string().min(1, "Record ID is required").max(100),
+  quantity: z.coerce.number().int("Quantity must be an integer").positive("Quantity must be positive"),
+  heldFor: z.string().max(100).optional(),
+  buyerName: z.string().min(1, "Buyer Name is required").max(200, "Buyer Name is too long"),
+  notes: z.string().max(1000).optional(),
+  chargerType: z.string().min(1, "Charger Type is required").max(200, "Charger Type is too long"),
+  operator: z.string().max(100).optional(),
+});
+
+const validateDocumentNumbersSchema = z.object({
+  billNo: z.string().max(100).optional(),
+  deliveryChallanNo: z.string().max(100).optional(),
+  excludeId: z.string().max(100).optional(),
+  excludeIds: z.array(z.string().max(100)).optional(),
+});
+
+const challanRemoveItemSchema = z.object({
+  deliveryChallanNo: z.string().min(1, "Challan Number is required").max(100),
+  itemType: z.enum(['scooter', 'battery', 'charger']),
+  itemId: z.string().min(1, "Item ID is required").max(100),
+  operator: z.string().max(100).optional(),
+  userRole: z.string().max(100).optional(),
+});
+
+const challanAttachItemSchema = z.object({
+  deliveryChallanNo: z.string().min(1, "Challan Number is required").max(100),
+  itemType: z.enum(['scooter', 'battery', 'charger']),
+  itemId: z.string().min(1, "Item ID is required").max(100),
+  operator: z.string().max(100).optional(),
+  userRole: z.string().max(100).optional(),
+  buyerName: z.string().max(200).optional(),
+  buyerContact: z.string().max(100).optional(),
+  salesBillNo: z.string().max(100).optional(),
+});
+
+const challanFinishSchema = z.object({
+  deliveryChallanNo: z.string().min(1, "Challan Number is required").max(100),
+  operator: z.string().max(100).optional(),
+});
+
+const challanUpdateSchema = z.object({
+  deliveryChallanNo: z.string().min(1, "Challan Number is required").max(100),
+  newChallanNo: z.string().max(100).optional(),
+  buyerName: z.string().max(200).optional(),
+  buyerContact: z.string().max(100).optional(),
+  billNo: z.string().max(100).optional(),
+  operator: z.string().max(100).optional(),
+  userRole: z.string().max(100).optional(),
+});
+
+const challanDeleteEntireSchema = z.object({
+  deliveryChallanNo: z.string().min(1, "Challan Number is required").max(100),
+  operator: z.string().max(100).optional(),
+  userRole: z.string().max(100).optional(),
+});
+
+const warrantyClaimSchema = z.object({
+  id: z.string().max(100).optional(),
+  originalSaleId: z.string().min(1, "Original Sale ID is required").max(100),
+  originalSaleType: z.enum(['scooter', 'battery', 'charger']),
+  originalSerialNo: z.string().min(1, "Original Serial Number is required").max(100),
+  buyerName: z.string().min(1, "Buyer Name is required").max(200),
+  buyerContact: z.string().max(100).optional(),
+  saleDate: z.string().max(50).optional(),
+  warrantyDurationMonths: z.coerce.number().int().nonnegative().optional(),
+  issueDescription: z.string().min(1, "Issue description is required").max(2000),
+  status: z.enum(['pending_mfr', 'pending_parts', 'resolved', 'rejected', 'investigating']),
+  actionTaken: z.string().max(2000).optional(),
+  newSerialNo: z.string().max(100).optional(),
+  notes: z.string().max(2000).optional(),
+  operatorName: z.string().max(100).optional(),
+  operatorUsername: z.string().max(100).optional(),
+  replacementWarrantyMonths: z.coerce.number().int().nonnegative().optional(),
+  isBattery: z.boolean().optional(),
+  claimDate: z.string().max(50).optional(),
+});
+
+const bulkSeedSchema = z.object({
+  mode: z.enum(['replace', 'append']).optional(),
+});
+
 // Middleware factory to validate req.body against a strict schema
 function validateBody(schema: z.ZodSchema) {
   return (req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -1536,6 +1640,31 @@ app.use('/api', (req, res, next) => {
 // Public: Health check
 app.get('/api/health', publicIpRateLimiter, (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString() });
+});
+
+// Mock Data Management Routes (for testing & reset)
+app.post('/api/seed-mock-data', validateBody(emptySchema), (req, res) => {
+  try {
+    const db = readDB();
+    seedMockDataToDB(db);
+    addAuditLog(db, 'system', 'System Administrator', 'mock_data_seeded', 'Seeded test dataset into warehouse database.');
+    res.json({ success: true, message: 'Mock data seeded successfully.' });
+  } catch (err: any) {
+    console.error('Error during mock data seeding:', err);
+    res.status(500).json({ error: 'Failed to seed mock data. Please contact the administrator.' });
+  }
+});
+
+app.post('/api/clear-mock-data', validateBody(emptySchema), (req, res) => {
+  try {
+    const db = readDB();
+    clearMockDataFromDB(db);
+    addAuditLog(db, 'system', 'System Administrator', 'mock_data_cleared', 'Cleared test dataset from warehouse database.');
+    res.json({ success: true, message: 'Mock data removed successfully.' });
+  } catch (err: any) {
+    console.error('Error during mock data clearing:', err);
+    res.status(500).json({ error: 'Failed to clear mock data. Please contact the administrator.' });
+  }
 });
 
 // Auth: Login
@@ -1582,26 +1711,16 @@ app.post('/api/auth/login', authIpRateLimiter, validateBody(loginSchema), (req, 
       recordAuthFailure(normalizedUserKey);
 
       const record = authAccountTracker.get(normalizedUserKey)!;
+      const power = Math.max(0, record.failedCount - 1);
+      const nextDelayMs = Math.min(AUTH_MAX_BACKOFF_MS, AUTH_BACKOFF_BASE_MS * Math.pow(AUTH_BACKOFF_FACTOR, power));
+      const nextDelaySecs = Math.ceil(nextDelayMs / 1000);
+
+      const errorMsg = `Invalid username or password. Due to consecutive failed attempts, your next login attempt will be delayed by ${nextDelaySecs} seconds.`;
+
+      addAuditLog(db, user.username, user.name, 'login_failed_wrong_password', `Wrong password attempt. Successive failed count is now ${record.failedCount}.`);
+
+      // Update failedAttempts to align with backoff tracker count
       user.failedAttempts = record.failedCount;
-
-      let errorMsg = '';
-
-      // If the user is not the master admin, check for hard lockout
-      if (user.role !== 'admin' && user.failedAttempts >= 3) {
-        user.locked = true;
-        errorMsg = 'This account has been locked due to too many failed login attempts. Please contact the warehouse owner to unlock it.';
-        addAuditLog(db, user.username, user.name, 'login_failed_locked_out', 'Account permanently locked due to 3 failed password attempts.');
-      } else {
-        // Admin user OR non-admin with < 3 attempts -> use exponential backoff message
-        const power = Math.max(0, record.failedCount - 1);
-        const nextDelayMs = Math.min(AUTH_MAX_BACKOFF_MS, AUTH_BACKOFF_BASE_MS * Math.pow(AUTH_BACKOFF_FACTOR, power));
-        const nextDelaySecs = Math.ceil(nextDelayMs / 1000);
-
-        errorMsg = `Invalid username or password. Due to consecutive failed attempts, your next login attempt will be delayed by ${nextDelaySecs} seconds.`;
-        addAuditLog(db, user.username, user.name, 'login_failed_wrong_password', `Wrong password attempt. Successive failed count is now ${record.failedCount}.`);
-      }
-
-      // Save user state
       db.users[normalizedUserKey] = user;
       writeDB(db);
 
@@ -1732,13 +1851,37 @@ app.post('/api/users/delete', validateBody(userDeleteSchema), (req, res) => {
 // Auth: Get Users (For supervisor tracking)
 app.get('/api/users', (req, res) => {
   const db = readDB();
-  const safeUsers = Object.values(db.users).map(({ passwordHash, ...user }) => ({
-    ...user,
-    passwordText: passwordHash
-  }));
+  const limitTime = Date.now() - 24 * 60 * 60 * 1000;
+  let dbChanged = false;
+
+  const safeUsers = Object.values(db.users).map(({ passwordHash, ...user }) => {
+    let history = user.locationHistory || [];
+    const prunedHistory = history.filter(
+      (entry: any) => new Date(entry.timestamp).getTime() >= limitTime
+    );
+    
+    if (prunedHistory.length !== history.length) {
+      if (db.users[user.username]) {
+        db.users[user.username].locationHistory = prunedHistory;
+        dbChanged = true;
+      }
+    }
+
+    return {
+      ...user,
+      locationHistory: prunedHistory,
+      passwordText: passwordHash
+    };
+  });
+
+  if (dbChanged) {
+    writeDB(db);
+  }
+
   res.json(safeUsers);
 });
 
+// Auth: Update User Location (For silent employee geolocation updates)
 app.post('/api/users/location', validateBody(userLocationSchema), (req, res) => {
   const { username, latitude, longitude } = req.body;
   const db = readDB();
@@ -1748,7 +1891,7 @@ app.post('/api/users/location', validateBody(userLocationSchema), (req, res) => 
     db.users[normalized].latitude = latitude;
     db.users[normalized].longitude = longitude;
     db.users[normalized].locationTimestamp = timestamp;
-    db.users[normalized].pullLocationRequested = false; // Reset the pull request once coordinate is received
+    db.users[normalized].pullLocationRequested = false;
     
     if (!db.users[normalized].locationHistory) {
       db.users[normalized].locationHistory = [];
@@ -1771,14 +1914,11 @@ app.post('/api/users/location', validateBody(userLocationSchema), (req, res) => 
   return res.status(404).json({ error: 'User not found' });
 });
 
-// Auth: Trigger a live high-accuracy GPS pull for an employee (Admin/Manager only)
-app.post('/api/users/pull-location', (req, res) => {
+// Auth: Request live location pull from an employee's device
+app.post('/api/users/pull-location', validateBody(userPullLocationSchema), (req, res) => {
   const { username } = req.body;
-  if (!username) {
-    return res.status(400).json({ error: 'Username is required' });
-  }
   const db = readDB();
-  const normalized = username.toLowerCase().trim();
+  const normalized = username; // Already normalized lower/trim by schema
   if (db.users[normalized]) {
     db.users[normalized].pullLocationRequested = true;
     db.users[normalized].pullLocationTimestamp = new Date().toISOString();
@@ -1798,36 +1938,6 @@ app.get('/api/users/check-pull', (req, res) => {
   const normalized = username.toLowerCase().trim();
   if (db.users[normalized]) {
     return res.json({ pullRequested: !!db.users[normalized].pullLocationRequested });
-  }
-  return res.status(404).json({ error: 'User not found' });
-});
-
-// Auth: Simulate Location Trail (For testing breadcrumbs)
-app.post('/api/users/simulate-trail', validateBody(userSimulateTrailSchema), (req, res) => {
-  const { username } = req.body;
-  const db = readDB();
-  const normalized = username.toLowerCase().trim();
-  if (db.users[normalized]) {
-    const baseLat = 28.6139;
-    const baseLng = 77.2090;
-    
-    // Generate 5 points moving from Connaught Place around Delhi
-    const now = Date.now();
-    const mockTrail = [
-      { latitude: baseLat, longitude: baseLng, timestamp: new Date(now - 20 * 60 * 60 * 1000).toISOString() }, // 20h ago CP
-      { latitude: baseLat + 0.015, longitude: baseLng - 0.01, timestamp: new Date(now - 15 * 60 * 60 * 1000).toISOString() }, // 15h ago Karol Bagh
-      { latitude: baseLat + 0.035, longitude: baseLng + 0.02, timestamp: new Date(now - 10 * 60 * 60 * 1000).toISOString() }, // 10h ago Chandni Chowk
-      { latitude: baseLat - 0.04, longitude: baseLng + 0.045, timestamp: new Date(now - 5 * 60 * 60 * 1000).toISOString() },  // 5h ago Nizamuddin / Lotus Temple
-      { latitude: baseLat - 0.078, longitude: baseLng - 0.013, timestamp: new Date(now).toISOString() }                     // Now Qutub Minar
-    ];
-
-    db.users[normalized].latitude = mockTrail[mockTrail.length - 1].latitude;
-    db.users[normalized].longitude = mockTrail[mockTrail.length - 1].longitude;
-    db.users[normalized].locationTimestamp = mockTrail[mockTrail.length - 1].timestamp;
-    db.users[normalized].locationHistory = mockTrail;
-
-    writeDB(db);
-    return res.json({ success: true, history: mockTrail });
   }
   return res.status(404).json({ error: 'User not found' });
 });
@@ -1960,6 +2070,16 @@ app.get('/api/audit-logs', (req, res) => {
   res.json(enrichedLogs);
 });
 
+// Audit Logs: Clear (Admin/Owner only)
+app.post('/api/audit-logs/clear', validateBody(clearAuditLogsSchema), (req, res) => {
+  const db = readDB();
+  const operator = req.body.operator || 'system';
+  db.auditLogs = [];
+  addAuditLog(db, 'admin', operator, 'audit_logs_cleared', `Cleared system audit log history by ${operator}.`);
+  writeDB(db);
+  res.json({ success: true, message: 'System audit logs cleared successfully.' });
+});
+
 // Products: List
 app.get('/api/products', (req, res) => {
   const db = readDB();
@@ -1997,7 +2117,7 @@ app.post('/api/products', validateBody(productSchema), (req, res) => {
 });
 
 // Products: Bulk Seed Official Senzo Catalog
-app.post('/api/products/bulk-seed', (req, res) => {
+app.post('/api/products/bulk-seed', validateBody(bulkSeedSchema), (req, res) => {
   const { mode } = req.body; // 'replace' or 'append'
   const db = readDB();
 
@@ -2263,6 +2383,7 @@ app.get('/api/battery-sales', (req, res) => {
 app.post('/api/battery-sales', validateBody(batterySaleSchema), (req, res) => {
   const { 
     buyerName, 
+    buyerContact,
     batterySeries, 
     startNo, 
     endNo, 
@@ -2273,6 +2394,8 @@ app.post('/api/battery-sales', validateBody(batterySaleSchema), (req, res) => {
     warrantyDurationMonths,
     status, // 'sold' | 'hold'
     heldFor,
+    billNo,
+    deliveryChallanNo,
     serialNumbers
   } = req.body;
 
@@ -2306,27 +2429,108 @@ app.post('/api/battery-sales', validateBody(batterySaleSchema), (req, res) => {
   const isHold = status === 'hold';
   const timestamp = new Date().toISOString();
 
+  let cleanStart = startNo ? String(startNo).trim() : 'N/A';
+  let cleanEnd = endNo ? String(endNo).trim() : 'N/A';
+
+  let finalSerials = serialNumbers && Array.isArray(serialNumbers) && serialNumbers.length > 0 ? serialNumbers.map(s => String(s).trim()).filter(Boolean) : undefined;
+  
+  const requestedQty = Math.max(1, Number(quantity) || (finalSerials ? finalSerials.length : 1));
+
+  if ((!finalSerials || finalSerials.length < requestedQty) && cleanStart !== 'N/A') {
+    const startMatch = cleanStart.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+    const endMatch = cleanEnd !== 'N/A' ? cleanEnd.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i) : null;
+    
+    if (startMatch) {
+      const prefix = startMatch[1] !== undefined ? startMatch[1] : `${batterySeries} `;
+      const startNum = parseInt(startMatch[2], 10);
+      const paddingLength = startMatch[2].length;
+      let countToGen = requestedQty;
+
+      if (endMatch) {
+        const endNum = parseInt(endMatch[2], 10);
+        if (!isNaN(endNum) && endNum >= startNum) {
+          countToGen = Math.max(requestedQty, endNum - startNum + 1);
+        }
+      }
+
+      const list: string[] = [];
+      for (let i = 0; i < countToGen; i++) {
+        const numStr = String(startNum + i).padStart(paddingLength, '0');
+        list.push(`${prefix}${numStr}`);
+      }
+      finalSerials = list;
+    } else {
+      if (requestedQty > 1) {
+        const list: string[] = [];
+        for (let i = 1; i <= requestedQty; i++) {
+          list.push(`${cleanStart}-${i}`);
+        }
+        finalSerials = list;
+      } else {
+        finalSerials = [cleanStart];
+      }
+    }
+  }
+
+  if (!finalSerials || finalSerials.length === 0) {
+    const tag = (batterySeries || 'BAT').trim();
+    const list: string[] = [];
+    for (let i = 1; i <= requestedQty; i++) {
+      list.push(`${tag} ${String(i).padStart(3, '0')}`);
+    }
+    finalSerials = list;
+  }
+
+  const finalQty = Math.max(requestedQty, finalSerials.length);
+
+  if (finalSerials && finalSerials.length > 0) {
+    cleanStart = finalSerials[0];
+    cleanEnd = finalSerials[finalSerials.length - 1];
+  }
+
+  const hasWarranty = isUnderWarranty !== undefined ? !!isUnderWarranty : (Boolean(warrantyDurationMonths) && Number(warrantyDurationMonths) > 0);
+  const finalWarrantyMonths = hasWarranty ? Number(warrantyDurationMonths || 12) : undefined;
+
   const newSale: BatterySale = {
     id: `batsale-${Date.now()}`,
     buyerName,
+    buyerContact: buyerContact || undefined,
     batterySeries,
-    startNo: startNo ? String(startNo).trim().toUpperCase() : 'N/A',
-    endNo: endNo ? String(endNo).trim().toUpperCase() : 'N/A',
-    quantity,
+    startNo: cleanStart,
+    endNo: cleanEnd,
+    quantity: finalQty,
     saleDate: timestamp,
     operator: operator || 'system',
     notes: notes || undefined,
-    isUnderWarranty: !!isUnderWarranty,
-    warrantyDurationMonths: isUnderWarranty ? warrantyDurationMonths : undefined,
+    isUnderWarranty: hasWarranty,
+    warrantyDurationMonths: finalWarrantyMonths,
     status: isHold ? 'hold' : 'sold',
     heldFor: isHold ? (heldFor || buyerName) : undefined,
     heldBy: isHold ? (operator || 'Operator') : undefined,
     holdDate: isHold ? timestamp : undefined,
-    serialNumbers: serialNumbers || undefined
+    billNo: billNo || undefined,
+    deliveryChallanNo: deliveryChallanNo || undefined,
+    serialNumbers: finalSerials
   };
 
   db.batterySales.push(newSale);
-  addAuditLog(db, operator || 'system', operator || 'system', isHold ? 'battery_hold' : 'battery_sale', `Registered standalone battery ${isHold ? 'hold/reservation' : 'sale/dispatch'} for Series ${batterySeries} (Qty: ${quantity}, Buyer: ${buyerName}).`);
+
+  if (!isHold) {
+    db.stockLogs.push({
+      id: `stocklog-${Date.now()}`,
+      modelName: `${batterySeries} Battery Pack`,
+      color: 'Standard',
+      type: 'out',
+      sourceChannel: 'customer_sale',
+      quantity: finalQty,
+      buyerName,
+      timestamp,
+      operator: operator || 'system',
+      notes: `Wholesale Battery Sale: ${cleanStart} to ${cleanEnd} (${finalQty} Batteries)`,
+      billNo: billNo || undefined
+    });
+  }
+  addAuditLog(db, operator || 'system', operator || 'system', isHold ? 'battery_hold' : 'battery_sale', `Registered battery ${isHold ? 'hold/reservation' : 'sale/dispatch'} for Series ${batterySeries} (Qty: ${finalQty} Batteries, Buyer: ${buyerName}).`);
   writeDB(db);
 
   if (db.sheetConfig.enabled && db.sheetConfig.webhookUrl) {
@@ -2391,7 +2595,7 @@ app.post('/api/battery-sales/release', validateBody(batterySaleReleaseSchema), (
 
 // Battery Sales: Finalize Hold
 app.post('/api/battery-sales/finalize', validateBody(batterySaleFinalizeSchema), (req, res) => {
-  const { id, operator } = req.body;
+  const { id, operator, buyerName, buyerContact, billNo, deliveryChallanNo, notes } = req.body;
 
   const db = readDB();
   if (!db.batterySales) db.batterySales = [];
@@ -2410,6 +2614,13 @@ app.post('/api/battery-sales/finalize', validateBody(batterySaleFinalizeSchema),
   record.status = 'sold';
   record.saleDate = timestamp;
   record.operator = operator || record.operator;
+  if (buyerName) record.buyerName = buyerName;
+  if (buyerContact) record.buyerContact = buyerContact;
+  if (billNo) record.billNo = billNo;
+  if (deliveryChallanNo) record.deliveryChallanNo = deliveryChallanNo;
+  if (notes) record.notes = notes;
+  record.heldFor = undefined;
+  record.heldBy = undefined;
   
   db.batterySales[index] = record;
   addAuditLog(db, operator || record.operator, operator || record.operator, 'battery_hold_finalized', `Finalized and dispatched battery sale for Series ${record.batterySeries} (Qty: ${record.quantity}, Buyer: ${record.buyerName}).`);
@@ -2528,6 +2739,7 @@ app.get('/api/charger-sales', (req, res) => {
 app.post('/api/charger-sales', validateBody(chargerSaleSchema), (req, res) => {
   const { 
     buyerName, 
+    buyerContact,
     chargerType, 
     startNo, 
     endNo, 
@@ -2538,6 +2750,8 @@ app.post('/api/charger-sales', validateBody(chargerSaleSchema), (req, res) => {
     warrantyDurationMonths,
     status, // 'sold' | 'hold'
     heldFor,
+    billNo,
+    deliveryChallanNo,
     serialNumbers
   } = req.body;
 
@@ -2571,26 +2785,108 @@ app.post('/api/charger-sales', validateBody(chargerSaleSchema), (req, res) => {
   const isHold = status === 'hold';
   const timestamp = new Date().toISOString();
 
+  let cleanStart = startNo ? String(startNo).trim().toUpperCase() : 'N/A';
+  let cleanEnd = endNo ? String(endNo).trim().toUpperCase() : 'N/A';
+
+  let finalSerials = serialNumbers && Array.isArray(serialNumbers) && serialNumbers.length > 0 ? serialNumbers.map(s => String(s).trim().toUpperCase()).filter(Boolean) : undefined;
+
+  const requestedQty = Math.max(1, Number(quantity) || (finalSerials ? finalSerials.length : 1));
+
+  if ((!finalSerials || finalSerials.length < requestedQty) && cleanStart !== 'N/A') {
+    const startMatch = cleanStart.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+    const endMatch = cleanEnd !== 'N/A' ? cleanEnd.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i) : null;
+    
+    if (startMatch) {
+      const prefix = startMatch[1] !== undefined ? startMatch[1] : '';
+      const startNum = parseInt(startMatch[2], 10);
+      const paddingLength = startMatch[2].length;
+      let countToGen = requestedQty;
+
+      if (endMatch) {
+        const endNum = parseInt(endMatch[2], 10);
+        if (!isNaN(endNum) && endNum >= startNum) {
+          countToGen = Math.max(requestedQty, endNum - startNum + 1);
+        }
+      }
+
+      const list: string[] = [];
+      for (let i = 0; i < countToGen; i++) {
+        const numStr = String(startNum + i).padStart(paddingLength, '0');
+        list.push(`${prefix}${numStr}`);
+      }
+      finalSerials = list;
+    } else {
+      if (requestedQty > 1) {
+        const list: string[] = [];
+        for (let i = 1; i <= requestedQty; i++) {
+          list.push(`${cleanStart}-${i}`);
+        }
+        finalSerials = list;
+      } else {
+        finalSerials = [cleanStart];
+      }
+    }
+  }
+
+  if (!finalSerials || finalSerials.length === 0) {
+    const rawTag = (chargerType || 'CHG').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const cleanTag = rawTag.slice(0, 8) || 'CHG';
+    const list: string[] = [];
+    for (let i = 1; i <= requestedQty; i++) {
+      list.push(`${cleanTag}-${1000 + i}`);
+    }
+    finalSerials = list;
+  }
+
+  const finalQty = Math.max(requestedQty, finalSerials.length);
+
+  if (finalSerials && finalSerials.length > 0) {
+    cleanStart = finalSerials[0];
+    cleanEnd = finalSerials[finalSerials.length - 1];
+  }
+
+  const hasWarranty = isUnderWarranty !== undefined ? !!isUnderWarranty : (Boolean(warrantyDurationMonths) && Number(warrantyDurationMonths) > 0);
+  const finalWarrantyMonths = hasWarranty ? Number(warrantyDurationMonths || 6) : undefined;
+
   const newSale: ChargerSale = {
     id: `chgsale-${Date.now()}`,
     buyerName,
+    buyerContact: buyerContact || undefined,
     chargerType,
-    startNo: startNo ? String(startNo).trim().toUpperCase() : 'N/A',
-    endNo: endNo ? String(endNo).trim().toUpperCase() : 'N/A',
-    quantity,
+    startNo: cleanStart,
+    endNo: cleanEnd,
+    quantity: finalQty,
     saleDate: timestamp,
     operator: operator || 'system',
     notes: notes || undefined,
-    isUnderWarranty: !!isUnderWarranty,
-    warrantyDurationMonths: isUnderWarranty ? warrantyDurationMonths : undefined,
+    isUnderWarranty: hasWarranty,
+    warrantyDurationMonths: finalWarrantyMonths,
     status: isHold ? 'hold' : 'sold',
     heldFor: isHold ? (heldFor || buyerName) : undefined,
     heldBy: isHold ? (operator || 'Operator') : undefined,
     holdDate: isHold ? timestamp : undefined,
-    serialNumbers: serialNumbers || undefined
+    billNo: billNo || undefined,
+    deliveryChallanNo: deliveryChallanNo || undefined,
+    serialNumbers: finalSerials
   };
 
   db.chargerSales.push(newSale);
+
+  if (!isHold) {
+    db.stockLogs.push({
+      id: `stocklog-${Date.now()}`,
+      modelName: `${chargerType} Charger`,
+      color: 'Standard',
+      type: 'out',
+      sourceChannel: 'customer_sale',
+      quantity: finalQty,
+      buyerName,
+      timestamp,
+      operator: operator || 'system',
+      notes: `Standalone Wholesale Charger Sale: ${cleanStart} to ${cleanEnd} (${finalQty} Units)`,
+      billNo: billNo || undefined
+    });
+  }
   addAuditLog(db, operator || 'system', operator || 'system', isHold ? 'charger_hold' : 'charger_sale', `Registered standalone charger ${isHold ? 'hold/reservation' : 'sale/dispatch'} for Type ${chargerType} (Qty: ${quantity}, Buyer: ${buyerName}).`);
   writeDB(db);
 
@@ -2623,7 +2919,7 @@ app.post('/api/charger-sales/release', validateBody(chargerSaleReleaseSchema), (
 
 // Charger Sales: Finalize Hold
 app.post('/api/charger-sales/finalize', validateBody(chargerSaleFinalizeSchema), (req, res) => {
-  const { id, operator } = req.body;
+  const { id, operator, buyerName, buyerContact, billNo, deliveryChallanNo, notes } = req.body;
 
   const db = readDB();
   if (!db.chargerSales) db.chargerSales = [];
@@ -2642,6 +2938,13 @@ app.post('/api/charger-sales/finalize', validateBody(chargerSaleFinalizeSchema),
   record.status = 'sold';
   record.saleDate = timestamp;
   record.operator = operator || record.operator;
+  if (buyerName) record.buyerName = buyerName;
+  if (buyerContact) record.buyerContact = buyerContact;
+  if (billNo) record.billNo = billNo;
+  if (deliveryChallanNo) record.deliveryChallanNo = deliveryChallanNo;
+  if (notes) record.notes = notes;
+  record.heldFor = undefined;
+  record.heldBy = undefined;
   
   db.chargerSales[index] = record;
   addAuditLog(db, operator || record.operator, operator || record.operator, 'charger_hold_finalized', `Finalized and dispatched charger sale for Type ${record.chargerType} (Qty: ${record.quantity}, Buyer: ${record.buyerName}).`);
@@ -2772,7 +3075,6 @@ app.post('/api/scooter-units', validateBody(scooterUnitSchema), (req, res) => {
     customizationNotes,
     buyerName,
     buyerContact,
-    salesPrice,
     batterySerials, // array of strings
     scooterWarrantyStatus,
     scooterWarrantyExpiry,
@@ -2861,7 +3163,6 @@ app.post('/api/scooter-units', validateBody(scooterUnitSchema), (req, res) => {
     }
     unit.buyerName = buyerName;
     unit.buyerContact = buyerContact || '';
-    unit.salesPrice = salesPrice ? Number(salesPrice) : undefined;
     unit.batterySerials = batterySerials.filter(b => b && b.trim() !== '');
     unit.batteryWarrantyFlags = batteryWarrantyFlags || [];
     unit.batteryWarrantyMonths = batteryWarrantyMonths || [];
@@ -2967,6 +3268,287 @@ app.post('/api/scooter-units', validateBody(scooterUnitSchema), (req, res) => {
   res.json({ success: true, scooterUnit: unit });
 });
 
+// Scooter Units: Release Hold
+app.post('/api/scooter-units/release-hold', validateBody(scooterReleaseHoldSchema), (req, res) => {
+  const { id, operator } = req.body;
+  const db = readDB();
+  const unit = db.scooterUnits.find(u => u.id === id);
+  if (!unit) {
+    return res.status(404).json({ error: 'Scooter unit not found.' });
+  }
+  unit.status = 'available';
+  unit.heldFor = undefined;
+  unit.heldBy = undefined;
+  unit.holdDate = undefined;
+  unit.lastUpdatedTimestamp = new Date().toISOString();
+  unit.lastUpdatedBy = operator || 'system';
+
+  addAuditLog(db, operator || 'system', operator || 'system', 'scooter_hold_released', `Released hold reservation for Scooter (Chassis: ${unit.chassisNo}). Unit returned to available warehouse stock.`);
+  writeDB(db);
+  res.json({ success: true, scooterUnit: unit });
+});
+
+// Wholesale Package: Release Entire Package
+app.post('/api/wholesale-package/release', validateBody(wholesalePackageReleaseSchema), (req, res) => {
+  const { customerName, scooterIds = [], batteryIds = [], chargerIds = [], operator } = req.body;
+  const db = readDB();
+  const timestamp = new Date().toISOString();
+  let releasedScooters = 0;
+  let releasedBatteries = 0;
+  let releasedChargers = 0;
+
+  // 1. Release Scooter Holds
+  if (scooterIds && scooterIds.length > 0 && db.scooterUnits) {
+    for (const sid of scooterIds) {
+      const u = db.scooterUnits.find(unit => unit.id === sid);
+      if (u) {
+        u.status = 'available';
+        u.heldFor = undefined;
+        u.heldBy = undefined;
+        u.holdDate = undefined;
+        u.lastUpdatedTimestamp = timestamp;
+        u.lastUpdatedBy = operator || 'system';
+        releasedScooters++;
+      }
+    }
+  }
+
+  // 2. Release Battery Holds
+  if (batteryIds && batteryIds.length > 0 && db.batterySales) {
+    for (const bid of batteryIds) {
+      const idx = db.batterySales.findIndex(b => b.id === bid);
+      if (idx !== -1) {
+        db.batterySales.splice(idx, 1);
+        releasedBatteries++;
+      }
+    }
+  }
+
+  // 3. Release Charger Holds
+  if (chargerIds && chargerIds.length > 0 && db.chargerSales) {
+    for (const cid of chargerIds) {
+      const idx = db.chargerSales.findIndex(c => c.id === cid);
+      if (idx !== -1) {
+        db.chargerSales.splice(idx, 1);
+        releasedChargers++;
+      }
+    }
+  }
+
+  const totalReleased = releasedScooters + releasedBatteries + releasedChargers;
+  addAuditLog(db, operator || 'system', operator || 'system', 'wholesale_package_released', `Released entire wholesale reservation package for customer "${customerName}" (${releasedScooters} scooters, ${releasedBatteries} battery holds, ${releasedChargers} charger holds returned to inventory).`);
+  writeDB(db);
+
+  if (db.sheetConfig.enabled && db.sheetConfig.webhookUrl) {
+    postToGoogleSheets(db.sheetConfig.webhookUrl, {
+      action: 'sync_all',
+      timestamp,
+      data: {
+        products: db.products,
+        buyers: db.buyers,
+        scooterUnits: db.scooterUnits,
+        stockLogs: db.stockLogs,
+        batterySales: db.batterySales || [],
+        chargerSales: db.chargerSales || [],
+        ...getSummaryData(db)
+      }
+    });
+  }
+
+  res.json({ success: true, releasedCount: totalReleased, customerName });
+});
+
+// Scooter Units: Finalize Hold (Sale)
+app.post('/api/scooter-units/finalize-hold', validateBody(scooterFinalizeHoldSchema), (req, res) => {
+  const { id, buyerName, buyerContact, salePrice, billingNo, deliveryChallanNo, notes, operator } = req.body;
+  const db = readDB();
+  const unit = db.scooterUnits.find(u => u.id === id);
+  if (!unit) {
+    return res.status(404).json({ error: 'Scooter unit not found.' });
+  }
+  const timestamp = new Date().toISOString();
+  unit.status = 'sold';
+  unit.buyerName = buyerName || unit.heldFor || 'Customer';
+  unit.buyerContact = buyerContact || unit.buyerContact || '';
+  unit.salesBillNo = billingNo || unit.salesBillNo || '';
+  unit.deliveryChallanNo = deliveryChallanNo || unit.deliveryChallanNo || '';
+  unit.customizationNotes = notes || unit.customizationNotes || '';
+  unit.saleDate = timestamp;
+  unit.heldFor = undefined;
+  unit.heldBy = undefined;
+  unit.holdDate = undefined;
+  unit.lastUpdatedTimestamp = timestamp;
+  unit.lastUpdatedBy = operator || 'system';
+
+  const autoOutLog: StockLog = {
+    id: `log-out-${Date.now()}`,
+    modelName: unit.modelName,
+    color: unit.color,
+    type: 'out',
+    sourceChannel: 'customer_sale',
+    quantity: 1,
+    buyerName: unit.buyerName,
+    timestamp,
+    operator: operator || 'system',
+    notes: `Scooter hold converted to sale (Chassis: ${unit.chassisNo})`,
+    billNo: billingNo || undefined
+  };
+  db.stockLogs.push(autoOutLog);
+
+  addAuditLog(db, operator || 'system', operator || 'system', 'scooter_hold_finalized', `Finalized hold reservation and dispatched Scooter (Chassis: ${unit.chassisNo}) to Buyer: ${unit.buyerName}. Bill No: ${billingNo || 'N/A'}, Challan No: ${deliveryChallanNo || 'N/A'}.`);
+  writeDB(db);
+  res.json({ success: true, scooterUnit: unit });
+});
+
+// Update Hold quantity & details before dispatch (Batteries)
+app.post('/api/battery-sales/update-hold', validateBody(batteryUpdateHoldSchema), (req, res) => {
+  const { id, quantity, heldFor, buyerName, notes, batterySeries, operator } = req.body;
+  const db = readDB();
+  if (!db.batterySales) db.batterySales = [];
+  const record = db.batterySales.find(s => s.id === id);
+  if (!record) return res.status(404).json({ error: 'Battery hold record not found' });
+  if (record.status !== 'hold') return res.status(400).json({ error: 'Record is not on hold' });
+
+  const newQty = Math.max(1, Number(quantity) || 1);
+  record.quantity = newQty;
+  if (heldFor !== undefined) record.heldFor = heldFor;
+  if (buyerName !== undefined) record.buyerName = buyerName;
+  if (notes !== undefined) record.notes = notes;
+  if (batterySeries !== undefined) record.batterySeries = batterySeries;
+
+  const tag = (record.batterySeries || 'BAT').trim();
+  const list: string[] = [];
+  for (let i = 1; i <= newQty; i++) {
+    list.push(`${tag} ${String(i).padStart(3, '0')}`);
+  }
+  record.serialNumbers = list;
+  record.startNo = list[0];
+  record.endNo = list[list.length - 1];
+
+  addAuditLog(db, operator || 'system', operator || 'system', 'battery_hold_updated', `Updated battery hold reservation details (Series: ${record.batterySeries}, New Qty: ${newQty}, Customer: ${record.heldFor}).`);
+  writeDB(db);
+  res.json({ success: true, batterySale: record });
+});
+
+// Update Hold quantity & details before dispatch (Chargers)
+app.post('/api/charger-sales/update-hold', validateBody(chargerUpdateHoldSchema), (req, res) => {
+  const { id, quantity, heldFor, buyerName, notes, chargerType, operator } = req.body;
+  const db = readDB();
+  if (!db.chargerSales) db.chargerSales = [];
+  const record = db.chargerSales.find(s => s.id === id);
+  if (!record) return res.status(404).json({ error: 'Charger hold record not found' });
+  if (record.status !== 'hold') return res.status(400).json({ error: 'Record is not on hold' });
+
+  const newQty = Math.max(1, Number(quantity) || 1);
+  record.quantity = newQty;
+  if (heldFor !== undefined) record.heldFor = heldFor;
+  if (buyerName !== undefined) record.buyerName = buyerName;
+  if (notes !== undefined) record.notes = notes;
+  if (chargerType !== undefined) record.chargerType = chargerType;
+
+  addAuditLog(db, operator || 'system', operator || 'system', 'charger_hold_updated', `Updated charger hold reservation details (Type: ${record.chargerType}, New Qty: ${newQty}, Customer: ${record.heldFor}).`);
+  writeDB(db);
+  res.json({ success: true, chargerSale: record });
+});
+
+// Validate Document Numbers (Bill / Invoice No & Delivery Challan No)
+app.post('/api/validate-document-numbers', validateBody(validateDocumentNumbersSchema), (req, res) => {
+  const { billNo, deliveryChallanNo, excludeId, excludeIds } = req.body;
+  const db = readDB();
+  
+  let billExists = false;
+  let billFoundIn = '';
+  let challanExists = false;
+  let challanFoundIn = '';
+
+  const cleanBill = billNo ? String(billNo).trim().toLowerCase() : '';
+  const cleanChallan = deliveryChallanNo ? String(deliveryChallanNo).trim().toLowerCase() : '';
+
+  const isExcluded = (id: string) => {
+    if (!id) return false;
+    if (excludeId && id === excludeId) return true;
+    if (Array.isArray(excludeIds) && excludeIds.includes(id)) return true;
+    return false;
+  };
+
+  if (cleanBill) {
+    const sMatch = db.scooterUnits.find(u => !isExcluded(u.id) && (
+      (u.salesBillNo && u.salesBillNo.trim().toLowerCase() === cleanBill) ||
+      (u.billNo && u.billNo.trim().toLowerCase() === cleanBill)
+    ));
+    if (sMatch) {
+      billExists = true;
+      billFoundIn = `Scooter Unit (Chassis: ${sMatch.chassisNo})`;
+    }
+
+    if (!billExists && db.batterySales) {
+      const bMatch = db.batterySales.find(b => !isExcluded(b.id) && b.billNo && b.billNo.trim().toLowerCase() === cleanBill);
+      if (bMatch) {
+        billExists = true;
+        billFoundIn = `Battery Sale (${bMatch.batterySeries})`;
+      }
+    }
+
+    if (!billExists && db.chargerSales) {
+      const cMatch = db.chargerSales.find(c => !isExcluded(c.id) && c.billNo && c.billNo.trim().toLowerCase() === cleanBill);
+      if (cMatch) {
+        billExists = true;
+        billFoundIn = `Charger Sale (${cMatch.chargerType})`;
+      }
+    }
+
+    if (!billExists && db.stockLogs) {
+      const lMatch = db.stockLogs.find(l => !isExcluded(l.id) && l.billNo && l.billNo.trim().toLowerCase() === cleanBill);
+      if (lMatch) {
+        billExists = true;
+        billFoundIn = `Stock Ledger (${lMatch.modelName})`;
+      }
+    }
+  }
+
+  if (cleanChallan) {
+    const sMatch = db.scooterUnits.find(u => !isExcluded(u.id) && (
+      (u.deliveryChallanNo && u.deliveryChallanNo.trim().toLowerCase() === cleanChallan) ||
+      ((u as any).salesChallanNo && (u as any).salesChallanNo.trim().toLowerCase() === cleanChallan)
+    ));
+    if (sMatch) {
+      challanExists = true;
+      challanFoundIn = `Scooter Unit (Chassis: ${sMatch.chassisNo})`;
+    }
+
+    if (!challanExists && db.batterySales) {
+      const bMatch = db.batterySales.find(b => !isExcluded(b.id) && b.deliveryChallanNo && b.deliveryChallanNo.trim().toLowerCase() === cleanChallan);
+      if (bMatch) {
+        challanExists = true;
+        challanFoundIn = `Battery Sale (${bMatch.batterySeries})`;
+      }
+    }
+
+    if (!challanExists && db.chargerSales) {
+      const cMatch = db.chargerSales.find(c => !isExcluded(c.id) && c.deliveryChallanNo && c.deliveryChallanNo.trim().toLowerCase() === cleanChallan);
+      if (cMatch) {
+        challanExists = true;
+        challanFoundIn = `Charger Sale (${cMatch.chargerType})`;
+      }
+    }
+
+    if (!challanExists && db.stockLogs) {
+      const lMatch = db.stockLogs.find(l => !isExcluded(l.id) && (l as any).deliveryChallanNo && (l as any).deliveryChallanNo.trim().toLowerCase() === cleanChallan);
+      if (lMatch) {
+        challanExists = true;
+        challanFoundIn = `Stock Ledger (${lMatch.modelName})`;
+      }
+    }
+  }
+
+  res.json({
+    billExists,
+    billFoundIn,
+    challanExists,
+    challanFoundIn
+  });
+});
+
 // Scooter Units: Bulk Create (Stage 1)
 app.post('/api/scooter-units/bulk-create', validateBody(scooterBulkCreateSchema), (req, res) => {
   const {
@@ -3067,7 +3649,6 @@ app.post('/api/scooter-units/bulk-pos', validateBody(scooterBulkPosSchema), (req
   const {
     buyerName,
     buyerContact,
-    salesPrice,
     scooterWarrantyStatus,
     scooterWarrantyExpiry,
     batteryWarrantyStatus,
@@ -3113,7 +3694,6 @@ app.post('/api/scooter-units/bulk-pos', validateBody(scooterBulkPosSchema), (req
       const unit = db.scooterUnits[index];
       unit.buyerName = buyerName;
       unit.buyerContact = buyerContact || '';
-      unit.salesPrice = salesPrice ? Number(salesPrice) : undefined;
       unit.salesBillNo = salesBillNo || '';
       unit.deliveryChallanNo = deliveryChallanNo || '';
       
@@ -3312,6 +3892,297 @@ function applyReplacementInDB(
   }
 }
 
+// Delivery Challan Verification & Edit Endpoints
+app.post('/api/challans/remove-item', validateBody(challanRemoveItemSchema), (req, res) => {
+  const { deliveryChallanNo, itemType, itemId, operator, userRole } = req.body;
+  const db = readDB();
+  const cleanChallan = String(deliveryChallanNo).trim().toUpperCase();
+
+  let itemDetail = `${itemType} #${itemId}`;
+  if (itemType === 'scooter') {
+    const scoot = db.scooterUnits.find(s => s.id === itemId);
+    if (scoot) {
+      if (scoot.challanStatus === 'finished' && userRole !== 'admin') {
+        return res.status(403).json({ error: 'Cannot remove items from a finished & verified challan.' });
+      }
+      itemDetail = `Scooter (${scoot.modelName}, Color: ${scoot.color}, Chassis: ${scoot.chassisNo})`;
+      scoot.deliveryChallanNo = '';
+      scoot.status = 'available';
+      scoot.buyerName = '';
+      scoot.buyerContact = '';
+      scoot.salesBillNo = '';
+      scoot.saleDate = '';
+      scoot.holdDate = '';
+      scoot.challanStatus = 'pending';
+    }
+  } else if (itemType === 'battery') {
+    const batIdx = (db.batterySales || []).findIndex(s => s.id === itemId);
+    if (batIdx !== -1) {
+      const sale = db.batterySales[batIdx];
+      if (sale.challanStatus === 'finished' && userRole !== 'admin') {
+        return res.status(403).json({ error: 'Cannot remove items from a finished & verified challan.' });
+      }
+      itemDetail = `Battery Pack (${sale.batterySeries}, Qty: ${sale.quantity})`;
+      sale.deliveryChallanNo = '';
+    }
+  } else if (itemType === 'charger') {
+    const chgIdx = (db.chargerSales || []).findIndex(s => s.id === itemId);
+    if (chgIdx !== -1) {
+      const sale = db.chargerSales[chgIdx];
+      if (sale.challanStatus === 'finished' && userRole !== 'admin') {
+        return res.status(403).json({ error: 'Cannot remove items from a finished & verified challan.' });
+      }
+      itemDetail = `Charger (${sale.chargerType}, Qty: ${sale.quantity})`;
+      sale.deliveryChallanNo = '';
+    }
+  }
+
+  addAuditLog(db, operator || 'system', operator || 'system', 'challan_remove_item', `Removed item [${itemDetail}] from Delivery Challan #${cleanChallan}.`);
+  writeDB(db);
+  return res.json({ success: true, message: `Item removed from Delivery Challan #${cleanChallan}.` });
+});
+
+app.post('/api/challans/attach-item', validateBody(challanAttachItemSchema), (req, res) => {
+  const { deliveryChallanNo, itemType, itemId, operator, userRole, buyerName, buyerContact, salesBillNo } = req.body;
+  const db = readDB();
+  const cleanChallan = String(deliveryChallanNo).trim().toUpperCase();
+
+  let itemDetail = `${itemType} #${itemId}`;
+  if (itemType === 'scooter') {
+    const scoot = db.scooterUnits.find(s => s.id === itemId || s.chassisNo === itemId);
+    if (!scoot) {
+      return res.status(404).json({ error: 'Scooter unit not found.' });
+    }
+    itemDetail = `Scooter (${scoot.modelName}, Color: ${scoot.color}, Chassis: ${scoot.chassisNo})`;
+    scoot.deliveryChallanNo = cleanChallan;
+    if (buyerName) scoot.buyerName = buyerName;
+    if (buyerContact) scoot.buyerContact = buyerContact;
+    if (salesBillNo) scoot.salesBillNo = salesBillNo;
+    scoot.status = 'sold';
+    if (!scoot.saleDate) scoot.saleDate = new Date().toISOString();
+    scoot.challanStatus = 'pending';
+  } else if (itemType === 'battery') {
+    const batSale = (db.batterySales || []).find(s => s.id === itemId);
+    if (batSale) {
+      itemDetail = `Battery Pack (${batSale.batterySeries}, Qty: ${batSale.quantity})`;
+      batSale.deliveryChallanNo = cleanChallan;
+      if (buyerName) batSale.buyerName = buyerName;
+      if (buyerContact) batSale.buyerContact = buyerContact;
+      if (salesBillNo) batSale.billNo = salesBillNo;
+    }
+  } else if (itemType === 'charger') {
+    const chgSale = (db.chargerSales || []).find(s => s.id === itemId);
+    if (chgSale) {
+      itemDetail = `Charger (${chgSale.chargerType}, Qty: ${chgSale.quantity})`;
+      chgSale.deliveryChallanNo = cleanChallan;
+      if (buyerName) chgSale.buyerName = buyerName;
+      if (buyerContact) chgSale.buyerContact = buyerContact;
+      if (salesBillNo) chgSale.billNo = salesBillNo;
+    }
+  }
+
+  addAuditLog(db, operator || 'system', operator || 'system', 'challan_attach_item', `Attached item [${itemDetail}] to Delivery Challan #${cleanChallan}.`);
+  writeDB(db);
+  return res.json({ success: true, message: `Item attached to Delivery Challan #${cleanChallan}.` });
+});
+
+app.post('/api/challans/finish', validateBody(challanFinishSchema), (req, res) => {
+  const { deliveryChallanNo, operator } = req.body;
+
+  const db = readDB();
+  const timestamp = new Date().toISOString();
+  const cleanChallan = String(deliveryChallanNo).trim().toUpperCase();
+
+  let count = 0;
+
+  // Mark matching scooters as finished
+  db.scooterUnits.forEach(unit => {
+    if (unit.deliveryChallanNo && unit.deliveryChallanNo.trim().toUpperCase() === cleanChallan) {
+      unit.challanStatus = 'finished';
+      unit.challanFinishedBy = operator || 'system';
+      unit.challanFinishedTimestamp = timestamp;
+      count++;
+    }
+  });
+
+  // Mark matching battery sales as finished
+  if (db.batterySales) {
+    db.batterySales.forEach(sale => {
+      if (sale.deliveryChallanNo && sale.deliveryChallanNo.trim().toUpperCase() === cleanChallan) {
+        sale.challanStatus = 'finished';
+        sale.challanFinishedBy = operator || 'system';
+        sale.challanFinishedTimestamp = timestamp;
+        count++;
+      }
+    });
+  }
+
+  // Mark matching charger sales as finished
+  if (db.chargerSales) {
+    db.chargerSales.forEach(sale => {
+      if (sale.deliveryChallanNo && sale.deliveryChallanNo.trim().toUpperCase() === cleanChallan) {
+        sale.challanStatus = 'finished';
+        sale.challanFinishedBy = operator || 'system';
+        sale.challanFinishedTimestamp = timestamp;
+        count++;
+      }
+    });
+  }
+
+  addAuditLog(db, operator || 'system', operator || 'system', 'challan_finish', `Marked Delivery Challan #${cleanChallan} as Finished & Verified (${count} total items verified).`);
+  writeDB(db);
+
+  return res.json({ success: true, count, message: `Challan #${cleanChallan} marked as Finished & Verified.` });
+});
+
+app.post('/api/challans/update', validateBody(challanUpdateSchema), (req, res) => {
+  const { deliveryChallanNo, newChallanNo, buyerName, buyerContact, billNo, operator, userRole } = req.body;
+
+  const db = readDB();
+  const cleanChallan = String(deliveryChallanNo).trim().toUpperCase();
+  const targetChallanNo = newChallanNo ? String(newChallanNo).trim().toUpperCase() : cleanChallan;
+
+  // Check if challan is already finished and user is not admin
+  let isFinished = false;
+  db.scooterUnits.forEach(u => {
+    if (u.deliveryChallanNo && u.deliveryChallanNo.trim().toUpperCase() === cleanChallan && u.challanStatus === 'finished') {
+      isFinished = true;
+    }
+  });
+  if (!isFinished && db.batterySales) {
+    db.batterySales.forEach(s => {
+      if (s.deliveryChallanNo && s.deliveryChallanNo.trim().toUpperCase() === cleanChallan && s.challanStatus === 'finished') {
+        isFinished = true;
+      }
+    });
+  }
+  if (!isFinished && db.chargerSales) {
+    db.chargerSales.forEach(s => {
+      if (s.deliveryChallanNo && s.deliveryChallanNo.trim().toUpperCase() === cleanChallan && s.challanStatus === 'finished') {
+        isFinished = true;
+      }
+    });
+  }
+
+  if (isFinished && userRole !== 'admin') {
+    return res.status(403).json({ error: 'This Challan is already Finished & Verified. Only Admin/Owner can edit verified finished sales.' });
+  }
+
+  // Apply updates to matching scooters, battery sales, charger sales
+  db.scooterUnits.forEach(unit => {
+    if (unit.deliveryChallanNo && unit.deliveryChallanNo.trim().toUpperCase() === cleanChallan) {
+      if (targetChallanNo) unit.deliveryChallanNo = targetChallanNo;
+      if (buyerName !== undefined) unit.buyerName = buyerName;
+      if (buyerContact !== undefined) unit.buyerContact = buyerContact;
+      if (billNo !== undefined) unit.salesBillNo = billNo;
+      unit.lastUpdatedBy = operator || 'system';
+      unit.lastUpdatedTimestamp = new Date().toISOString();
+    }
+  });
+
+  if (db.batterySales) {
+    db.batterySales.forEach(sale => {
+      if (sale.deliveryChallanNo && sale.deliveryChallanNo.trim().toUpperCase() === cleanChallan) {
+        if (targetChallanNo) sale.deliveryChallanNo = targetChallanNo;
+        if (buyerName !== undefined) sale.buyerName = buyerName;
+        if (buyerContact !== undefined) sale.buyerContact = buyerContact;
+        if (billNo !== undefined) sale.billNo = billNo;
+      }
+    });
+  }
+
+  if (db.chargerSales) {
+    db.chargerSales.forEach(sale => {
+      if (sale.deliveryChallanNo && sale.deliveryChallanNo.trim().toUpperCase() === cleanChallan) {
+        if (targetChallanNo) sale.deliveryChallanNo = targetChallanNo;
+        if (buyerName !== undefined) sale.buyerName = buyerName;
+        if (buyerContact !== undefined) sale.buyerContact = buyerContact;
+        if (billNo !== undefined) sale.billNo = billNo;
+      }
+    });
+  }
+
+  addAuditLog(db, operator || 'system', operator || 'system', 'challan_update', `Updated details for Delivery Challan #${cleanChallan}.`);
+  writeDB(db);
+
+  return res.json({ success: true, message: `Challan updated successfully.` });
+});
+
+app.post('/api/challans/delete-entire', validateBody(challanDeleteEntireSchema), (req, res) => {
+  const { deliveryChallanNo, operator, userRole } = req.body;
+  const db = readDB();
+  const cleanChallan = String(deliveryChallanNo).trim().toUpperCase();
+
+  let isFinished = false;
+  db.scooterUnits.forEach(u => {
+    if (u.deliveryChallanNo && u.deliveryChallanNo.trim().toUpperCase() === cleanChallan && u.challanStatus === 'finished') {
+      isFinished = true;
+    }
+  });
+  if (!isFinished && db.batterySales) {
+    db.batterySales.forEach(s => {
+      if (s.deliveryChallanNo && s.deliveryChallanNo.trim().toUpperCase() === cleanChallan && s.challanStatus === 'finished') {
+        isFinished = true;
+      }
+    });
+  }
+  if (!isFinished && db.chargerSales) {
+    db.chargerSales.forEach(s => {
+      if (s.deliveryChallanNo && s.deliveryChallanNo.trim().toUpperCase() === cleanChallan && s.challanStatus === 'finished') {
+        isFinished = true;
+      }
+    });
+  }
+
+  if (isFinished && userRole !== 'admin') {
+    return res.status(403).json({ error: 'Cannot delete a Finished & Verified Delivery Challan. Only Admin can delete verified sales.' });
+  }
+
+  let deletedCount = 0;
+
+  // Reset scooters attached to this challan back to available
+  db.scooterUnits.forEach(scoot => {
+    if (scoot.deliveryChallanNo && scoot.deliveryChallanNo.trim().toUpperCase() === cleanChallan) {
+      scoot.deliveryChallanNo = '';
+      scoot.status = 'available';
+      scoot.buyerName = '';
+      scoot.buyerContact = '';
+      scoot.salesBillNo = '';
+      scoot.saleDate = '';
+      scoot.holdDate = '';
+      scoot.challanStatus = 'pending';
+      deletedCount++;
+    }
+  });
+
+  // Remove standalone battery sales associated with this challan
+  if (db.batterySales) {
+    db.batterySales = db.batterySales.filter(sale => {
+      if (sale.deliveryChallanNo && sale.deliveryChallanNo.trim().toUpperCase() === cleanChallan) {
+        deletedCount++;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Remove standalone charger sales associated with this challan
+  if (db.chargerSales) {
+    db.chargerSales = db.chargerSales.filter(sale => {
+      if (sale.deliveryChallanNo && sale.deliveryChallanNo.trim().toUpperCase() === cleanChallan) {
+        deletedCount++;
+        return false;
+      }
+      return true;
+    });
+  }
+
+  addAuditLog(db, operator || 'system', operator || 'system', 'challan_delete_entire', `Deleted entire Delivery Challan #${cleanChallan} (${deletedCount} items reset/removed).`);
+  writeDB(db);
+
+  return res.json({ success: true, message: `Delivery Challan #${cleanChallan} deleted successfully.` });
+});
+
 // Warranty Claims: Get All
 app.get('/api/warranty-claims', (req, res) => {
   const db = readDB();
@@ -3319,7 +4190,7 @@ app.get('/api/warranty-claims', (req, res) => {
 });
 
 // Warranty Claims: Create/Update claim
-app.post('/api/warranty-claims', (req, res) => {
+app.post('/api/warranty-claims', validateBody(warrantyClaimSchema), (req, res) => {
   const db = readDB();
   if (!db.warrantyClaims) {
     db.warrantyClaims = [];
@@ -3468,7 +4339,7 @@ app.post('/api/sheet-config', validateBody(sheetConfigSchema), (req, res) => {
 });
 
 // SheetConfig: Sync All
-app.post('/api/sheet-config/sync-all', async (req, res) => {
+app.post('/api/sheet-config/sync-all', validateBody(emptySchema), async (req, res) => {
   const db = readDB();
   if (!db.sheetConfig.webhookUrl) {
     return res.status(400).json({ error: 'Google Sheet Webhook URL is not configured' });
@@ -3497,7 +4368,7 @@ app.post('/api/sheet-config/sync-all', async (req, res) => {
 });
 
 // SheetConfig: Pull All (Import latest data from sheets)
-app.post('/api/sheet-config/pull-all', async (req, res) => {
+app.post('/api/sheet-config/pull-all', validateBody(emptySchema), async (req, res) => {
   const db = readDB();
   const webhookUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL || db.sheetConfig.webhookUrl;
   if (!webhookUrl) {
@@ -3512,16 +4383,16 @@ app.post('/api/sheet-config/pull-all', async (req, res) => {
     if (data.buyers && Array.isArray(data.buyers) && data.buyers.length > 0) {
       db.buyers = data.buyers;
     }
-    if (data.scooterUnits && Array.isArray(data.scooterUnits)) {
+    if (data.scooterUnits && Array.isArray(data.scooterUnits) && data.scooterUnits.length > 0) {
       db.scooterUnits = data.scooterUnits;
     }
-    if (data.stockLogs && Array.isArray(data.stockLogs)) {
+    if (data.stockLogs && Array.isArray(data.stockLogs) && data.stockLogs.length > 0) {
       db.stockLogs = data.stockLogs;
     }
-    if (data.batterySales && Array.isArray(data.batterySales)) {
+    if (data.batterySales && Array.isArray(data.batterySales) && data.batterySales.length > 0) {
       db.batterySales = data.batterySales;
     }
-    if (data.batteryImports && Array.isArray(data.batteryImports)) {
+    if (data.batteryImports && Array.isArray(data.batteryImports) && data.batteryImports.length > 0) {
       db.batteryImports = data.batteryImports;
     }
 
@@ -3544,20 +4415,8 @@ app.post('/api/sheet-config/pull-all', async (req, res) => {
   }
 });
 
-
-// ─── APK Auto-Updater: Version Check Endpoint ──────────────────────────────
-// When you build a new APK, bump the version number here.
-// Upload the new app-release.apk to the public/ folder and push to GitHub.
-app.get('/api/version', (req, res) => {
-  res.json({
-    version: "1.0.9",
-    apkUrl: "https://sumitdhaka0123.onrender.com/app-release.apk"
-  });
-});
-
-// ─── Vite Middleware & Static Serving setup ──────────────────────────────────
+// Vite Middleware & Static Serving setup
 async function startServer() {
-
   // First, hydrate from cloud Firestore
   const firestoreState = await hydrateFromFirestore();
   if (firestoreState) {
@@ -3568,8 +4427,12 @@ async function startServer() {
     console.log('Firebase offline or uninitialized, loaded local database from file.');
   }
 
-  // Try to pull latest data from Google Sheet on startup if configured
   const dbOnBoot = readDB();
+  // Auto seed mock dataset if database lacks data
+  if (!dbOnBoot.scooterUnits || dbOnBoot.scooterUnits.length === 0) {
+    console.log('Populating test mock dataset on boot...');
+    seedMockDataToDB(dbOnBoot);
+  }
   const startupSheetUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL || dbOnBoot.sheetConfig.webhookUrl;
   if (startupSheetUrl && (process.env.GOOGLE_SHEET_WEBHOOK_URL || dbOnBoot.sheetConfig.enabled)) {
     console.log('Detected Google Sheets URL on startup. Hydrating database from Sheets...');
@@ -3578,8 +4441,8 @@ async function startServer() {
         const db = readDB();
         if (data.products && Array.isArray(data.products) && data.products.length > 0) db.products = data.products;
         if (data.buyers && Array.isArray(data.buyers) && data.buyers.length > 0) db.buyers = data.buyers;
-        if (data.scooterUnits && Array.isArray(data.scooterUnits)) db.scooterUnits = data.scooterUnits;
-        if (data.stockLogs && Array.isArray(data.stockLogs)) db.stockLogs = data.stockLogs;
+        if (data.scooterUnits && Array.isArray(data.scooterUnits) && data.scooterUnits.length > 0) db.scooterUnits = data.scooterUnits;
+        if (data.stockLogs && Array.isArray(data.stockLogs) && data.stockLogs.length > 0) db.stockLogs = data.stockLogs;
         
         db.sheetConfig.webhookUrl = startupSheetUrl;
         db.sheetConfig.enabled = true;
@@ -3601,11 +4464,6 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    // Serve the public/ folder for APK downloads and other static assets
-    const publicPath = path.join(process.cwd(), 'public');
-    if (fs.existsSync(publicPath)) {
-      app.use(express.static(publicPath));
-    }
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

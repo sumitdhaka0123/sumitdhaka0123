@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { ArrowDownCircle, ArrowUpCircle, ClipboardList, Plus, FileText, User, ShoppingBag, Ship, Store, Battery, Zap, PlusCircle } from 'lucide-react';
 import { Product, Buyer, StockLog, User as SessionUser, BatteryImport, ChargerImport, ScooterUnit } from '../types';
-import QRSerialScanner from './QRSerialScanner';
 import { formatUserMessage } from '../utils/errorHelper';
 
 interface StockAdjustmentProps {
@@ -105,7 +104,7 @@ export default function StockAdjustment({
   const [successMsg, setSuccessMsg] = useState('');
 
   // Battery Import States
-  const [impBatterySeries, setImpBatterySeries] = useState('Alpha');
+  const [impBatterySeries, setImpBatterySeries] = useState('Standard');
   const [impQuantity, setImpQuantity] = useState('');
   const [impSupplier, setImpSupplier] = useState('');
   const [impContainerId, setImpContainerId] = useState('');
@@ -272,10 +271,7 @@ export default function StockAdjustment({
 
   const handleBatteryImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!impBatterySeries) {
-      setBatteryErrorMsg('Please select a battery series.');
-      return;
-    }
+    const cleanSeries = impBatterySeries.trim() || 'Standard';
 
     // Validation based on input method
     if (importInputMethod === 'scan') {
@@ -288,10 +284,6 @@ export default function StockAdjustment({
         setBatteryErrorMsg('Please enter a valid battery quantity.');
         return;
       }
-      if (importIsUnderWarranty && (!impStartNo.trim() || !impEndNo.trim())) {
-        setBatteryErrorMsg('Please provide both Start and End Serial Numbers for warranty tracking.');
-        return;
-      }
     }
 
     setBatteryLoading(true);
@@ -301,7 +293,7 @@ export default function StockAdjustment({
     const calculatedQty = importInputMethod === 'scan' ? scannedImportSerials.length : Number(impQuantity);
 
     const success = await onSubmitBatteryImport?.({
-      batterySeries: impBatterySeries,
+      batterySeries: cleanSeries,
       startNo: importInputMethod === 'range' && impStartNo ? impStartNo.trim().toUpperCase() : 'N/A',
       endNo: importInputMethod === 'range' && impEndNo ? impEndNo.trim().toUpperCase() : 'N/A',
       quantity: calculatedQty,
@@ -316,7 +308,7 @@ export default function StockAdjustment({
 
     setBatteryLoading(false);
     if (success) {
-      setBatterySuccessMsg(`Successfully logged import of ${calculatedQty} ${impBatterySeries} Series battery packs!`);
+      setBatterySuccessMsg(`Successfully logged import of ${calculatedQty} ${cleanSeries} battery packs!`);
       // Reset inputs
       setImpQuantity('');
       setImpSupplier('');
@@ -444,9 +436,7 @@ export default function StockAdjustment({
           type="button"
           onClick={() => setActiveSubTab('scooters')}
           className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
-            activeSubTab === 'scooters' 
-              ? 'bg-white text-slate-800 shadow-sm' 
-              : 'text-slate-500 hover:text-slate-800'
+            activeSubTab === 'scooters' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           📦 Scooter Stock (Kits)
@@ -455,9 +445,7 @@ export default function StockAdjustment({
           type="button"
           onClick={() => setActiveSubTab('local_scooters')}
           className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
-            activeSubTab === 'local_scooters' 
-              ? 'bg-white text-slate-800 shadow-sm' 
-              : 'text-slate-500 hover:text-slate-800'
+            activeSubTab === 'local_scooters' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           🤝 Local Purchase
@@ -466,9 +454,7 @@ export default function StockAdjustment({
           type="button"
           onClick={() => setActiveSubTab('batteries')}
           className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
-            activeSubTab === 'batteries' 
-              ? 'bg-white text-slate-800 shadow-sm' 
-              : 'text-slate-500 hover:text-slate-800'
+            activeSubTab === 'batteries' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           🔋 Battery Imports
@@ -477,9 +463,7 @@ export default function StockAdjustment({
           type="button"
           onClick={() => setActiveSubTab('chargers')}
           className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer ${
-            activeSubTab === 'chargers' 
-              ? 'bg-white text-slate-800 shadow-sm' 
-              : 'text-slate-500 hover:text-slate-800'
+            activeSubTab === 'chargers' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
           }`}
         >
           🔌 Charger Imports
@@ -830,19 +814,31 @@ export default function StockAdjustment({
               <form onSubmit={handleBatteryImportSubmit} className="space-y-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                    Battery Series Name 🔋
+                    Battery Model / Series 🔋 <span className="text-[10px] text-slate-400 font-normal lowercase">(optional)</span>
                   </label>
-                  <select
+                  <input
+                    type="text"
+                    placeholder="e.g. Standard, 60V 30Ah, Alpha Series"
                     value={impBatterySeries}
                     onChange={(e) => setImpBatterySeries(e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none cursor-pointer font-sans"
-                    required
-                  >
-                    <option value="Alpha">Alpha Series</option>
-                    <option value="Beta">Beta Series</option>
-                    <option value="Pro-Pack">Pro-Pack Series</option>
-                    <option value="custom">Custom/Other</option>
-                  </select>
+                    className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
+                  />
+                  <div className="flex gap-1.5 mt-2 overflow-x-auto pb-1">
+                    {['Standard', 'Alpha', 'Beta', 'Pro-Pack'].map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setImpBatterySeries(opt)}
+                        className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition cursor-pointer ${
+                          impBatterySeries === opt
+                            ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+                            : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
                 <div>
@@ -933,7 +929,7 @@ export default function StockAdjustment({
                           importInputMethod === 'scan' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                         }`}
                       >
-                        📷 Scan QR/Codes
+                        ✍️ Individual Serials
                       </button>
                     </div>
                   </div>
@@ -943,28 +939,26 @@ export default function StockAdjustment({
                       <div className="grid grid-cols-2 gap-3">
                         <div>
                           <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                            Start No. Series
+                            Start Serial No. <span className="text-slate-400 font-normal lowercase">(optional)</span>
                           </label>
                           <input
                             type="text"
-                            placeholder="e.g. AL-2001"
+                            placeholder="e.g. BAT-2001 (optional)"
                             value={impStartNo}
                             onChange={(e) => setImpStartNo(e.target.value)}
                             className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 font-sans outline-none uppercase focus:border-emerald-500"
-                            required={importInputMethod === 'range' && importIsUnderWarranty}
                           />
                         </div>
                         <div>
                           <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                            End No. Series
+                            End Serial No. <span className="text-slate-400 font-normal lowercase">(optional)</span>
                           </label>
                           <input
                             type="text"
-                            placeholder="e.g. AL-3000"
+                            placeholder="e.g. BAT-3000 (optional)"
                             value={impEndNo}
                             onChange={(e) => setImpEndNo(e.target.value)}
                             className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 font-sans outline-none uppercase focus:border-emerald-500"
-                            required={importInputMethod === 'range' && importIsUnderWarranty}
                           />
                         </div>
                       </div>
@@ -989,29 +983,21 @@ export default function StockAdjustment({
                       <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
                         <div>
                           <h4 className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5 font-sans">
-                            <span>📊</span> Purchase Scanned Serials
+                            <span>📊</span> Purchase Registered Serials
                           </h4>
                           <p className="text-[10px] text-slate-400 mt-0.5 font-sans">
-                            Register each purchased battery pack via barcode/QR scan.
+                            Register each purchased battery pack serial number.
                           </p>
                         </div>
                         <div className="text-right">
                           <span className="text-xl font-black font-mono text-emerald-600 block leading-none">
                             {scannedImportSerials.length}
                           </span>
-                          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-sans">Packs Scanned</span>
+                          <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-sans">Packs Registered</span>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-1 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowImportScanner(true)}
-                          className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-sans font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-                        >
-                          📷 Launch Camera QR Scanner
-                        </button>
-
                         <div className="border border-slate-200 rounded-xl p-3 bg-white space-y-2">
                           <label className="block text-[10px] font-extrabold text-slate-500 uppercase tracking-wider font-sans">
                             ✍️ Enter Serial Manually
@@ -1494,7 +1480,7 @@ export default function StockAdjustment({
                     />
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
                         Front Tyre Size
@@ -1673,23 +1659,6 @@ export default function StockAdjustment({
               </div>
             </div>
           </div>
-        </div>
-      )}
-
-      {showImportScanner && (
-        <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-          <QRSerialScanner
-            title="🔋 Scan Purchased Battery Serials"
-            type="battery"
-            existingSerials={scannedImportSerials}
-            allRegisteredSerials={allRegisteredBatterySerials}
-            onConfirm={(serials) => {
-              setScannedImportSerials(serials);
-              setImpQuantity(String(serials.length));
-              setShowImportScanner(false);
-            }}
-            onCancel={() => setShowImportScanner(false)}
-          />
         </div>
       )}
     </div>

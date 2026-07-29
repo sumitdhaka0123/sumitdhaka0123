@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap, Search, ShieldCheck, MoreHorizontal, X
+  Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap, Search, ShieldCheck, MoreHorizontal, X, Truck
 } from 'lucide-react';
 
 import { User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim } from './types';
@@ -16,6 +16,8 @@ import SettingsPanel from './components/SettingsPanel';
 import SenzoLogo from './components/SenzoLogo';
 import SearchConsole from './components/SearchConsole';
 import WarrantyClaimsManager from './components/WarrantyClaimsManager';
+import { ChallanManager } from './components/ChallanManager';
+import StaffUnifiedMap from './components/StaffUnifiedMap';
 
 export default function App() {
   // Session State
@@ -37,7 +39,7 @@ export default function App() {
   const [warrantyClaims, setWarrantyClaims] = useState<WarrantyClaim[]>([]);
 
   // Navigation tab states
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'assembly' | 'stock' | 'catalog' | 'battery' | 'charger' | 'settings' | 'search' | 'claims'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'assembly' | 'stock' | 'catalog' | 'battery' | 'charger' | 'settings' | 'search' | 'claims' | 'challans' | 'location'>('dashboard');
   const [loading, setLoading] = useState(false);
   const [workerTab, setWorkerTab] = useState<'workspace' | 'charger' | 'dashboard'>('workspace');
   const [showMobileMoreMenu, setShowMobileMoreMenu] = useState(false);
@@ -68,7 +70,9 @@ export default function App() {
 
   // Active mobile section indicator popup state
   const [mobileNotification, setMobileNotification] = useState<string | null>(null);
-  const [locationBlocked, setLocationBlocked] = useState(false);
+
+  // Geolocation enforcement state to prevent turning off location
+  const [locationBlocked, setLocationBlocked] = useState<boolean>(false);
 
   // Restore session on mount if any
   useEffect(() => {
@@ -91,6 +95,23 @@ export default function App() {
   const fetchAllData = async () => {
     if (!currentUser) return;
     setLoading(true);
+
+    const parseAndSet = async (res: Response, setter: (val: any) => void) => {
+      try {
+        if (res.ok) {
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const val = await res.json();
+            if (val !== undefined && val !== null) {
+              setter(val);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Error parsing response as JSON:', e);
+      }
+    };
+
     try {
       const [pRes, bRes, sUnitRes, sLogRes, cRes, batRes, batImpRes, chgRes, chgImpRes, batTypeRes, chgTypeRes, claimsRes] = await Promise.all([
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products'),
@@ -107,18 +128,20 @@ export default function App() {
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims')
       ]);
 
-      if (pRes.ok) setProducts(await pRes.json());
-      if (bRes.ok) setBuyers(await bRes.json());
-      if (sUnitRes.ok) setScooterUnits(await sUnitRes.json());
-      if (sLogRes.ok) setStockLogs(await sLogRes.json());
-      if (cRes.ok) setSheetConfig(await cRes.json());
-      if (batRes.ok) setBatterySales(await batRes.json());
-      if (batImpRes.ok) setBatteryImports(await batImpRes.json());
-      if (chgRes.ok) setChargerSales(await chgRes.json());
-      if (chgImpRes.ok) setChargerImports(await chgImpRes.json());
-      if (batTypeRes.ok) setBatteryTypes(await batTypeRes.json());
-      if (chgTypeRes.ok) setChargerTypes(await chgTypeRes.json());
-      if (claimsRes.ok) setWarrantyClaims(await claimsRes.json());
+      await Promise.all([
+        parseAndSet(pRes, setProducts),
+        parseAndSet(bRes, setBuyers),
+        parseAndSet(sUnitRes, setScooterUnits),
+        parseAndSet(sLogRes, setStockLogs),
+        parseAndSet(cRes, setSheetConfig),
+        parseAndSet(batRes, setBatterySales),
+        parseAndSet(batImpRes, setBatteryImports),
+        parseAndSet(chgRes, setChargerSales),
+        parseAndSet(chgImpRes, setChargerImports),
+        parseAndSet(batTypeRes, setBatteryTypes),
+        parseAndSet(chgTypeRes, setChargerTypes),
+        parseAndSet(claimsRes, setWarrantyClaims)
+      ]);
     } catch (err) {
       console.error('Error loading data from warehouse server:', err);
     } finally {
@@ -130,16 +153,9 @@ export default function App() {
     fetchAllData();
   }, [currentUser]);
 
-  // Dedicated background location enforcement effect to prevent turning off location
+  // Silent background location reporter (live location sync)
   useEffect(() => {
-    if (!currentUser) {
-      setLocationBlocked(false);
-      return;
-    }
-    if (currentUser.username === 'admin') {
-      setLocationBlocked(false);
-      return;
-    }
+    if (!currentUser) return;
 
     const reportLocation = async (lat: number, lng: number) => {
       try {
@@ -155,89 +171,184 @@ export default function App() {
           })
         });
       } catch (err) {
+        // Quiet telemetry warning rather than console.error to avoid raising fatal errors in preview
         console.warn('Quiet location telemetry update skipped:', err);
       }
     };
 
-    const checkPhysicalLocation = () => {
-      if (!('geolocation' in navigator)) {
-        setLocationBlocked(true);
-        return;
+    const fetchIpLocation = async () => {
+      try {
+        const ipRes = await fetch('https://ipapi.co/json/');
+        if (ipRes.ok) {
+          const ipData = await ipRes.json();
+          if (ipData.latitude && ipData.longitude) {
+            await reportLocation(ipData.latitude, ipData.longitude);
+          }
+        }
+      } catch (err) {
+        console.warn('IP Geolocation fallback skipped:', err);
       }
-
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          // Success! Location is turned on and allowed.
-          setLocationBlocked(false);
-          reportLocation(pos.coords.latitude, pos.coords.longitude);
-        },
-        (err) => {
-          // Failure - user turned off location or denied permissions
-          console.warn('Physical location check failed:', err.message);
-          setLocationBlocked(true);
-        },
-        { enableHighAccuracy: true, timeout: 6000 }
-      );
     };
 
-    // Check immediately on mount/user login
-    checkPhysicalLocation();
+    const fetchCurrentPosition = () => {
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            reportLocation(pos.coords.latitude, pos.coords.longitude);
+          },
+          (err) => {
+            console.warn('Silent location fetch skipped, trying IP fallback:', err);
+            fetchIpLocation();
+          },
+          { enableHighAccuracy: true, timeout: 8000 }
+        );
+      } else {
+        fetchIpLocation();
+      }
+    };
 
-    // Set up rapid background polling to detect changes automatically
-    const intervalId = setInterval(checkPhysicalLocation, 4000);
+    // Fetch initial position immediately
+    fetchCurrentPosition();
 
-    // Register event listener for permission changes if supported
-    let permissionStatus: PermissionStatus | null = null;
-    if (navigator.permissions && navigator.permissions.query) {
-      navigator.permissions.query({ name: 'geolocation' }).then((status) => {
-        permissionStatus = status;
-        status.onchange = () => {
-          checkPhysicalLocation();
-        };
-      }).catch((e) => {
-        console.warn('Geolocation query not supported in this environment:', e);
-      });
-    }
+    // Set up a setInterval to poll the user's location every 10 seconds using getCurrentPosition
+    const intervalId = setInterval(fetchCurrentPosition, 10000);
 
     return () => {
-      clearInterval(intervalId);
-      if (permissionStatus) {
-        permissionStatus.onchange = null;
+      if (intervalId !== null) {
+        clearInterval(intervalId);
       }
     };
+  }, [currentUser]);
+
+  // Periodic live location pull-request listener
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const checkPullRequestAndRespond = async () => {
+      try {
+        const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + `/api/users/check-pull?username=${encodeURIComponent(currentUser.username)}`);
+        if (res.ok) {
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const data = await res.json();
+            if (data && data.pullRequested) {
+            const reportPullResult = async (lat: number, lng: number) => {
+              try {
+                await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    username: currentUser.username,
+                    latitude: lat,
+                    longitude: lng
+                  })
+                });
+              } catch (err) {
+                console.warn('Failed to report live requested location:', err);
+              }
+            };
+
+            const runIpPullFallback = async () => {
+              try {
+                const ipRes = await fetch('https://ipapi.co/json/');
+                if (ipRes.ok) {
+                  const ipData = await ipRes.json();
+                  if (ipData.latitude && ipData.longitude) {
+                    await reportPullResult(ipData.latitude, ipData.longitude);
+                  }
+                }
+              } catch (err) {
+                console.warn('IP Geolocation pull fallback skipped:', err);
+              }
+            };
+
+            // Immediately pull the current physical coordinates of the device and report
+            if ('geolocation' in navigator) {
+              navigator.geolocation.getCurrentPosition(
+                async (pos) => {
+                  await reportPullResult(pos.coords.latitude, pos.coords.longitude);
+                },
+                async (err) => {
+                  console.warn('Requested high-accuracy geolocation pull skipped, trying IP fallback:', err);
+                  await runIpPullFallback();
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+              );
+            } else {
+              await runIpPullFallback();
+            }
+          }
+          }
+        }
+      } catch (err) {
+        console.warn('Live location pull check skipped:', err);
+      }
+    };
+
+    // Check immediately and then poll every 10 seconds
+    checkPullRequestAndRespond();
+    const intervalId = setInterval(checkPullRequestAndRespond, 10000);
+
+    return () => clearInterval(intervalId);
+  }, [currentUser]);
+
+  // LOCATION SYSTEM TEMPORARILY TURNED OFF PER USER REQUEST FOR TESTING
+  // Will be re-enabled when user requests to remove mock data.
+  useEffect(() => {
+    setLocationBlocked(false);
   }, [currentUser]);
 
   // Auto background pull from sheet whenever user changes tabs to refresh and capture live sheet edits!
   useEffect(() => {
     if (!currentUser) return;
-    
-    const pullLatestAndRefresh = async () => {
-      try {
-        const pullRes = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/sheet-config/pull-all', { method: 'POST' });
-        if (pullRes.ok) {
-          // Refresh all local React states
-          const [pRes, bRes, sUnitRes, sLogRes, batRes, batImpRes] = await Promise.all([
-            fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products'),
-            fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers'),
-            fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units'),
-            fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/stock-logs'),
-            fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales'),
-            fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-imports')
-          ]);
 
-          if (pRes.ok) setProducts(await pRes.json());
-          if (bRes.ok) setBuyers(await bRes.json());
-          if (sUnitRes.ok) setScooterUnits(await sUnitRes.json());
-          if (sLogRes.ok) setStockLogs(await sLogRes.json());
-          if (batRes.ok) setBatterySales(await batRes.json());
-          if (batImpRes.ok) setBatteryImports(await batImpRes.json());
+    const parseAndSet = async (res: Response, setter: (val: any) => void) => {
+      try {
+        if (res.ok) {
+          const contentType = res.headers.get('content-type');
+          if (contentType && contentType.includes('application/json')) {
+            const val = await res.json();
+            if (val !== undefined && val !== null) {
+              setter(val);
+            }
+          }
         }
-      } catch (err) {
-        console.error('Silent sheet synchronization error:', err);
+      } catch (e) {
+        console.error('Error parsing response as JSON:', e);
       }
     };
     
-    pullLatestAndRefresh();
+    const refreshData = async () => {
+      try {
+        const [pRes, bRes, sUnitRes, sLogRes, batRes, batImpRes, chgRes, chgImpRes, wClaimRes] = await Promise.all([
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/stock-logs'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-imports'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-imports'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims')
+        ]);
+
+        await Promise.all([
+          parseAndSet(pRes, setProducts),
+          parseAndSet(bRes, setBuyers),
+          parseAndSet(sUnitRes, setScooterUnits),
+          parseAndSet(sLogRes, setStockLogs),
+          parseAndSet(batRes, setBatterySales),
+          parseAndSet(batImpRes, setBatteryImports),
+          parseAndSet(chgRes, setChargerSales),
+          parseAndSet(chgImpRes, setChargerImports),
+          parseAndSet(wClaimRes, setWarrantyClaims)
+        ]);
+      } catch (err) {
+        console.warn('Background refresh deferred:', err);
+      }
+    };
+    
+    refreshData();
   }, [activeTab, currentUser]);
 
   const handleLoginSuccess = (user: User, token: string) => {
@@ -615,12 +726,136 @@ export default function App() {
     }
   };
 
-  const handleFinalizeChargerHold = async (id: string): Promise<boolean> => {
+  const handleFinalizeChargerHold = async (id: string, extraData?: any): Promise<boolean> => {
     try {
       const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...extraData, operator: currentUser?.name || 'system' }),
+      });
+      if (res.ok) {
+        await fetchAllData();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const handleReleaseBatteryHold = async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
+      });
+      if (res.ok) {
+        await fetchAllData();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const handleFinalizeBatteryHold = async (id: string, extraData?: any): Promise<boolean> => {
+    try {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/finalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, ...extraData, operator: currentUser?.name || 'system' }),
+      });
+      if (res.ok) {
+        await fetchAllData();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const handleReleaseScooterHold = async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/release-hold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
+      });
+      if (res.ok) {
+        await fetchAllData();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const handleReleaseWholesalePackage = async (payload: {
+    customerName: string;
+    scooterIds?: string[];
+    batteryIds?: string[];
+    chargerIds?: string[];
+  }): Promise<boolean> => {
+    try {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/wholesale-package/release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
+      });
+      if (res.ok) {
+        await fetchAllData();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const handleFinalizeScooterHold = async (payload: any): Promise<boolean> => {
+    try {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/finalize-hold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
+      });
+      if (res.ok) {
+        await fetchAllData();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const handleUpdateBatteryHold = async (payload: any): Promise<boolean> => {
+    try {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/update-hold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
+      });
+      if (res.ok) {
+        await fetchAllData();
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const handleUpdateChargerHold = async (payload: any): Promise<boolean> => {
+    try {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales/update-hold', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
       });
       if (res.ok) {
         await fetchAllData();
@@ -861,10 +1096,10 @@ export default function App() {
                       const remB = modelKitsRemaining[b.name] || 0;
                       return remB - remA;
                     })
-                    .map(p => {
+                    .map((p, pidx) => {
                       const remainingForModel = modelKitsRemaining[p.name] || 0;
                       return (
-                        <div key={p.id} className="border border-slate-150 bg-slate-50/50 rounded-2xl p-4 flex flex-col justify-between">
+                        <div key={p.id || `prod-${pidx}`} className="border border-slate-150 bg-slate-50/50 rounded-2xl p-4 flex flex-col justify-between">
                           <div>
                             <div className="flex items-center justify-between mb-3 border-b border-slate-100 pb-2">
                               <span className="text-xs font-extrabold text-slate-800 uppercase tracking-wide">
@@ -874,13 +1109,13 @@ export default function App() {
                                 {remainingForModel} left
                               </span>
                             </div>
-
+ 
                             {/* Color breakdown */}
                             <div className="space-y-1.5">
-                              {p.colors.map(col => {
+                              {p.colors.map((col, colidx) => {
                                 const remainingForColor = getImportedStockRemaining(p.name, col);
                                 return (
-                                  <div key={col} className="bg-white px-2.5 py-1.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
+                                  <div key={`${col}-${colidx}`} className="bg-white px-2.5 py-1.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
                                     <span className="font-semibold text-slate-600">{col}</span>
                                     <span className={`font-mono font-bold text-[10px] px-2 py-0.5 rounded-full ${remainingForColor > 0 ? 'text-amber-800 bg-amber-50 border border-amber-100' : 'text-slate-400 bg-slate-50 border border-slate-100'}`}>
                                       {remainingForColor} kits
@@ -925,9 +1160,9 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {myRecentRecordings.map((unit) => (
+                  {myRecentRecordings.map((unit, uidx) => (
                     <tr 
-                      key={unit.id} 
+                      key={unit.id || `build-rec-${uidx}`} 
                       onClick={() => setSelectedDetailScooter(unit)}
                       className="text-slate-700 hover:bg-slate-100/70 hover:text-slate-900 cursor-pointer transition-colors"
                       title="Click to view full detail specs"
@@ -1126,17 +1361,17 @@ export default function App() {
               <p className="text-xs text-slate-400 py-4 text-center">No products catalogued yet.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 py-2">
-                {products.map(p => (
-                  <div key={p.id} className="border border-slate-100 bg-slate-50/50 rounded-2xl p-4">
+                {products.map((p, pidx) => (
+                  <div key={p.id || `sales-prod-${pidx}`} className="border border-slate-100 bg-slate-50/50 rounded-2xl p-4">
                     <span className="text-[10px] font-extrabold text-slate-400 font-mono block uppercase tracking-wide mb-2">{p.name}</span>
                     <div className="space-y-2">
-                      {p.colors.map(col => {
+                      {p.colors.map((col, colidx) => {
                         const totalAvail = scooterUnits.filter(u => u.modelName === p.name && u.color === col && u.status === 'available').length;
                         const batteryAssigned = scooterUnits.filter(u => u.modelName === p.name && u.color === col && u.status === 'available' && u.batterySerials && u.batterySerials.length > 0).length;
                         const needsBattery = totalAvail - batteryAssigned;
-
+ 
                         return (
-                          <div key={col} className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
+                          <div key={`${col}-${colidx}`} className="bg-white p-2.5 rounded-xl border border-slate-100 flex items-center justify-between text-xs font-sans">
                             <div>
                               <span className="font-bold text-slate-800">{col}</span>
                               <div className="text-[10px] text-slate-500 mt-0.5 font-medium">
@@ -1179,8 +1414,8 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {myRecentRecordings.map((unit) => (
-                    <tr key={unit.id} className="text-slate-700 hover:bg-slate-50/50">
+                  {myRecentRecordings.map((unit, uidx) => (
+                    <tr key={unit.id || `sales-rec-${uidx}`} className="text-slate-700 hover:bg-slate-50/50">
                       <td className="py-3.5 px-4 font-extrabold text-slate-900">{unit.modelName}</td>
                       <td className="py-3.5 px-4 font-medium">{unit.color}</td>
                       <td className="py-3.5 px-4 font-mono font-bold text-[11px] text-slate-900">{unit.chassisNo}</td>
@@ -1748,6 +1983,18 @@ export default function App() {
               <ShieldCheck className="h-4 w-4 text-cyan-600" />
               <span>🛡️ Claims</span>
             </button>
+            <button
+              onClick={() => setActiveTab('challans')}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
+                activeTab === 'challans'
+                  ? 'bg-slate-900 text-white shadow-md'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+              }`}
+              id="nav-challans-btn"
+            >
+              <Truck className="h-4 w-4 text-cyan-400" />
+              <span>🚚 Challans</span>
+            </button>
             {currentUser.role === 'admin' && (
               <button
                 onClick={() => setActiveTab('settings')}
@@ -1910,6 +2157,19 @@ export default function App() {
                   </div>
                 </button>
 
+                <button
+                  onClick={() => { setActiveTab('challans'); setShowMobileMoreMenu(false); }}
+                  className={`flex flex-col items-start gap-2 p-4 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.97] ${
+                    activeTab === 'challans' ? 'bg-cyan-50/50 border-cyan-300 text-cyan-950' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  <Truck className="h-5 w-5 text-cyan-400" />
+                  <div>
+                    <p className="text-xs font-bold">🚚 Challans</p>
+                    <p className="text-[9px] text-slate-500 mt-0.5">Delivery Challans & Dispatch</p>
+                  </div>
+                </button>
+
                 {currentUser.role === 'admin' && (
                   <button
                     onClick={() => { setActiveTab('settings'); setShowMobileMoreMenu(false); }}
@@ -1947,10 +2207,26 @@ export default function App() {
                 stockLogs={stockLogs} 
                 batterySales={batterySales}
                 batteryImports={batteryImports}
+                chargerSales={chargerSales}
+                chargerImports={chargerImports}
                 onNavigateToAssembly={() => setActiveTab('assembly')}
                 onNavigateToBatteries={() => setActiveTab('battery')}
                 onNavigateToStock={() => setActiveTab('stock')}
                 onNavigateToSearch={() => setActiveTab('search')}
+                onNavigateToChargers={() => setActiveTab('charger')}
+                onSubmitAssembly={handleSubmitScooterUnit}
+                onReleaseBatteryHold={handleReleaseBatteryHold}
+                onFinalizeBatteryHold={handleFinalizeBatteryHold}
+                onReleaseChargerHold={handleReleaseChargerHold}
+                onFinalizeChargerHold={handleFinalizeChargerHold}
+                onReleaseScooterHold={handleReleaseScooterHold}
+                onReleaseWholesalePackage={handleReleaseWholesalePackage}
+                onFinalizeScooterHold={handleFinalizeScooterHold}
+                onUpdateBatteryHold={handleUpdateBatteryHold}
+                onUpdateChargerHold={handleUpdateChargerHold}
+                buyers={buyers}
+                onRefresh={fetchAllData}
+                currentUser={currentUser}
               />
             )}
 
@@ -2046,10 +2322,12 @@ export default function App() {
                 batterySales={batterySales}
                 batteryImports={batteryImports}
                 scooterUnits={scooterUnits}
+                chargerSales={chargerSales}
                 currentUser={currentUser}
                 onRefresh={fetchAllData}
                 onSubmitBatterySale={handleDirectBatterySale}
                 batterySeriesList={batteryTypes}
+                hideForm={true}
               />
             )}
 
@@ -2059,6 +2337,8 @@ export default function App() {
                 chargerSales={chargerSales}
                 chargerImports={chargerImports}
                 chargerTypesList={chargerTypes}
+                scooterUnits={scooterUnits}
+                batterySales={batterySales}
                 currentUser={currentUser}
                 onRefresh={fetchAllData}
                 onSubmitChargerSale={handleDirectChargerSale}
@@ -2077,6 +2357,17 @@ export default function App() {
                 chargerImports={chargerImports}
                 buyers={buyers}
                 warrantyClaims={warrantyClaims}
+                currentUser={currentUser}
+                onRefresh={fetchAllData}
+              />
+            )}
+
+            {activeTab === 'challans' && (
+              <ChallanManager
+                scooterUnits={scooterUnits}
+                batterySales={batterySales}
+                chargerSales={chargerSales}
+                buyers={buyers}
                 currentUser={currentUser}
                 onRefresh={fetchAllData}
               />

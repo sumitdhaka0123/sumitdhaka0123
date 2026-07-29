@@ -4,14 +4,16 @@ import {
   Battery, Plus, Sparkles, User, Calendar, ClipboardList, CheckCircle2, 
   AlertCircle, Search, ShieldAlert, Ban, Timer, Check, Info, ShieldCheck, RefreshCw, X, Trash2
 } from 'lucide-react';
-import { Buyer, BatterySale, BatteryImport, ScooterUnit } from '../types';
-import QRSerialScanner from './QRSerialScanner';
+import { Buyer, BatterySale, BatteryImport, ScooterUnit, ChargerSale } from '../types';
+import { inspectChallanNumber, isChallanRestrictedForUser } from '../utils/challanUtils';
+import { ChallanStatusCard } from './ChallanStatusCard';
 
 interface BatterySalesManagerProps {
   buyers: Buyer[];
   batterySales: BatterySale[];
   batteryImports?: BatteryImport[];
   scooterUnits?: ScooterUnit[];
+  chargerSales?: ChargerSale[];
   currentUser: any;
   onRefresh: () => void;
   onSubmitBatterySale: (data: {
@@ -45,6 +47,7 @@ export default function BatterySalesManager({
   batterySales,
   batteryImports = [],
   scooterUnits = [],
+  chargerSales = [],
   currentUser,
   onRefresh,
   onSubmitBatterySale,
@@ -62,6 +65,69 @@ export default function BatterySalesManager({
   const [endNo, setEndNo] = useState('');
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
+  const [deliveryChallanNo, setDeliveryChallanNo] = useState('');
+  const [billNo, setBillNo] = useState('');
+  const [submitMode, setSubmitMode] = useState<'sold' | 'hold' | 'attach_challan'>('sold');
+  const [isSelectChallanModalOpen, setIsSelectChallanModalOpen] = useState(false);
+
+  // Collect all active pending Delivery Challan numbers
+  const activeChallanNumbers = useMemo(() => {
+    const set = new Set<string>();
+    if (batterySales) {
+      batterySales.forEach(s => {
+        if (s.deliveryChallanNo && s.challanStatus !== 'finished') set.add(s.deliveryChallanNo.toUpperCase());
+      });
+    }
+    if (scooterUnits) {
+      scooterUnits.forEach(u => {
+        if (u.deliveryChallanNo && u.challanStatus !== 'finished') set.add(u.deliveryChallanNo.toUpperCase());
+      });
+    }
+    if (chargerSales) {
+      chargerSales.forEach(c => {
+        if (c.deliveryChallanNo && c.challanStatus !== 'finished') set.add(c.deliveryChallanNo.toUpperCase());
+      });
+    }
+    return Array.from(set);
+  }, [batterySales, scooterUnits, chargerSales]);
+
+  // Inspect current Delivery Challan Number
+  const currentChallanInfo = useMemo(() => {
+    return inspectChallanNumber(deliveryChallanNo, scooterUnits, batterySales, chargerSales);
+  }, [deliveryChallanNo, scooterUnits, batterySales, chargerSales]);
+
+  // Auto-fill buyer details and bill number if an active pending challan is entered
+  // Auto-fill or reset buyer details and bill number when delivery challan number changes
+  useEffect(() => {
+    if (submitMode === 'attach_challan') {
+      const cleanNo = deliveryChallanNo.trim();
+      if (!cleanNo) {
+        setBuyerName('');
+        setBuyerContact('');
+        setBuyerAddress('');
+        setBillNo('');
+        return;
+      }
+
+      if (currentChallanInfo.exists && !currentChallanInfo.isFinished) {
+        const name = currentChallanInfo.buyerName || '';
+        const contact = currentChallanInfo.buyerContact || '';
+        const bill = currentChallanInfo.billNo || '';
+        setBuyerName(name);
+        setBuyerContact(contact);
+        setBillNo(bill);
+
+        const matchedBuyer = buyers.find(b => b.name.toLowerCase() === name.toLowerCase());
+        setBuyerAddress(matchedBuyer?.address || '');
+      } else {
+        // Reset buyer fields completely when entering a new/unregistered challan number
+        setBuyerName('');
+        setBuyerContact('');
+        setBuyerAddress('');
+        setBillNo('');
+      }
+    }
+  }, [deliveryChallanNo, currentChallanInfo, submitMode, buyers]);
 
   // Auto-populate contact and address info when standard buyer is selected
   useEffect(() => {
@@ -117,7 +183,6 @@ export default function BatterySalesManager({
   }, [batteryImports, scooterUnits, batterySales]);
 
   // Submit and loading states
-  const [submitMode, setSubmitMode] = useState<'sold' | 'hold'>('sold');
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   
@@ -132,86 +197,95 @@ export default function BatterySalesManager({
   // Calculation of stock per series
   const seriesStockMap = useMemo(() => {
     const map: Record<string, { imported: number; soldStandalone: number; assignedToScooters: number; available: number }> = {};
-    batterySeriesList.forEach(series => {
-      const key = series.endsWith('Series') ? series : series + ' Series';
-      map[key] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
-    });
-    // Fallback legacy series options
-    ['Alpha Series', 'Beta Series', 'Delta Series', 'Omega Series', 'Pro-Pack Series'].forEach(series => {
-      if (!map[series]) {
-        map[series] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
+    
+    // Default fallback series
+    const defaults = ['Alpha', 'Beta', 'Delta', 'Omega', 'Pro-Pack', 'Standard'];
+    const knownSeriesSet = new Set<string>([...defaults, ...batterySeriesList]);
+    
+    // Add all imported series names
+    if (batteryImports && Array.isArray(batteryImports)) {
+      batteryImports.forEach(i => {
+        if (i.batterySeries) knownSeriesSet.add(i.batterySeries);
+      });
+    }
+    
+    // Add all sold series names
+    if (batterySales && Array.isArray(batterySales)) {
+      batterySales.forEach(s => {
+        if (s.batterySeries) knownSeriesSet.add(s.batterySeries);
+      });
+    }
+
+    knownSeriesSet.forEach(s => {
+      if (!s) return;
+      map[s] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
+      const suffix = s.endsWith('Series') ? s : `${s} Series`;
+      if (!map[suffix]) {
+        map[suffix] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
       }
     });
 
-    // Helper to get series key
-    const getSeriesKey = (series: string) => {
-      const clean = series.toLowerCase().replace(/\s*series/g, '').trim();
-      const match = batterySeriesList.find(s => {
-        const sClean = s.toLowerCase().replace(/\s*series/g, '').trim();
-        return sClean === clean;
-      });
-      if (match) return match.endsWith('Series') ? match : match + ' Series';
-
-      if (clean === 'alpha') return 'Alpha Series';
-      if (clean === 'beta') return 'Beta Series';
-      if (clean === 'delta') return 'Delta Series';
-      if (clean === 'omega') return 'Omega Series';
-      if (clean === 'pro-pack' || clean === 'pro') return 'Pro-Pack Series';
-      return null;
+    // Helper to resolve key for any series string
+    const resolveKey = (input: string) => {
+      if (!input) return null;
+      const clean = input.trim().toLowerCase().replace(/\s*series/g, '');
+      for (const k of Object.keys(map)) {
+        const kClean = k.trim().toLowerCase().replace(/\s*series/g, '');
+        if (kClean === clean) return k;
+      }
+      return input;
     };
 
     // 1. Process Imports
-    batteryImports.forEach(imp => {
-      const key = getSeriesKey(imp.batterySeries);
-      if (key) {
-        map[key].imported += imp.quantity;
-      } else {
-        const customKey = imp.batterySeries.endsWith('Series') ? imp.batterySeries : imp.batterySeries + ' Series';
-        if (!map[customKey]) {
-          map[customKey] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
+    if (batteryImports && Array.isArray(batteryImports)) {
+      batteryImports.forEach(imp => {
+        if (!imp.batterySeries) return;
+        const key = resolveKey(imp.batterySeries) || imp.batterySeries;
+        if (!map[key]) {
+          map[key] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
         }
-        map[customKey].imported += imp.quantity;
-      }
-    });
+        map[key].imported += (Number(imp.quantity) || 0);
+      });
+    }
 
-    // 2. Process Standalone Sales (only count finalized 'sold' or 'hold' depending on logic, let's count all logged ones since they block inventory)
-    batterySales.forEach(sale => {
-      const key = getSeriesKey(sale.batterySeries);
-      if (key) {
-        map[key].soldStandalone += sale.quantity;
-      } else {
-        const customKey = sale.batterySeries.endsWith('Series') ? sale.batterySeries : sale.batterySeries + ' Series';
-        if (!map[customKey]) {
-          map[customKey] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
+    // 2. Process Standalone Sales
+    if (batterySales && Array.isArray(batterySales)) {
+      batterySales.forEach(sale => {
+        if (!sale.batterySeries) return;
+        const key = resolveKey(sale.batterySeries) || sale.batterySeries;
+        if (!map[key]) {
+          map[key] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
         }
-        map[customKey].soldStandalone += sale.quantity;
-      }
-    });
+        map[key].soldStandalone += (Number(sale.quantity) || 0);
+      });
+    }
 
     // 3. Process Scooter Assignments
-    scooterUnits.forEach(u => {
-      if (u.batterySerials) {
-        u.batterySerials.forEach(s => {
-          const cleanSerial = s.toLowerCase();
-          let matchedKey: string | null = null;
-          if (cleanSerial.includes('alpha') || cleanSerial.startsWith('al') || cleanSerial.startsWith('a-')) {
-            matchedKey = 'Alpha Series';
-          } else if (cleanSerial.includes('beta') || cleanSerial.startsWith('be') || cleanSerial.startsWith('b-')) {
-            matchedKey = 'Beta Series';
-          } else if (cleanSerial.includes('delta') || cleanSerial.startsWith('de') || cleanSerial.startsWith('d-')) {
-            matchedKey = 'Delta Series';
-          } else if (cleanSerial.includes('omega') || cleanSerial.startsWith('om') || cleanSerial.startsWith('o-')) {
-            matchedKey = 'Omega Series';
-          } else if (cleanSerial.includes('pro-pack') || cleanSerial.includes('pro') || cleanSerial.startsWith('pr') || cleanSerial.startsWith('p-')) {
-            matchedKey = 'Pro-Pack Series';
-          }
+    if (scooterUnits && Array.isArray(scooterUnits)) {
+      scooterUnits.forEach(u => {
+        if (u.batterySerials && u.batterySerials.length > 0) {
+          u.batterySerials.forEach(s => {
+            const cleanSerial = s.toLowerCase();
+            let matchedKey: string | null = null;
+            if (cleanSerial.includes('alpha') || cleanSerial.startsWith('al') || cleanSerial.startsWith('a-')) {
+              matchedKey = resolveKey('Alpha');
+            } else if (cleanSerial.includes('beta') || cleanSerial.startsWith('be') || cleanSerial.startsWith('b-')) {
+              matchedKey = resolveKey('Beta');
+            } else if (cleanSerial.includes('delta') || cleanSerial.startsWith('de') || cleanSerial.startsWith('d-')) {
+              matchedKey = resolveKey('Delta');
+            } else if (cleanSerial.includes('omega') || cleanSerial.startsWith('om') || cleanSerial.startsWith('o-')) {
+              matchedKey = resolveKey('Omega');
+            } else if (cleanSerial.includes('pro-pack') || cleanSerial.includes('pro') || cleanSerial.startsWith('pr') || cleanSerial.startsWith('p-')) {
+              matchedKey = resolveKey('Pro-Pack');
+            }
 
-          if (matchedKey) {
-            map[matchedKey].assignedToScooters += 1;
-          }
-        });
-      }
-    });
+            if (matchedKey && map[matchedKey]) {
+              map[matchedKey].assignedToScooters += 1;
+            }
+          });
+        }
+      });
+    }
 
     // 4. Calculate Available Stock for each series
     Object.keys(map).forEach(key => {
@@ -220,7 +294,42 @@ export default function BatterySalesManager({
     });
 
     return map;
-  }, [batteryImports, batterySales, scooterUnits]);
+  }, [batteryImports, batterySales, scooterUnits, batterySeriesList]);
+
+  // Helper to safely get stock entry for any series string
+  const getSeriesStock = (seriesName: string) => {
+    if (!seriesName) return { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
+    const clean = seriesName.trim().toLowerCase().replace(/\s*series/g, '');
+    for (const k of Object.keys(seriesStockMap)) {
+      const kClean = k.trim().toLowerCase().replace(/\s*series/g, '');
+      if (kClean === clean) return seriesStockMap[k];
+    }
+    return seriesStockMap[seriesName] || { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
+  };
+
+  // List of all series options for select dropdown
+  const availableSeriesOptions = useMemo(() => {
+    const set = new Set<string>();
+    
+    // 1. Always include standard required series
+    ['Alpha', 'Beta', 'Pro-Pack'].forEach(s => set.add(s));
+
+    // 2. Add series from imports that actually have stock
+    if (batteryImports && Array.isArray(batteryImports)) {
+      batteryImports.forEach(i => { 
+        if (i.batterySeries) set.add(i.batterySeries); 
+      });
+    }
+
+    // 3. Add series from existing sales (for lookup/history)
+    if (batterySales && Array.isArray(batterySales)) {
+      batterySales.forEach(s => { 
+        if (s.batterySeries) set.add(s.batterySeries); 
+      });
+    }
+
+    return Array.from(set).sort();
+  }, [batteryImports, batterySales]);
 
   // Handle direct manual entry of serial numbers in the main form
   const handleAddDirectManualSerial = (e?: React.FormEvent) => {
@@ -243,36 +352,62 @@ export default function BatterySalesManager({
     setDirectManualSerial('');
   };
 
-  // Auto-calculate quantity helper when start/end numbers are updated
-  const handleStartOrEndChange = (type: 'start' | 'end', value: string) => {
-    if (type === 'start') {
-      setStartNo(value);
-      calculateQty(value, endNo);
-    } else {
-      setEndNo(value);
-      calculateQty(startNo, value);
+  // Helper to calculate end serial from start serial and quantity
+  const calculateEndNo = (start: string, qtyStr: string): string => {
+    if (!start || !qtyStr) return '';
+    const qty = parseInt(qtyStr, 10);
+    if (isNaN(qty) || qty <= 0) return '';
+
+    const match = start.trim().toUpperCase().match(/^([A-Z0-9\-_]*?)(\d+)$/);
+    if (match) {
+      const prefix = match[1];
+      const startNum = parseInt(match[2], 10);
+      const numDigits = match[2].length;
+      const endNum = startNum + qty - 1;
+      const paddedEndNum = String(endNum).padStart(numDigits, '0');
+      return `${prefix}${paddedEndNum}`;
     }
+    return '';
   };
 
-  const calculateQty = (start: string, end: string) => {
+  // Helper to calculate quantity from start & end range
+  const calculateQtyFromRange = (start: string, end: string) => {
     if (!start || !end) return;
-    
-    // Extract trailing digits if any
     const startMatch = start.match(/\d+$/);
     const endMatch = end.match(/\d+$/);
-
     if (startMatch && endMatch) {
       const startNum = parseInt(startMatch[0], 10);
       const endNum = parseInt(endMatch[0], 10);
-      
       if (endNum >= startNum) {
         const calculated = endNum - startNum + 1;
         setQuantity(String(calculated));
-      } else {
-        setQuantity('');
+      }
+    }
+  };
+
+  // Auto-calculate quantity / end serial when start/end/quantity inputs change
+  const handleStartOrEndChange = (type: 'start' | 'end', value: string) => {
+    if (type === 'start') {
+      setStartNo(value);
+      if (quantity && parseInt(quantity, 10) > 0) {
+        const autoEnd = calculateEndNo(value, quantity);
+        if (autoEnd) setEndNo(autoEnd);
+      } else if (endNo) {
+        calculateQtyFromRange(value, endNo);
       }
     } else {
-      setQuantity('');
+      setEndNo(value);
+      if (startNo) {
+        calculateQtyFromRange(startNo, value);
+      }
+    }
+  };
+
+  const handleQuantityChange = (val: string) => {
+    setQuantity(val);
+    if (startNo && val) {
+      const autoEnd = calculateEndNo(startNo, val);
+      if (autoEnd) setEndNo(autoEnd);
     }
   };
 
@@ -323,13 +458,23 @@ export default function BatterySalesManager({
     }
   };
 
-  const handleFormSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleFormSubmit = async (e?: React.FormEvent, overrideMode?: 'sold' | 'hold' | 'attach_challan') => {
+    if (e) e.preventDefault();
     setStatus(null);
 
-    const finalSeries = batterySeries === 'custom' ? customSeries.trim() : batterySeries;
+    const activeMode = overrideMode || submitMode;
 
-    if (!buyerName) {
+    if (currentChallanInfo.cleanNo && currentChallanInfo.isFinished) {
+      setStatus({ 
+        type: 'error', 
+        text: `⛔ Delivery Challan #${currentChallanInfo.cleanNo} is FINISHED & VERIFIED! This challan is locked. You cannot attach items to a finished challan. Please use a NEW, unique Delivery Challan Number.` 
+      });
+      return;
+    }
+
+    let finalSeries = batterySeries === 'custom' ? customSeries.trim() : batterySeries;
+
+    if (!buyerName && !isPipelineView) {
       setStatus({ type: 'error', text: 'Please select a buyer.' });
       return;
     }
@@ -345,7 +490,10 @@ export default function BatterySalesManager({
 
     let finalStartNo = 'N/A';
     let finalEndNo = 'N/A';
+    
+    // Explicitly parse quantity, ensuring it defaults to 1 only if absolutely empty
     let qtyNum = parseInt(quantity, 10);
+    if (isNaN(qtyNum) || qtyNum <= 0) qtyNum = 1;
 
     if (isUnderWarranty) {
       if (warrantyDuration === null) {
@@ -361,33 +509,48 @@ export default function BatterySalesManager({
         finalStartNo = scannedSerials[0];
         finalEndNo = scannedSerials[scannedSerials.length - 1];
       } else {
-        if (!startNo.trim() || !endNo.trim()) {
-          setStatus({ type: 'error', text: 'Starting and ending series numbers are required for under-warranty batteries.' });
+        if (!startNo.trim()) {
+          setStatus({ type: 'error', text: 'Starting serial number is required for under-warranty batteries.' });
           return;
         }
         finalStartNo = startNo.trim().toUpperCase();
-        finalEndNo = endNo.trim().toUpperCase();
 
-        // Recalculate quantity to enforce
-        const startMatch = finalStartNo.match(/\d+$/);
-        const endMatch = finalEndNo.match(/\d+$/);
+        if (endNo.trim()) {
+          finalEndNo = endNo.trim().toUpperCase();
+        } else if (qtyNum > 0) {
+          const autoEnd = calculateEndNo(finalStartNo, String(qtyNum));
+          finalEndNo = autoEnd || finalStartNo;
+        } else {
+          finalEndNo = finalStartNo;
+        }
+
+        // Validate serial range if end matches digits
+        const startMatch = finalStartNo.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+        const endMatch = finalEndNo.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
         if (startMatch && endMatch) {
-          const sNum = parseInt(startMatch[0], 10);
-          const eNum = parseInt(endMatch[0], 10);
+          const sNum = parseInt(startMatch[2], 10);
+          const eNum = parseInt(endMatch[2], 10);
           if (eNum >= sNum) {
             const calculatedQty = eNum - sNum + 1;
-            qtyNum = calculatedQty;
+            qtyNum = Math.max(qtyNum, calculatedQty);
           } else {
-            setStatus({ type: 'error', text: 'Ending series number must be greater than or equal to starting series number.' });
+            setStatus({ type: 'error', text: 'Ending serial number must be greater than or equal to starting serial number.' });
             return;
           }
-        } else {
-          setStatus({ type: 'error', text: 'Invalid serial formats. Series numbers must end with numeric values (e.g. AL-1001).' });
-          return;
+        }
+
+        // Auto-derive finalSeries from start serial prefix if left at default "Alpha Series" or "Alpha"
+        if ((!finalSeries || finalSeries === 'Alpha' || finalSeries === 'Alpha Series') && finalStartNo && finalStartNo !== 'N/A') {
+          if (startMatch && startMatch[1]) {
+            const derivedPrefix = startMatch[1].trim().replace(/[\s\-_/\\#]+$/, '');
+            if (derivedPrefix) {
+              finalSeries = derivedPrefix;
+            }
+          }
         }
       }
     } else {
-      // Not under warranty - just validate quantity input
+      // Not under warranty - validate quantity input
       if (isNaN(qtyNum) || qtyNum <= 0) {
         setStatus({ type: 'error', text: 'Please enter a valid positive quantity.' });
         return;
@@ -401,14 +564,53 @@ export default function BatterySalesManager({
       k.toLowerCase().replace(/\s*series/g, '').trim() === seriesKeyToCheck.toLowerCase().replace(/\s*series/g, '').trim()
     );
 
-    const availableStockForSelected = matchingKey ? seriesStockMap[matchingKey].available : 0;
-
-    if (qtyNum > availableStockForSelected) {
+    const stockEntry = matchingKey ? seriesStockMap[matchingKey] : null;
+    if (stockEntry && stockEntry.imported > 0 && qtyNum > stockEntry.available) {
       setStatus({ 
         type: 'error', 
-        text: `Over-selling prevented! You are trying to allocate ${qtyNum} packs, but there are only ${availableStockForSelected} packs of "${seriesKeyToCheck}" left in stock.` 
+        text: `Over-selling prevented! You are trying to allocate ${qtyNum} packs, but there are only ${stockEntry.available} packs of "${seriesKeyToCheck}" left in stock (Total imported: ${stockEntry.imported}).` 
       });
       return;
+    }
+
+    if (!isPipelineView && activeMode === 'sold') {
+      const cleanChallan = deliveryChallanNo.trim().toUpperCase();
+      if (!cleanChallan) {
+        setStatus({ 
+          type: 'error', 
+          text: '❌ Delivery Challan Number is MANDATORY for Direct Sale / Dispatch. Please enter a unique Delivery Challan Number.' 
+        });
+        return;
+      }
+
+      const isExisting = activeChallanNumbers.some(cNo => cNo.toUpperCase() === cleanChallan) || (currentChallanInfo.exists && currentChallanInfo.cleanNo === cleanChallan);
+      if (isExisting) {
+        setStatus({ 
+          type: 'error', 
+          text: `❌ Delivery Challan #${cleanChallan} already exists as an active pending challan. Direct Sale / Dispatch requires a BRAND NEW unique Delivery Challan Number. If you want to attach items to this existing challan, please switch to 'Attach Challan' mode.` 
+        });
+        return;
+      }
+    }
+
+    if (!isPipelineView && activeMode === 'attach_challan') {
+      const cleanChallan = deliveryChallanNo.trim().toUpperCase();
+      if (!cleanChallan) {
+        setStatus({ 
+          type: 'error', 
+          text: '❌ Delivery Challan Number is 100% MANDATORY to attach batteries to a Delivery Challan! Please select or enter an active Delivery Challan Number.' 
+        });
+        return;
+      }
+
+      const existsInPending = activeChallanNumbers.some(cNo => cNo.toUpperCase() === cleanChallan) || (currentChallanInfo.exists && !currentChallanInfo.isFinished);
+      if (!existsInPending) {
+        setStatus({ 
+          type: 'error', 
+          text: `❌ Delivery Challan #${cleanChallan} does not exist. In 'Attach Challan' mode, you can only attach items to an existing active Delivery Challan. Please select an active pending challan or switch to 'Direct Sale / Dispatch' mode to create a new dispatch.` 
+        });
+        return;
+      }
     }
 
     setSaving(true);
@@ -422,6 +624,12 @@ export default function BatterySalesManager({
       }
     }
 
+    const generatedSerials = (inputMethod === 'scan' && scannedSerials.length > 0)
+      ? scannedSerials
+      : (finalStartNo !== 'N/A' && finalEndNo !== 'N/A')
+      ? generateSerialRange(finalStartNo, finalEndNo, qtyNum)
+      : undefined;
+
     const success = await onSubmitBatterySale({
       buyerName,
       batterySeries: finalSeries,
@@ -431,14 +639,20 @@ export default function BatterySalesManager({
       notes: notes.trim(),
       isUnderWarranty: !!isUnderWarranty,
       warrantyDurationMonths: isUnderWarranty ? Number(warrantyDuration) : undefined,
-      status: submitMode,
-      heldFor: submitMode === 'hold' ? buyerName : undefined,
-      serialNumbers: inputMethod === 'scan' ? scannedSerials : undefined
-    });
+      status: activeMode === 'hold' ? 'hold' : 'sold',
+      heldFor: activeMode === 'hold' ? buyerName : undefined,
+      serialNumbers: generatedSerials,
+      deliveryChallanNo: deliveryChallanNo.trim().toUpperCase(),
+      billNo: billNo.trim().toUpperCase()
+    } as any);
     setSaving(false);
 
     if (success) {
-      const modeLabel = submitMode === 'hold' ? 'reserved (on hold)' : 'dispatched';
+      const modeLabel = activeMode === 'hold' 
+        ? 'reserved (on hold)' 
+        : activeMode === 'attach_challan' 
+        ? `attached to Delivery Challan #${deliveryChallanNo.trim().toUpperCase()}`
+        : 'dispatched';
       setStatus({ type: 'success', text: `Successfully registered battery ${modeLabel} of ${qtyNum} units to ${buyerName}!` });
       setBuyerName('');
       setBuyerContact('');
@@ -447,6 +661,8 @@ export default function BatterySalesManager({
       setEndNo('');
       setQuantity('');
       setNotes('');
+      setDeliveryChallanNo('');
+      setBillNo('');
       setCustomSeries('');
       setIsUnderWarranty(null);
       setWarrantyDuration(null);
@@ -582,18 +798,20 @@ export default function BatterySalesManager({
     };
   }, [batterySales, scooterUnits, lookupQuery]);
 
-  if (isPipelineView && false) {
+  if (isPipelineView) {
     return (
       <div className="space-y-4" id="battery-sales-manager-pipeline">
         {/* Logger Form Panel */}
         <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
-          <div>
-            <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-1.5 font-sans">
-              🔋 Log Standalone Battery Allocation
-            </h3>
-            <p className="text-[11px] text-slate-500 mt-1 font-sans">
-              Dispatch directly or place specific series blocks on reserved hold.
-            </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+            <div>
+              <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-1.5 font-sans">
+                🔋 Log Standalone Battery Allocation
+              </h3>
+              <p className="text-[11px] text-slate-500 mt-0.5 font-sans">
+                Dispatch battery packs directly under a Delivery Challan Number.
+              </p>
+            </div>
           </div>
 
           <form onSubmit={handleFormSubmit} className="space-y-4">
@@ -708,7 +926,7 @@ export default function BatterySalesManager({
                         inputMethod === 'scan' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                       }`}
                     >
-                      📷 Scan QR/Codes
+                      ✍️ Individual Serials
                     </button>
                   </div>
                 </div>
@@ -747,10 +965,10 @@ export default function BatterySalesManager({
                     <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
                       <div>
                         <h4 className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">
-                          <span>📊</span> Scanned Serials Count
+                          <span>📊</span> Registered Serials Count
                         </h4>
                         <p className="text-[10px] text-slate-400 mt-0.5">
-                          Each pack requires a unique scanned serial/QR code.
+                          Enter serial numbers individually or as a list.
                         </p>
                       </div>
                       <div className="text-right">
@@ -760,14 +978,6 @@ export default function BatterySalesManager({
                         <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">Packs Registered</span>
                       </div>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setShowScanner(true)}
-                      className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-sans font-bold text-xs rounded-xl transition flex items-center justify-center gap-2"
-                    >
-                      📷 Launch Camera QR Scanner
-                    </button>
 
                     {scannedSerials.length > 0 && (
                       <div className="bg-white border border-slate-200 p-2.5 rounded-xl space-y-1">
@@ -793,140 +1003,233 @@ export default function BatterySalesManager({
               </motion.div>
             )}
 
-            {/* 4. Display subsequent fields ONLY if the initial steps are filled out */}
-            {(isUnderWarranty === false || (isUnderWarranty === true && warrantyDuration !== null)) && (
-              <motion.div
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="space-y-3 pt-3 border-t border-slate-200"
-              >
-                {/* Buyer Select */}
+            {/* Display main sale form fields */}
+            <div className="space-y-3 pt-3 border-t border-slate-200">
+              {/* Buyer Select (hidden in pipeline view since buyer is specified at challan level) */}
+              {!isPipelineView && (
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                    Wholesale Buyer
+                    Wholesale Buyer Name *
                   </label>
-                  <select
+                  <input
+                    type="text"
+                    placeholder="Enter or select buyer name"
+                    list="battery-buyers-list"
                     value={buyerName}
                     onChange={(e) => setBuyerName(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans cursor-pointer"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans"
                     required
-                  >
-                    <option value="">-- Choose Buyer --</option>
+                  />
+                  <datalist id="battery-buyers-list">
                     {buyers.map(b => (
-                      <option key={b.id} value={b.name}>{b.name}</option>
+                      <option key={b.id} value={b.name} />
                     ))}
-                  </select>
+                  </datalist>
                 </div>
+              )}
 
-                {/* Battery Series */}
-                <div>
+              {/* Battery Series */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                  Battery Model / Series 🔋
+                </label>
+                <select
+                  value={batterySeries}
+                  onChange={(e) => setBatterySeries(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans cursor-pointer font-bold"
+                >
+                  {availableSeriesOptions.map(seriesOpt => {
+                    const stock = getSeriesStock(seriesOpt);
+                    return (
+                      <option key={seriesOpt} value={seriesOpt}>
+                        {seriesOpt} ({stock.available} Available in Warehouse)
+                      </option>
+                    );
+                  })}
+                  <option value="custom">-- Custom Series Name --</option>
+                </select>
+
+                {/* Live Stock Availability Badge */}
+                {(() => {
+                  const currSeries = batterySeries === 'custom' ? customSeries : batterySeries;
+                  const stock = getSeriesStock(currSeries);
+                  return (
+                    <div className="mt-2 p-2.5 rounded-xl border flex items-center justify-between text-xs font-sans transition-all bg-emerald-50/80 border-emerald-200">
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">📦</span>
+                        <div>
+                          <span className="font-extrabold text-emerald-950 block">
+                            Available Stock: <span className="text-emerald-700 text-xs sm:text-sm font-black">{stock.available} Packs</span>
+                          </span>
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            Total Imported: {stock.imported} | Dispatched/Assigned: {stock.soldStandalone + stock.assignedToScooters}
+                          </span>
+                        </div>
+                      </div>
+                      {stock.available === 0 && (
+                        <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+                          ⚠️ Out of Stock
+                        </span>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Custom Series Input */}
+              {batterySeries === 'custom' && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                >
                   <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                    Battery Series Type
+                    Custom Series Name
                   </label>
-                  <select
-                    value={batterySeries}
-                    onChange={(e) => setBatterySeries(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans cursor-pointer"
-                  >
-                    {(batterySeriesList.length > 0 ? batterySeriesList : ['Alpha Series', 'Beta Series', 'Delta Series', 'Omega Series', 'Pro-Pack Series']).map(seriesOpt => {
-                      const key = seriesOpt.endsWith('Series') ? seriesOpt : seriesOpt + ' Series';
-                      const avail = seriesStockMap[key]?.available ?? 0;
-                      return (
-                        <option key={seriesOpt} value={seriesOpt}>
-                          {seriesOpt} ({avail} Left)
-                        </option>
-                      );
-                    })}
-                    <option value="custom">-- Custom Series Name --</option>
-                  </select>
-                </div>
+                  <input
+                    type="text"
+                    placeholder="e.g. Gamma X-200"
+                    value={customSeries}
+                    onChange={(e) => setCustomSeries(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans"
+                    required
+                  />
+                </motion.div>
+              )}
 
-                {/* Custom Series Input */}
-                {batterySeries === 'custom' && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                  >
+              {/* Quantity Input */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                  Quantity Dispatched {isUnderWarranty && <span className="text-emerald-700 font-extrabold">(🔒 Locked under warranty - auto-derived from serial range/scans)</span>}
+                </label>
+                <input
+                  type="number"
+                  placeholder="e.g. 20"
+                  value={quantity}
+                  onChange={(e) => !isUnderWarranty && handleQuantityChange(e.target.value)}
+                  readOnly={isUnderWarranty}
+                  className={`w-full border rounded-xl p-2.5 text-base sm:text-xs font-sans outline-none font-mono font-bold ${
+                    isUnderWarranty
+                      ? 'bg-emerald-50/80 border-emerald-300 text-emerald-900 cursor-not-allowed'
+                      : 'bg-slate-50 border-slate-200 text-slate-800 focus:border-emerald-500'
+                  }`}
+                  required
+                />
+                {isUnderWarranty ? (
+                  <span className="text-[10px] text-emerald-700 mt-1 block font-semibold">
+                    🔒 Under warranty, quantity is calculated automatically from Start/End serial numbers or scanned serial list to ensure accurate warranty logs.
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Specify total quantity of battery units being dispatched.
+                  </span>
+                )}
+              </div>
+
+              {/* Sales Bill & Delivery Challan Inputs (hidden in pipeline view since challan is specified at dispatch level) */}
+              {!isPipelineView && (
+                <div className={`grid grid-cols-1 ${submitMode !== 'attach_challan' ? 'sm:grid-cols-2' : ''} gap-2`}>
+                  <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                      Custom Series Name
+                      Sales Bill Number (Optional)
                     </label>
                     <input
                       type="text"
-                      placeholder="e.g. Gamma X-200"
-                      value={customSeries}
-                      onChange={(e) => setCustomSeries(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans"
-                      required
+                      placeholder="e.g. BILL-9081 (optional)"
+                      value={billNo}
+                      onChange={(e) => setBillNo(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none focus:border-emerald-500 uppercase font-semibold"
                     />
-                  </motion.div>
-                )}
+                  </div>
 
-                {/* Quantity Input */}
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                    Quantity Dispatched
-                  </label>
-                  <input
-                    type="number"
-                    placeholder={isUnderWarranty ? "Quantity derived from series range..." : "e.g. 50"}
-                    value={quantity}
-                    onChange={(e) => {
-                      if (isUnderWarranty === false) {
-                        setQuantity(e.target.value);
-                      }
-                    }}
-                    readOnly={isUnderWarranty === true}
-                    className={`w-full border rounded-xl p-2.5 text-base sm:text-xs font-sans outline-none font-mono font-bold ${
-                      isUnderWarranty === true
-                        ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed font-medium'
-                        : 'bg-slate-50 border-slate-200 text-slate-800 focus:border-emerald-500'
-                    }`}
-                    required
-                  />
-                  {isUnderWarranty === true && (
-                    <span className="text-[10px] text-emerald-600 mt-1 block font-semibold">
-                      ✓ Derived automatically from Start/End serial numbers. Manual override disabled.
-                    </span>
+                  {submitMode !== 'attach_challan' && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide font-sans">
+                          Delivery Challan Number (Mandatory) *
+                        </label>
+                        {deliveryChallanNo ? (
+                          <span className="text-[11px] font-mono font-black text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-md shadow-2xs">
+                            [ Challan #{deliveryChallanNo.toUpperCase()} ]
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-mono text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                            [ New Unique Challan ]
+                          </span>
+                        )}
+                      </div>
+
+                      <input
+                        type="text"
+                        placeholder="Enter a Delivery Challan No (e.g. DC-2005) *"
+                        value={deliveryChallanNo}
+                        onChange={(e) => setDeliveryChallanNo(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none focus:border-emerald-500 uppercase font-semibold"
+                        required
+                      />
+                      <ChallanStatusCard info={currentChallanInfo} currentUser={currentUser} />
+                    </div>
                   )}
                 </div>
+              )}
 
-                {/* Notes */}
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                    Dispatch / Shipment Notes
-                  </label>
-                  <textarea
-                    placeholder="Enter transport or batch notes..."
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    rows={2}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none focus:border-emerald-500 resize-none"
-                  />
-                </div>
+              {/* Notes */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                  Dispatch / Shipment Notes
+                </label>
+                <textarea
+                  placeholder="Enter transport or batch notes..."
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={2}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 font-sans outline-none focus:border-emerald-500 resize-none"
+                />
+              </div>
 
-                {/* Actions Button Grid */}
-                <div className="grid grid-cols-2 gap-2 pt-2">
+              {/* Single Finishing Action Bar Button */}
+              {!isPipelineView && (
+                <div className="pt-2">
                   <button
-                    type="submit"
-                    disabled={saving}
-                    onClick={() => setSubmitMode('sold')}
-                    className="py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-sans font-bold text-xs rounded-xl cursor-pointer disabled:opacity-50 transition-all flex items-center justify-center gap-1 shadow-sm active:scale-[0.98]"
+                    type="button"
+                    disabled={saving || currentChallanInfo.isFinished || isChallanRestrictedForUser(currentChallanInfo, currentUser)}
+                    onClick={(e) => handleFormSubmit(e, submitMode)}
+                    className={`w-full py-3 font-sans font-bold text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 active:scale-[0.98] text-white ${
+                      submitMode === 'hold' 
+                        ? 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800' 
+                        : submitMode === 'attach_challan'
+                        ? 'bg-cyan-700 hover:bg-cyan-800 active:bg-cyan-900'
+                        : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800'
+                    }`}
                   >
-                    <Check className="h-3.5 w-3.5" />
-                    <span>{saving && submitMode === 'sold' ? 'Registering...' : 'Sell / Dispatch'}</span>
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    onClick={() => setSubmitMode('hold')}
-                    className="py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-sans font-bold text-xs rounded-xl cursor-pointer disabled:opacity-50 transition-all flex items-center justify-center gap-1 shadow-sm active:scale-[0.98]"
-                  >
-                    <Timer className="h-3.5 w-3.5 text-amber-400" />
-                    <span>{saving && submitMode === 'hold' ? 'Holding...' : 'Place on Hold'}</span>
+                    {saving ? (
+                      <>
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                        <span>Processing...</span>
+                      </>
+                    ) : submitMode === 'hold' ? (
+                      <>
+                        <Timer className="h-4 w-4" />
+                        <span>Place Batteries on Reservation Hold</span>
+                      </>
+                    ) : submitMode === 'attach_challan' ? (
+                      <>
+                        <ClipboardList className="h-4 w-4" />
+                        <span>
+                          {deliveryChallanNo.trim()
+                            ? `Attach Batteries to Challan #${deliveryChallanNo.trim().toUpperCase()}`
+                            : 'Attach Batteries to Delivery Challan'}
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Check className="h-4 w-4" />
+                        <span>Complete Direct Sale / Dispatch</span>
+                      </>
+                    )}
                   </button>
                 </div>
-              </motion.div>
-            )}
+              )}
+            </div>
           </form>
 
           {status && (
@@ -1011,21 +1314,102 @@ export default function BatterySalesManager({
         
         {/* Left Column wrapper */}
         <div className="space-y-6 lg:col-span-1">
+
+
           {/* Logger Form Panel */}
           {!hideForm && (
             <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm space-y-4">
-            <div>
-              <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-1.5 font-sans">
-                🔋 Log Standalone Battery Allocation
-              </h3>
-              <p className="text-[11px] text-slate-500 mt-1 font-sans">
-                Dispatch directly or place specific series blocks on reserved hold.
-              </p>
-            </div>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900 flex items-center gap-1.5 font-sans">
+                    🔋 Log Standalone Battery Allocation
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5 font-sans">
+                    Dispatch battery packs directly under a Delivery Challan Number.
+                  </p>
+                </div>
+              </div>
 
-            <form onSubmit={handleFormSubmit} className="space-y-4">
+              <form onSubmit={handleFormSubmit} className="space-y-4 font-sans">
               
-              {/* 1. First Ask: Under Warranty? (GATED / PROGRESSIVE FIRST STEP) */}
+              {/* Delivery Challan Primary Step when Attach Challan Mode is Active */}
+              {submitMode === 'attach_challan' && (
+                <div className="bg-cyan-50/90 border-2 border-cyan-400 p-4 rounded-2xl space-y-3 shadow-xs font-sans">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black text-cyan-950 uppercase tracking-wider flex items-center gap-1.5">
+                      🚚 Step 1: Select Active Delivery Challan
+                    </span>
+                    {deliveryChallanNo ? (
+                      <span className="text-xs font-mono font-black text-cyan-900 bg-cyan-200 border border-cyan-400 px-2.5 py-1 rounded-lg shadow-2xs">
+                        [ Challan #{deliveryChallanNo.toUpperCase()} ]
+                      </span>
+                    ) : (
+                      <span className="text-[11px] font-mono font-bold text-slate-500 bg-slate-200 border border-slate-300 px-2 py-0.5 rounded-lg">
+                        [ Select Active Challan ]
+                      </span>
+                    )}
+                  </div>
+
+                  {activeChallanNumbers.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <label className="block text-[10px] font-extrabold text-cyan-900 uppercase tracking-wide">
+                        Active Pending Challan Numbers (Click to Select):
+                      </label>
+                      <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1 bg-white/80 rounded-xl border border-cyan-200">
+                        {activeChallanNumbers.map((cNo) => {
+                          const isSelected = deliveryChallanNo.toUpperCase() === cNo.toUpperCase();
+                          return (
+                            <button
+                              key={cNo}
+                              type="button"
+                              onClick={() => setDeliveryChallanNo(cNo)}
+                              className={`px-3 py-1.5 rounded-xl text-xs font-mono font-black transition-all cursor-pointer border flex items-center gap-1.5 ${
+                                isSelected
+                                  ? 'bg-cyan-700 text-white border-cyan-800 ring-2 ring-cyan-500/30 shadow-xs scale-105'
+                                  : 'bg-white text-cyan-900 border-cyan-300 hover:bg-cyan-100 hover:border-cyan-400'
+                              }`}
+                            >
+                              <span>#{cNo}</span>
+                              {isSelected && <Check className="h-3.5 w-3.5 text-cyan-200" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-[11px] font-medium text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
+                      ⚠️ No active pending Delivery Challans found. Enter a custom challan number below or create a new challan.
+                    </p>
+                  )}
+
+                  <div className="pt-2 border-t border-cyan-200/80 flex items-center gap-2">
+                    <span className="text-[10px] font-bold text-cyan-900 uppercase shrink-0">Challan Number:</span>
+                    <input
+                      type="text"
+                      placeholder="e.g. DC-1001"
+                      value={deliveryChallanNo}
+                      onChange={(e) => setDeliveryChallanNo(e.target.value)}
+                      className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 font-mono font-bold uppercase outline-none focus:border-cyan-600 focus:ring-1 focus:ring-cyan-500"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {submitMode === 'attach_challan' && deliveryChallanNo.trim() && (
+                <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center justify-between text-xs font-bold text-emerald-900 font-sans shadow-2xs">
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                    Attached to [ Challan #{deliveryChallanNo.toUpperCase()} ]
+                  </span>
+                  {currentChallanInfo.buyerName && (
+                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
+                      Buyer: {currentChallanInfo.buyerName}
+                    </span>
+                  )}
+                </div>
+              )}
+
+                  {/* 1. First Ask: Under Warranty? (GATED / PROGRESSIVE FIRST STEP) */}
               <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-2xl space-y-2">
                 <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wide font-sans">
                   Is this standalone battery allocation under warranty?
@@ -1135,7 +1519,7 @@ export default function BatterySalesManager({
                           inputMethod === 'scan' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                         }`}
                       >
-                        📷 Scan QR/Codes
+                        ✍️ Individual Serials
                       </button>
                     </div>
                   </div>
@@ -1144,7 +1528,7 @@ export default function BatterySalesManager({
                     <div className="grid grid-cols-2 gap-3">
                       <div>
                         <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                          Start No. Series
+                          Start Serial No.
                         </label>
                         <input
                           type="text"
@@ -1157,7 +1541,7 @@ export default function BatterySalesManager({
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                          End No. Series
+                          End Serial No.
                         </label>
                         <input
                           type="text"
@@ -1174,10 +1558,10 @@ export default function BatterySalesManager({
                       <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
                         <div>
                           <h4 className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5 font-sans">
-                            <span>📊</span> Scanned Serials
+                            <span>📊</span> Registered Serials
                           </h4>
                           <p className="text-[10px] text-slate-400 mt-0.5 font-sans">
-                            Each battery requires a unique scanned serial or QR.
+                            Enter serial numbers individually or as a list.
                           </p>
                         </div>
                         <div className="text-right">
@@ -1189,14 +1573,6 @@ export default function BatterySalesManager({
                       </div>
 
                       <div className="grid grid-cols-1 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowScanner(true)}
-                          className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-sans font-extrabold text-xs rounded-xl transition flex items-center justify-center gap-2 cursor-pointer shadow-sm"
-                        >
-                          📷 Launch Camera QR Scanner
-                        </button>
-
                         <div className="border border-slate-200 rounded-xl p-3 bg-white space-y-2">
                           <label className="block text-[10px] font-extrabold text-slate-500 uppercase tracking-wider font-sans">
                             ✍️ Enter Serial Manually
@@ -1347,24 +1723,49 @@ export default function BatterySalesManager({
                   {/* Battery Series */}
                   <div>
                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                      Battery Series Type
+                      Battery Model / Series 🔋
                     </label>
                     <select
                       value={batterySeries}
                       onChange={(e) => setBatterySeries(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans cursor-pointer"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-base sm:text-xs text-slate-800 outline-none focus:border-emerald-500 font-sans cursor-pointer font-bold"
                     >
-                      {(batterySeriesList.length > 0 ? batterySeriesList : ['Alpha Series', 'Beta Series', 'Delta Series', 'Omega Series', 'Pro-Pack Series']).map(seriesOpt => {
-                        const key = seriesOpt.endsWith('Series') ? seriesOpt : seriesOpt + ' Series';
-                        const avail = seriesStockMap[key]?.available ?? 0;
+                      {availableSeriesOptions.map(seriesOpt => {
+                        const stock = getSeriesStock(seriesOpt);
                         return (
                           <option key={seriesOpt} value={seriesOpt}>
-                            {seriesOpt} ({avail} Left)
+                            {seriesOpt} ({stock.available} Available in Warehouse)
                           </option>
                         );
                       })}
                       <option value="custom">-- Custom Series Name --</option>
                     </select>
+
+                    {/* Live Stock Availability Badge */}
+                    {(() => {
+                      const currSeries = batterySeries === 'custom' ? customSeries : batterySeries;
+                      const stock = getSeriesStock(currSeries);
+                      return (
+                        <div className="mt-2 p-2.5 rounded-xl border flex items-center justify-between text-xs font-sans transition-all bg-emerald-50/80 border-emerald-200">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">📦</span>
+                            <div>
+                              <span className="font-extrabold text-emerald-950 block">
+                                Available Stock: <span className="text-emerald-700 text-xs sm:text-sm font-black">{stock.available} Packs</span>
+                              </span>
+                              <span className="text-[10px] text-slate-500 font-medium">
+                                Total Imported: {stock.imported} | Dispatched/Assigned: {stock.soldStandalone + stock.assignedToScooters}
+                              </span>
+                            </div>
+                          </div>
+                          {stock.available === 0 && (
+                            <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+                              ⚠️ Out of Stock
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Custom Series Input */}
@@ -1394,24 +1795,15 @@ export default function BatterySalesManager({
                     </label>
                     <input
                       type="number"
-                      placeholder={isUnderWarranty ? "Quantity derived from series range..." : "e.g. 50"}
+                      placeholder="e.g. 20"
                       value={quantity}
-                      onChange={(e) => {
-                        if (isUnderWarranty === false) {
-                          setQuantity(e.target.value);
-                        }
-                      }}
-                      readOnly={isUnderWarranty === true}
-                      className={`w-full border rounded-xl p-2.5 text-base sm:text-xs font-sans outline-none font-mono font-bold ${
-                        isUnderWarranty === true
-                          ? 'bg-slate-100 border-slate-200 text-slate-500 cursor-not-allowed font-medium'
-                          : 'bg-slate-50 border-slate-200 text-slate-800 focus:border-emerald-500'
-                      }`}
+                      onChange={(e) => handleQuantityChange(e.target.value)}
+                      className="w-full border rounded-xl p-2.5 text-base sm:text-xs font-sans outline-none font-mono font-bold bg-slate-50 border-slate-200 text-slate-800 focus:border-emerald-500"
                       required
                     />
-                    {isUnderWarranty === true && (
+                    {isUnderWarranty && (
                       <span className="text-[10px] text-emerald-600 mt-1 block font-semibold">
-                        ✓ Derived automatically from Start/End serial numbers. Manual override disabled.
+                        💡 Changing quantity will automatically update the ending serial number if starting serial is specified.
                       </span>
                     )}
                   </div>
@@ -1430,25 +1822,44 @@ export default function BatterySalesManager({
                     />
                   </div>
 
-                  {/* Actions Button Grid */}
-                  <div className="grid grid-cols-2 gap-2 pt-2">
+                  {/* Single Finishing Action Bar Button */}
+                  <div className="pt-2">
                     <button
                       type="submit"
-                      disabled={saving}
-                      onClick={() => setSubmitMode('sold')}
-                      className="py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-sans font-bold text-xs rounded-xl cursor-pointer disabled:opacity-50 transition-all flex items-center justify-center gap-1 shadow-sm active:scale-[0.98]"
+                      disabled={saving || currentChallanInfo.isFinished || isChallanRestrictedForUser(currentChallanInfo, currentUser)}
+                      className={`w-full py-3 font-sans font-bold text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 active:scale-[0.98] text-white ${
+                        submitMode === 'hold' 
+                          ? 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800' 
+                          : submitMode === 'attach_challan'
+                          ? 'bg-cyan-700 hover:bg-cyan-800 active:bg-cyan-900'
+                          : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800'
+                      }`}
                     >
-                      <Check className="h-3.5 w-3.5" />
-                      <span>{saving && submitMode === 'sold' ? 'Registering...' : 'Sell / Dispatch'}</span>
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={saving}
-                      onClick={() => setSubmitMode('hold')}
-                      className="py-2.5 bg-slate-800 hover:bg-slate-900 text-white font-sans font-bold text-xs rounded-xl cursor-pointer disabled:opacity-50 transition-all flex items-center justify-center gap-1 shadow-sm active:scale-[0.98]"
-                    >
-                      <Timer className="h-3.5 w-3.5 text-amber-400" />
-                      <span>{saving && submitMode === 'hold' ? 'Holding...' : 'Place on Hold'}</span>
+                      {saving ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          <span>Processing...</span>
+                        </>
+                      ) : submitMode === 'hold' ? (
+                        <>
+                          <Timer className="h-4 w-4" />
+                          <span>Place Batteries on Reservation Hold</span>
+                        </>
+                      ) : submitMode === 'attach_challan' ? (
+                        <>
+                          <ClipboardList className="h-4 w-4" />
+                          <span>
+                            {deliveryChallanNo.trim()
+                              ? `Attach Batteries to Challan #${deliveryChallanNo.trim().toUpperCase()}`
+                              : 'Attach Batteries to Delivery Challan'}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <Check className="h-4 w-4" />
+                          <span>Complete Direct Sale / Dispatch</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </motion.div>
@@ -1484,10 +1895,16 @@ export default function BatterySalesManager({
             </div>
 
             <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-              {Object.keys(seriesStockMap).map((series) => {
-                const info = seriesStockMap[series];
-                return (
-                  <div key={series} className="bg-emerald-900/40 border border-emerald-800/40 p-3 rounded-2xl flex justify-between items-center transition-all hover:bg-emerald-900/60">
+              {Object.keys(seriesStockMap)
+                .filter(series => {
+                  const info = seriesStockMap[series];
+                  // Only show series that have some activity (imported or sold) to keep list clean
+                  return info.imported > 0 || info.soldStandalone > 0 || info.assignedToScooters > 0;
+                })
+                .map((series) => {
+                  const info = seriesStockMap[series];
+                  return (
+                    <div key={series} className="bg-emerald-900/40 border border-emerald-800/40 p-3 rounded-2xl flex justify-between items-center transition-all hover:bg-emerald-900/60">
                     <div>
                       <span className="block text-xs font-extrabold text-slate-100 font-sans">
                         {series}
@@ -1540,7 +1957,7 @@ export default function BatterySalesManager({
                       </div>
                       <div className="text-right">
                         <span className="block text-xs font-black text-emerald-400 font-mono">
-                          {sum.totalQty.toLocaleString()} Units
+                          {sum.totalQty.toLocaleString()} Batteries
                         </span>
                         <span className="block text-[8px] text-slate-500 font-mono">
                           Last Sent: {new Date(sum.lastSaleDate).toLocaleDateString()}
@@ -2430,48 +2847,154 @@ export default function BatterySalesManager({
         )}
       </AnimatePresence>
 
-      {showScanner && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <QRSerialScanner
-            title="Scan Under-Warranty Lithium Batteries"
-            type="battery"
-            existingSerials={scannedSerials}
-            allRegisteredSerials={allRegisteredBatterySerials}
-            onConfirm={(serials) => {
-              setScannedSerials(serials);
-              setShowScanner(false);
-            }}
-            onCancel={() => setShowScanner(false)}
-          />
+      {/* Select Active Delivery Challan Modal */}
+      {isSelectChallanModalOpen && (
+        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-xl w-full p-6 shadow-2xl border border-slate-200 font-sans space-y-4 max-h-[90vh] flex flex-col animate-in fade-in zoom-in duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2 text-cyan-800">
+                <ClipboardList className="h-6 w-6 text-cyan-600" />
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900">Select Active Delivery Challan</h3>
+                  <p className="text-xs text-slate-500 font-medium">Link battery dispatch to an existing truck or buyer challan</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsSelectChallanModalOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 space-y-3 pr-1">
+              {activeChallanNumbers.length === 0 ? (
+                <div className="text-center py-8 text-slate-400 text-xs">
+                  No active pending Delivery Challans found. Enter a new challan number above.
+                </div>
+              ) : (
+                activeChallanNumbers.map((cNo) => {
+                  const info = inspectChallanNumber(cNo, scooterUnits, batterySales, chargerSales);
+                  const isRestricted = isChallanRestrictedForUser(info, currentUser);
+                  const isCurrentlySelected = deliveryChallanNo.toUpperCase() === cNo.toUpperCase();
+
+                  return (
+                    <div
+                      key={cNo}
+                      className={`p-4 rounded-2xl border transition-all space-y-2 ${
+                        isCurrentlySelected
+                          ? 'bg-cyan-50 border-cyan-400 ring-2 ring-cyan-500/20 shadow-sm'
+                          : 'bg-slate-50 hover:bg-white border-slate-200 hover:border-cyan-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-black text-sm text-cyan-900 bg-cyan-100 border border-cyan-300 px-2.5 py-1 rounded-lg">
+                            [ Challan #{cNo} ]
+                          </span>
+                          {isRestricted && (
+                            <span className="text-[10px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-full border border-amber-300">
+                              Restricted (by {info.createdBy})
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          type="button"
+                          disabled={isRestricted}
+                          onClick={() => {
+                            setDeliveryChallanNo(cNo);
+                            setIsSelectChallanModalOpen(false);
+                          }}
+                          className={`px-3 py-1.5 rounded-xl font-sans font-bold text-xs transition-all cursor-pointer shadow-2xs flex items-center gap-1 ${
+                            isRestricted
+                              ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                              : isCurrentlySelected
+                              ? 'bg-cyan-700 text-white hover:bg-cyan-800'
+                              : 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                          }`}
+                        >
+                          {isCurrentlySelected ? '✓ Selected' : 'Select & Link Battery'}
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-slate-600 pt-1">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase block">Buyer Name</span>
+                          <span className="font-semibold text-slate-800">{info.buyerName || 'Unspecified'}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase block">Sales Bill No</span>
+                          <span className="font-mono font-semibold text-slate-800">{info.billNo || 'N/A'}</span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase block">Creator</span>
+                          <span className="font-semibold text-slate-800">{info.createdBy || 'System'}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-3 text-[11px] font-medium text-slate-500 pt-1 border-t border-slate-200/60">
+                        <span>Scooters: <strong className="text-slate-800">{info.scooterCount}</strong></span>
+                        <span>Batteries: <strong className="text-slate-800">{info.batteryCount}</strong></span>
+                        <span>Chargers: <strong className="text-slate-800">{info.chargerCount}</strong></span>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="pt-2 border-t border-slate-100 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setIsSelectChallanModalOpen(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// Helper function to generate battery sequential serials from start/end ranges
+// Helper function to generate battery sequential serials from start/end ranges or start + count
 function generateSerialRange(start: string, end: string, count: number): string[] {
-  if (!start || !end || start === 'N/A' || end === 'N/A') return [];
+  if (!start || start === 'N/A') return [];
   
-  const startMatch = start.trim().toUpperCase().match(/^([A-Z0-9\-_]*?)(\d+)$/);
-  const endMatch = end.trim().toUpperCase().match(/^([A-Z0-9\-_]*?)(\d+)$/);
+  const cleanStart = start.trim();
+  const cleanEnd = end && end !== 'N/A' ? end.trim() : '';
   
-  if (startMatch && endMatch) {
-    const prefix = startMatch[1];
+  const startMatch = cleanStart.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+  
+  if (startMatch) {
+    const prefix = startMatch[1] !== undefined ? startMatch[1] : '';
     const startNum = parseInt(startMatch[2], 10);
-    const endNum = parseInt(endMatch[2], 10);
     const paddingLength = startMatch[2].length;
     
-    if (endNum >= startNum && (endNum - startNum + 1) <= 1000) { // Limit to 1000 to prevent crash
-      const list: string[] = [];
-      for (let i = startNum; i <= endNum; i++) {
-        const numStr = String(i).padStart(paddingLength, '0');
-        list.push(`${prefix}${numStr}`);
+    let targetCount = Math.max(1, count || 1);
+    
+    if (cleanEnd) {
+      const endMatch = cleanEnd.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+      if (endMatch) {
+        const endNum = parseInt(endMatch[2], 10);
+        if (endNum >= startNum) {
+          targetCount = Math.max(targetCount, endNum - startNum + 1);
+        }
       }
-      return list;
     }
+    
+    const list: string[] = [];
+    for (let i = 0; i < targetCount; i++) {
+      const numStr = String(startNum + i).padStart(paddingLength, '0');
+      list.push(`${prefix}${numStr}`);
+    }
+    return list;
   }
   
-  // Fallback to start and end
-  return [start, end];
+  if (cleanEnd && cleanEnd !== cleanStart) return [cleanStart, cleanEnd];
+  return [cleanStart];
 }

@@ -2,15 +2,17 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Layers, Settings, ShoppingBag, Battery, ShieldCheck, Search, Calendar, 
-  ChevronRight, Plus, Trash, PlusCircle, CheckCircle2, Sparkles, Filter, Info, AlertTriangle, Hammer, AlertCircle, User,
-  LayoutGrid, Kanban
+  ChevronRight, Plus, Trash, Trash2, PlusCircle, CheckCircle2, Sparkles, Filter, Info, AlertTriangle, Hammer, AlertCircle, User,
+  LayoutGrid, Kanban, ClipboardList, RefreshCw
 } from 'lucide-react';
 import { ScooterUnit, Product, Buyer, User as SessionUser, StockLog, BatterySale, BatteryImport, ChargerSale, ChargerImport } from '../types';
+import { formatUserMessage } from '../utils/errorHelper';
 import BatterySalesManager from './BatterySalesManager';
 import ChargerSalesManager from './ChargerSalesManager';
-import QRSerialScanner from './QRSerialScanner';
 import { SearchableDropdown } from './SearchableDropdown';
-import { formatUserMessage } from '../utils/errorHelper';
+import { inspectChallanNumber } from '../utils/challanUtils';
+import { ChallanStatusCard } from './ChallanStatusCard';
+import { generateSerialRangeHelper } from '../utils/serialUtils';
 
 interface AssemblyPipelineProps {
   products: Product[];
@@ -146,6 +148,7 @@ export default function AssemblyPipeline({
   
   // Filters and Searching
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchTargetFilter, setSearchTargetFilter] = useState<'all' | 'buyer' | 'chassis' | 'motor' | 'controller' | 'model' | 'color'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'available' | 'sold' | 'hold'>('all');
   const [tireFilter, setTireFilter] = useState<'all' | '10-inch' | '12-inch'>('all');
   const [registryViewMode, setRegistryViewMode] = useState<'list' | 'grid' | 'board'>('list');
@@ -203,12 +206,54 @@ export default function AssemblyPipeline({
   const [s3BuyerName, setS3BuyerName] = useState('');
   const [s3BuyerContact, setS3BuyerContact] = useState('');
   const [s3BuyerAddress, setS3BuyerAddress] = useState('');
-  const [s3Price, setS3Price] = useState('');
   const [s3BillNo, setS3BillNo] = useState('');
   const [s3DeliveryChallanNo, setS3DeliveryChallanNo] = useState('');
+  const [s3DispatchMode, setS3DispatchMode] = useState<'sold' | 'hold'>('sold');
+
+  // Inspect Stage 3 Delivery Challan Number
+  const s3ChallanInfo = useMemo(() => {
+    return inspectChallanNumber(s3DeliveryChallanNo, scooterUnits, batterySales, chargerSales);
+  }, [s3DeliveryChallanNo, scooterUnits, batterySales, chargerSales]);
+
+  // Active pending delivery challan numbers for Stage 3 Wholesale POS
+  const s3ActiveChallanNumbers = useMemo(() => {
+    const set = new Set<string>();
+    if (scooterUnits) {
+      scooterUnits.forEach(u => {
+        if (u.deliveryChallanNo && u.challanStatus !== 'finished') set.add(u.deliveryChallanNo.toUpperCase());
+      });
+    }
+    if (batterySales) {
+      batterySales.forEach(b => {
+        if (b.deliveryChallanNo && b.challanStatus !== 'finished') set.add(b.deliveryChallanNo.toUpperCase());
+      });
+    }
+    if (chargerSales) {
+      chargerSales.forEach(c => {
+        if (c.deliveryChallanNo && c.challanStatus !== 'finished') set.add(c.deliveryChallanNo.toUpperCase());
+      });
+    }
+    return Array.from(set);
+  }, [scooterUnits, batterySales, chargerSales]);
+
+  // Auto-fill buyer details and bill number if an active pending challan is entered in Stage 3
+  useEffect(() => {
+    if (s3ChallanInfo.exists && !s3ChallanInfo.isFinished) {
+      if (s3ChallanInfo.buyerName) {
+        setS3BuyerName(s3ChallanInfo.buyerName);
+      }
+      if (s3ChallanInfo.buyerContact) {
+        setS3BuyerContact(s3ChallanInfo.buyerContact);
+      }
+      if (s3ChallanInfo.billNo) {
+        setS3BillNo(s3ChallanInfo.billNo);
+      }
+    }
+  }, [s3ChallanInfo]);
 
   // Integrated retail sales options
   const [s3ModelSelected, setS3ModelSelected] = useState('');
+  const [posIncludeScooter, setPosIncludeScooter] = useState(true);
   const [posIncludeBattery, setPosIncludeBattery] = useState(true);
   const [posBatteryWarrantyActive, setPosBatteryWarrantyActive] = useState(true);
   const [posBatteryWarrantyDuration, setPosBatteryWarrantyDuration] = useState(12); // Default 12 (6+6) months
@@ -219,12 +264,6 @@ export default function AssemblyPipeline({
   const [posChargerWarrantyDuration, setPosChargerWarrantyDuration] = useState(12); // Default 12 months
   const [posScooterWarrantyDuration, setPosScooterWarrantyDuration] = useState(12); // Default 12 months
   const [posWarrantyTermsAccepted, setPosWarrantyTermsAccepted] = useState(true);
-
-  // Scanning overlay state for individual slots (Stage 1 / Stage 3)
-  const [assemblyScannerTarget, setAssemblyScannerTarget] = useState<{
-    type: 'battery_prep' | 'battery_checkout' | 'charger_checkout';
-    index?: number;
-  } | null>(null);
 
   // Collect registered battery and charger serials to prevent duplicates
   const allRegisteredBatterySerialsInAssembly = useMemo(() => {
@@ -279,6 +318,50 @@ export default function AssemblyPipeline({
     return list;
   }, [scooterUnits, chargerSales, chargerImports]);
   
+  const posBatteryStockMap = useMemo(() => {
+    const map: Record<string, { imported: number; sold: number; available: number }> = {};
+    if (batteryImports && Array.isArray(batteryImports)) {
+      batteryImports.forEach(imp => {
+        const series = (imp.batterySeries || 'Standard Series').trim();
+        if (!map[series]) map[series] = { imported: 0, sold: 0, available: 0 };
+        map[series].imported += (imp.quantity || (imp.serialNumbers ? imp.serialNumbers.length : 0) || 0);
+      });
+    }
+    if (batterySales && Array.isArray(batterySales)) {
+      batterySales.forEach(sale => {
+        const series = (sale.batterySeries || 'Standard Series').trim();
+        if (!map[series]) map[series] = { imported: 0, sold: 0, available: 0 };
+        map[series].sold += (sale.quantity || (sale.serialNumbers ? sale.serialNumbers.length : 0) || 0);
+      });
+    }
+    Object.keys(map).forEach(k => {
+      map[k].available = Math.max(0, map[k].imported - map[k].sold);
+    });
+    return map;
+  }, [batteryImports, batterySales]);
+
+  const posChargerStockMap = useMemo(() => {
+    const map: Record<string, { imported: number; sold: number; available: number }> = {};
+    if (chargerImports && Array.isArray(chargerImports)) {
+      chargerImports.forEach(imp => {
+        const type = (imp.chargerType || 'Standard Charger').trim();
+        if (!map[type]) map[type] = { imported: 0, sold: 0, available: 0 };
+        map[type].imported += (imp.quantity || (imp.serialNumbers ? imp.serialNumbers.length : 0) || 0);
+      });
+    }
+    if (chargerSales && Array.isArray(chargerSales)) {
+      chargerSales.forEach(sale => {
+        const type = (sale.chargerType || 'Standard Charger').trim();
+        if (!map[type]) map[type] = { imported: 0, sold: 0, available: 0 };
+        map[type].sold += (sale.quantity || (sale.serialNumbers ? sale.serialNumbers.length : 0) || 0);
+      });
+    }
+    Object.keys(map).forEach(k => {
+      map[k].available = Math.max(0, map[k].imported - map[k].sold);
+    });
+    return map;
+  }, [chargerImports, chargerSales]);
+
   const [posHasPreassignedBatteries, setPosHasPreassignedBatteries] = useState(false);
   const [posEditPreassignedBatteries, setPosEditPreassignedBatteries] = useState(false);
   
@@ -387,42 +470,54 @@ export default function AssemblyPipeline({
 
   // Bulk POS Sales Checkout (Stage 3)
   const [s3IsBulk, setS3IsBulk] = useState(false);
-  const [s3Mode, setS3Mode] = useState<'single' | 'bulk' | 'battery' | 'charger' | 'assign_battery'>('single');
-  const [s3BulkModel, setS3BulkModel] = useState('');
-  const [s3BulkColor, setS3BulkColor] = useState('');
+  const [s3Mode, setS3Mode] = useState<'single' | 'bulk'>('single');
+  const [s3BulkModel, setS3BulkModel] = useState('ALL');
+  const [s3BulkColor, setS3BulkColor] = useState('ALL');
+  const [s3BulkSearchTerm, setS3BulkSearchTerm] = useState('');
   const [s3BulkChassisPasted, setS3BulkChassisPasted] = useState('');
   const [s3BulkSelectedIds, setS3BulkSelectedIds] = useState<string[]>([]);
   const [s3BulkBatteriesRaw, setS3BulkBatteriesRaw] = useState('');
   const [s3BulkBatteriesPerScooter, setS3BulkBatteriesPerScooter] = useState(1);
 
-  // Set default model color for bulk POS when products change
-  React.useEffect(() => {
-    if (products.length > 0) {
-      setS3BulkModel(products[0].name);
-      if (products[0].colors.length > 0) {
-        setS3BulkColor(products[0].colors[0]);
-      }
-    }
-  }, [products]);
+  // Wholesale Battery & Charger State in Challan POS (Wholesale level)
+  const [s3WholesaleBatterySeries, setS3WholesaleBatterySeries] = useState('Alpha');
+  const [s3WholesaleBatteryStartNo, setS3WholesaleBatteryStartNo] = useState('');
+  const [s3WholesaleBatteryEndNo, setS3WholesaleBatteryEndNo] = useState('');
+  const [s3WholesaleBatteryQty, setS3WholesaleBatteryQty] = useState('1');
+  const [s3WholesaleBatteryWarrantyActive, setS3WholesaleBatteryWarrantyActive] = useState(true);
+  const [s3WholesaleBatteryWarrantyMonths, setS3WholesaleBatteryWarrantyMonths] = useState(12);
 
-  // Force manufacturer to only use assign_battery mode in Stage 3
-  React.useEffect(() => {
-    if (currentUser?.role === 'manufacturer' && s3Mode !== 'assign_battery') {
-      setS3Mode('assign_battery');
-    }
-  }, [currentUser, s3Mode]);
+  const [s3WholesaleChargerType, setS3WholesaleChargerType] = useState('60V Charger');
+  const [s3WholesaleChargerStartNo, setS3WholesaleChargerStartNo] = useState('');
+  const [s3WholesaleChargerEndNo, setS3WholesaleChargerEndNo] = useState('');
+  const [s3WholesaleChargerQty, setS3WholesaleChargerQty] = useState('1');
+  const [s3WholesaleChargerSerials, setS3WholesaleChargerSerials] = useState('');
+  const [s3WholesaleChargerWarrantyActive, setS3WholesaleChargerWarrantyActive] = useState(true);
+  const [s3WholesaleChargerWarrantyMonths, setS3WholesaleChargerWarrantyMonths] = useState(12);
 
-  // Adjust bulk POS color when model changes
+  // Default to ALL models and ALL colors for flexible multi-model wholesale
+  React.useEffect(() => {
+    if (!s3BulkModel) {
+      setS3BulkModel('ALL');
+    }
+    if (!s3BulkColor) {
+      setS3BulkColor('ALL');
+    }
+  }, []);
+
+  // Adjust bulk POS color when model changes without clearing multi-model selection queue
   const handleBulkPOSModelChange = (modelName: string) => {
     setS3BulkModel(modelName);
-    const prod = products.find(p => p.name === modelName);
-    if (prod && prod.colors.length > 0) {
-      setS3BulkColor(prod.colors[0]);
+    if (modelName !== 'ALL') {
+      const prod = products.find(p => p.name === modelName);
+      if (prod && prod.colors.length > 0) {
+        setS3BulkColor('ALL');
+      } else {
+        setS3BulkColor('ALL');
+      }
     } else {
-      setS3BulkColor('');
+      setS3BulkColor('ALL');
     }
-    // Reset selection when changing scooter type
-    setS3BulkSelectedIds([]);
   };
 
   // Parsed bulk creation items
@@ -475,17 +570,39 @@ export default function AssemblyPipeline({
     return items;
   }, [s1BulkModeType, s1BulkCSV, s1BulkChassisList, s1BulkMotorList, s1BulkControllerList]);
 
-
-
-  // Filter stock for bulk sales
+  // Filter stock for bulk sales with multi-model, multi-color, and search features
   const availableBulkStock = React.useMemo(() => {
-    if (!s3BulkModel || !s3BulkColor) return [];
-    return scooterUnits.filter(u => (u.status === 'available' || u.status === 'hold') && u.modelName === s3BulkModel && u.color === s3BulkColor);
-  }, [scooterUnits, s3BulkModel, s3BulkColor]);
+    return scooterUnits.filter(u => {
+      if (u.status !== 'available' && u.status !== 'hold') return false;
 
-  // Handle chassis pasting auto-selection
+      // Model filter
+      if (s3BulkModel && s3BulkModel !== 'ALL' && u.modelName !== s3BulkModel) {
+        return false;
+      }
+
+      // Color filter
+      if (s3BulkColor && s3BulkColor !== 'ALL' && u.color !== s3BulkColor) {
+        return false;
+      }
+
+      // Text search filter (Chassis, Motor, or Controller No)
+      if (s3BulkSearchTerm && s3BulkSearchTerm.trim()) {
+        const q = s3BulkSearchTerm.trim().toLowerCase();
+        const matchChassis = u.chassisNo && u.chassisNo.toLowerCase().includes(q);
+        const matchMotor = u.motorNo && u.motorNo.toLowerCase().includes(q);
+        const matchController = u.controllerNo && u.controllerNo.toLowerCase().includes(q);
+        if (!matchChassis && !matchMotor && !matchController) {
+          return false;
+        }
+      }
+
+      return true;
+    });
+  }, [scooterUnits, s3BulkModel, s3BulkColor, s3BulkSearchTerm]);
+
+  // Handle chassis, motor, or controller pasting auto-selection across warehouse inventory
   React.useEffect(() => {
-    if (!s3IsBulk || !s3BulkChassisPasted) return;
+    if (!s3BulkChassisPasted) return;
     const pastedList = s3BulkChassisPasted
       .split(/[\n,;\t\r]+/)
       .map(s => s.trim().toUpperCase())
@@ -493,13 +610,20 @@ export default function AssemblyPipeline({
     
     if (pastedList.length === 0) return;
 
-    // Find scooter IDs matching the pasted chassis numbers
-    const matchedIds = availableBulkStock
-      .filter(u => pastedList.includes(u.chassisNo))
+    // Search across all available warehouse stock
+    const availableStock = scooterUnits.filter(u => u.status === 'available' || u.status === 'hold');
+    const matchedIds = availableStock
+      .filter(u => 
+        pastedList.includes(u.chassisNo.toUpperCase()) ||
+        (u.motorNo && pastedList.includes(u.motorNo.toUpperCase())) ||
+        (u.controllerNo && pastedList.includes(u.controllerNo.toUpperCase()))
+      )
       .map(u => u.id);
 
-    setS3BulkSelectedIds(matchedIds);
-  }, [s3BulkChassisPasted, availableBulkStock, s3IsBulk]);
+    if (matchedIds.length > 0) {
+      setS3BulkSelectedIds(prev => Array.from(new Set([...prev, ...matchedIds])));
+    }
+  }, [s3BulkChassisPasted, scooterUnits]);
 
   // Bulk sales battery sequential allocation
   const bulkPOSBatteryAllocation = React.useMemo(() => {
@@ -544,27 +668,39 @@ export default function AssemblyPipeline({
     return { allocation, unusedBatteries: pastedBatteries.slice(pastedIndex) };
   }, [s3BulkSelectedIds, scooterUnits, s3BulkBatteriesRaw, s3BulkBatteriesPerScooter]);
 
-  // Bulk POS checkout submit
+  // Wholesale Challan POS checkout submit (Truck Dispatch)
   const handleStage3BulkSubmit = async (e?: React.FormEvent, submitStatus: 'sold' | 'hold' = 'sold') => {
     if (e) e.preventDefault();
-    if (s3BulkSelectedIds.length === 0) {
-      triggerAlert('error', `Please select at least one scooter frame to ${submitStatus === 'hold' ? 'hold' : 'sell'}.`);
+
+    if (!posIncludeScooter && !posIncludeBattery && !posIncludeCharger) {
+      triggerAlert('error', 'Please select at least one item category (Scooter, Battery, or Charger) for Wholesale Challan Dispatch.');
       return;
     }
-    if (!s3BuyerName) {
-      triggerAlert('error', `Buyer Name is required for bulk wholesale ${submitStatus === 'hold' ? 'holding' : 'sales'}.`);
+
+    if (posIncludeScooter && s3BulkSelectedIds.length === 0) {
+      triggerAlert('error', `Please select at least one scooter frame from inventory to ${submitStatus === 'hold' ? 'hold' : 'dispatch'}.`);
       return;
     }
-    if (submitStatus === 'sold' && !s3BillNo.trim()) {
-      triggerAlert('error', 'Bill Number is required to finalize sale.');
+
+    if (!s3BuyerName.trim()) {
+      triggerAlert('error', `Buyer Name is required for wholesale ${submitStatus === 'hold' ? 'holding' : 'challan dispatch'}.`);
       return;
     }
+
     if (submitStatus === 'sold' && !s3DeliveryChallanNo.trim()) {
-      triggerAlert('error', 'Chalan Number is required to finalize sale.');
+      triggerAlert('error', 'Delivery Challan Number is required to finalize wholesale dispatch.');
+      return;
+    }
+
+    if (s3ChallanInfo.cleanNo && s3ChallanInfo.isFinished) {
+      triggerAlert('error', `⛔ Delivery Challan #${s3ChallanInfo.cleanNo} is FINISHED & VERIFIED! This challan is locked. You cannot attach items to a finished challan. Please use a NEW, unique Delivery Challan Number.`);
       return;
     }
 
     setLoading(true);
+    let overallSuccess = true;
+    const dispatchedSummary: string[] = [];
+
     try {
       // Auto-register new buyer if they are not in the database
       const finalBuyerName = s3BuyerName.trim();
@@ -575,38 +711,168 @@ export default function AssemblyPipeline({
         }
       }
 
-      const salesPayload = bulkPOSBatteryAllocation.allocation.map(alloc => ({
-        id: alloc.scooterId,
-        batterySerials: alloc.preassigned ? [] : alloc.batteries,
-        batteryWarrantyFlags: alloc.preassigned ? [] : alloc.batteries.map(() => true),
-        batteryWarrantyMonths: alloc.preassigned ? [] : alloc.batteries.map(() => 12)
-      }));
+      // 1. Process Wholesale Scooters if enabled
+      if (posIncludeScooter && s3BulkSelectedIds.length > 0) {
+        const salesPayload = bulkPOSBatteryAllocation.allocation.map(alloc => ({
+          id: alloc.scooterId,
+          batterySerials: alloc.preassigned ? [] : alloc.batteries,
+          batteryWarrantyFlags: alloc.preassigned ? [] : alloc.batteries.map(() => true),
+          batteryWarrantyMonths: alloc.preassigned ? [] : alloc.batteries.map(() => 12)
+        }));
 
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/bulk-pos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          buyerName: s3BuyerName,
-          buyerContact: s3BuyerContact,
-          salesPrice: s3Price ? Number(s3Price) : undefined,
-          scooterWarrantyStatus: s5ScooterWarrantyActive ? 'Active' : 'None',
-          scooterWarrantyExpiry: s5ScooterWarrantyActive ? s5ScooterExpiry : undefined,
-          batteryWarrantyStatus: 'None',
-          warrantyNotes: s5Notes,
-          operator: currentUser.username,
-          sales: salesPayload,
-          status: submitStatus,
-          salesBillNo: s3BillNo.trim(),
-          deliveryChallanNo: s3DeliveryChallanNo.trim()
-        })
-      });
+        const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/bulk-pos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            buyerName: s3BuyerName.trim(),
+            buyerContact: s3BuyerContact.trim(),
+            scooterWarrantyStatus: s5ScooterWarrantyActive ? 'Active' : 'None',
+            scooterWarrantyExpiry: s5ScooterWarrantyActive ? s5ScooterExpiry : undefined,
+            batteryWarrantyStatus: 'None',
+            warrantyNotes: s5Notes,
+            operator: currentUser.username,
+            sales: salesPayload,
+            status: submitStatus,
+            salesBillNo: s3BillNo.trim(),
+            deliveryChallanNo: s3DeliveryChallanNo.trim()
+          })
+        });
 
-      const data = await res.json();
-      if (res.ok) {
-        if (submitStatus === 'hold') {
-          triggerAlert('success', `Wholesale Reservation Success! Placed ${data.count} scooters on hold under buyer ${s3BuyerName}.`);
+        if (res.ok) {
+          dispatchedSummary.push(`${s3BulkSelectedIds.length} Vehicles`);
         } else {
-          triggerAlert('success', `Wholesale Sale Finalized! Dispatched ${data.count} scooters, logged transactions, and updated Sheets.`);
+          overallSuccess = false;
+        }
+      }
+
+      // 2. Process Wholesale Batteries if enabled
+      // 2. Process Wholesale Batteries if enabled
+      if (posIncludeBattery) {
+        let cleanBatSerials = s3BulkBatteriesRaw
+          .split(/[\n,;\t\r]+/)
+          .map(b => b.trim())
+          .filter(Boolean);
+
+        const batStart = s3WholesaleBatteryStartNo.trim().toUpperCase();
+        const batEnd = s3WholesaleBatteryEndNo.trim().toUpperCase();
+        const seriesName = s3WholesaleBatterySeries.trim() || 'Senzo';
+
+        let parsedQty = Math.max(1, parseInt(s3WholesaleBatteryQty, 10) || 1);
+
+        const startMatch = batStart.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+        const endMatch = batEnd.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+        if (startMatch && endMatch) {
+          const sNum = parseInt(startMatch[2], 10);
+          const eNum = parseInt(endMatch[2], 10);
+          if (eNum >= sNum) {
+            parsedQty = Math.max(parsedQty, eNum - sNum + 1);
+          }
+        }
+
+        if (cleanBatSerials.length === 0 && batStart !== '') {
+          cleanBatSerials = generateSerialRangeHelper(batStart, batEnd, parsedQty, seriesName);
+        }
+
+        parsedQty = Math.max(parsedQty, cleanBatSerials.length);
+
+        const batPayload = {
+          buyerName: s3BuyerName.trim(),
+          buyerContact: s3BuyerContact.trim(),
+          buyerAddress: s3BuyerAddress.trim(),
+          batterySeries: seriesName,
+          startNo: batStart || (cleanBatSerials[0] || 'N/A'),
+          endNo: batEnd || (cleanBatSerials[cleanBatSerials.length - 1] || 'N/A'),
+          quantity: parsedQty,
+          serialNumbers: cleanBatSerials,
+          notes: s5Notes,
+          salesBillNo: s3BillNo.trim(),
+          deliveryChallanNo: s3DeliveryChallanNo.trim(),
+          isUnderWarranty: s3WholesaleBatteryWarrantyActive,
+          warrantyDurationMonths: s3WholesaleBatteryWarrantyActive ? s3WholesaleBatteryWarrantyMonths : 0,
+          status: submitStatus as any
+        };
+
+        if (onSubmitBatterySale) {
+          const batOk = await onSubmitBatterySale(batPayload as any);
+          if (batOk) dispatchedSummary.push(`${parsedQty} Battery Packs`);
+          else overallSuccess = false;
+        } else {
+          const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...batPayload, operator: currentUser.username })
+          });
+          if (res.ok) dispatchedSummary.push(`${parsedQty} Battery Packs`);
+          else overallSuccess = false;
+        }
+      }
+
+      // 3. Process Wholesale Chargers if enabled
+      if (posIncludeCharger) {
+        let cleanChgSerials = s3WholesaleChargerSerials
+          .split(/[\n,;\t\r]+/)
+          .map(c => c.trim().toUpperCase())
+          .filter(Boolean);
+
+        const chgStart = s3WholesaleChargerStartNo.trim().toUpperCase();
+        const chgEnd = s3WholesaleChargerEndNo.trim().toUpperCase();
+        const chgType = s3WholesaleChargerType.trim() || '60V Charger';
+
+        let parsedChgQty = Math.max(1, parseInt(s3WholesaleChargerQty, 10) || 1);
+
+        const chgStartMatch = chgStart.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+        const chgEndMatch = chgEnd.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+        if (chgStartMatch && chgEndMatch) {
+          const sNum = parseInt(chgStartMatch[2], 10);
+          const eNum = parseInt(chgEndMatch[2], 10);
+          if (eNum >= sNum) {
+            parsedChgQty = Math.max(parsedChgQty, eNum - sNum + 1);
+          }
+        }
+
+        if (cleanChgSerials.length === 0 && chgStart !== '') {
+          cleanChgSerials = generateSerialRangeHelper(chgStart, chgEnd, parsedChgQty, chgType);
+        }
+
+        parsedChgQty = Math.max(parsedChgQty, cleanChgSerials.length);
+
+        const chgPayload = {
+          buyerName: s3BuyerName.trim(),
+          buyerContact: s3BuyerContact.trim(),
+          buyerAddress: s3BuyerAddress.trim(),
+          chargerType: chgType,
+          startNo: chgStart || (cleanChgSerials[0] || 'N/A'),
+          endNo: chgEnd || (cleanChgSerials[cleanChgSerials.length - 1] || 'N/A'),
+          quantity: parsedChgQty,
+          serialNumbers: cleanChgSerials,
+          notes: s5Notes,
+          salesBillNo: s3BillNo.trim(),
+          deliveryChallanNo: s3DeliveryChallanNo.trim(),
+          isUnderWarranty: s3WholesaleChargerWarrantyActive,
+          warrantyDurationMonths: s3WholesaleChargerWarrantyActive ? s3WholesaleChargerWarrantyMonths : 0,
+          status: submitStatus as any
+        };
+
+        if (onSubmitChargerSale) {
+          const chgOk = await onSubmitChargerSale(chgPayload as any);
+          if (chgOk) dispatchedSummary.push(`${parsedChgQty} Chargers`);
+          else overallSuccess = false;
+        } else {
+          const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...chgPayload, operator: currentUser.username })
+          });
+          if (res.ok) dispatchedSummary.push(`${parsedChgQty} Chargers`);
+          else overallSuccess = false;
+        }
+      }
+
+      if (overallSuccess) {
+        if (submitStatus === 'hold') {
+          triggerAlert('success', `🤝 Reservation Hold Created! Items reserved for ${s3BuyerName.toUpperCase()} [Included: ${dispatchedSummary.length > 0 ? dispatchedSummary.join(' + ') : 'Selection'}].`);
+        } else {
+          triggerAlert('success', `🚚 Wholesale Delivery Challan #${s3DeliveryChallanNo.toUpperCase()} Dispatched Successfully! Included: [${dispatchedSummary.length > 0 ? dispatchedSummary.join(' + ') : 'Wholesale Items'}]`);
         }
         setS3BulkSelectedIds([]);
         setS3BulkChassisPasted('');
@@ -614,16 +880,29 @@ export default function AssemblyPipeline({
         setS3BuyerName('');
         setS3BuyerContact('');
         setS3BuyerAddress('');
-        setS3Price('');
         setS3BillNo('');
         setS3DeliveryChallanNo('');
         setS5Notes('');
+        setS3WholesaleBatteryStartNo('');
+        setS3WholesaleBatteryEndNo('');
+        setS3WholesaleBatteryQty('1');
+        setS3WholesaleChargerSerials('');
+        setS3WholesaleChargerQty('1');
+        setS5ScooterWarrantyActive(true);
+        setS5ScooterExpiry(new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+        setS3WholesaleBatteryWarrantyActive(true);
+        setS3WholesaleBatteryWarrantyMonths('12');
+        setS3WholesaleChargerWarrantyActive(true);
+        setS3WholesaleChargerWarrantyMonths('12');
+        setPosIncludeScooter(true);
+        setPosIncludeBattery(false);
+        setPosIncludeCharger(false);
         onRefresh();
       } else {
-        triggerAlert('error', data.error || `Bulk POS ${submitStatus === 'hold' ? 'hold' : 'sale'} failed.`);
+        triggerAlert('error', 'Wholesale Challan dispatch completed with errors. Please verify data.');
       }
     } catch (err) {
-      triggerAlert('error', `Network error during bulk ${submitStatus === 'hold' ? 'hold' : 'checkout'}.`);
+      triggerAlert('error', `Network error during wholesale dispatch.`);
     } finally {
       setLoading(false);
     }
@@ -869,14 +1148,16 @@ export default function AssemblyPipeline({
   // Stage 1C: Import Batteries
   const handleBatteryImportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!impBatterySeries || !impQuantity) {
-      triggerAlert('error', 'Please fill in all required battery details.');
+    if (!impQuantity) {
+      triggerAlert('error', 'Please enter a valid battery quantity.');
       return;
     }
 
+    const cleanSeries = impBatterySeries?.trim() || 'Standard';
+
     setLoading(true);
     const success = await onSubmitBatteryImport?.({
-      batterySeries: impBatterySeries,
+      batterySeries: cleanSeries,
       startNo: impStartNo.trim() || 'N/A',
       endNo: impEndNo.trim() || 'N/A',
       quantity: Number(impQuantity),
@@ -887,7 +1168,7 @@ export default function AssemblyPipeline({
 
     setLoading(false);
     if (success) {
-      triggerAlert('success', `Success: Logged import of ${impQuantity} ${impBatterySeries} Series batteries from abroad.`);
+      triggerAlert('success', `Success: Logged import of ${impQuantity} ${cleanSeries} batteries from abroad.`);
       setImpStartNo('');
       setImpEndNo('');
       setImpQuantity('');
@@ -908,32 +1189,47 @@ export default function AssemblyPipeline({
     return d.toISOString().split('T')[0];
   };
 
-  // Stage 3: POS Checkout & Deliver
+  // Stage 3: POS Checkout & Deliver (Challan Sales Chain)
   const handleStage3Submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedPOSScooterId) {
-      triggerAlert('error', 'Please select a scooter chassis.');
+
+    if (!posIncludeScooter && !posIncludeBattery && !posIncludeCharger) {
+      triggerAlert('error', 'Please select at least one item category (Scooter, Battery, or Charger) to process a Challan Sale.');
       return;
     }
-    if (!s3BuyerName) {
-      triggerAlert('error', 'Buyer Name is required to finalize transaction.');
+
+    if (posIncludeScooter && !selectedPOSScooterId) {
+      triggerAlert('error', 'Please choose a scooter chassis to include in this dispatch.');
       return;
     }
+
+    if (!s3BuyerName.trim()) {
+      triggerAlert('error', 'Buyer Name is required to process this transaction.');
+      return;
+    }
+
     if (!s3BillNo.trim()) {
-      triggerAlert('error', 'Bill Number is required to finalize transaction.');
+      triggerAlert('error', 'Sales Bill Number is required to process this transaction.');
       return;
     }
+
     if (!s3DeliveryChallanNo.trim()) {
-      triggerAlert('error', 'Chalan Number is required to finalize transaction.');
+      triggerAlert('error', 'Delivery Challan Number is required to process this transaction.');
       return;
     }
+
+    if (s3ChallanInfo.cleanNo && s3ChallanInfo.isFinished) {
+      triggerAlert('error', `⛔ Delivery Challan #${s3ChallanInfo.cleanNo} is FINISHED & VERIFIED! This challan is locked. You cannot attach items to a finished challan. Please use a NEW, unique Delivery Challan Number.`);
+      return;
+    }
+
     if (!posWarrantyTermsAccepted) {
       triggerAlert('error', 'Please accept the terms and conditions of the warranty to continue.');
       return;
     }
 
     setLoading(true);
-    
+
     // Auto-register new buyer if they are not in the database
     const finalBuyerName = s3BuyerName.trim();
     if (finalBuyerName) {
@@ -943,47 +1239,166 @@ export default function AssemblyPipeline({
       }
     }
 
-    const scooterWarrantyStatus = s5ScooterWarrantyActive ? 'Active' : 'None';
-    const cleanBatteries = posIncludeBattery ? s4Batteries.filter(b => b && b.trim() !== '') : [];
-    const cleanBatteryFlags = posIncludeBattery ? s4BatteryWarranties : [];
-    const cleanBatteryMonths = posIncludeBattery ? s4BatteryWarrantyMonths.map(() => posBatteryWarrantyActive ? posBatteryWarrantyDuration : 0) : [];
+    let overallSuccess = true;
 
-    const success = await onSubmitAssembly({
-      id: selectedPOSScooterId,
-      actionType: 'pos_stage3_4',
-      buyerName: s3BuyerName,
-      buyerContact: s3BuyerContact,
-      salesPrice: s3Price ? Number(s3Price) : undefined,
-      salesBillNo: s3BillNo.trim(),
-      deliveryChallanNo: s3DeliveryChallanNo.trim(),
-      batterySerials: cleanBatteries,
-      batteryWarrantyFlags: cleanBatteryFlags,
-      batteryWarrantyMonths: cleanBatteryMonths,
-      scooterWarrantyStatus,
-      scooterWarrantyExpiry: s5ScooterWarrantyActive ? getFutureDateByMonths(posScooterWarrantyDuration) : undefined,
-      batteryWarrantyStatus: (posIncludeBattery && posBatteryWarrantyActive && cleanBatteries.length > 0) ? 'Active' : 'None',
-      batteryWarrantyExpiry: (posIncludeBattery && posBatteryWarrantyActive && cleanBatteries.length > 0) ? getFutureDateByMonths(posBatteryWarrantyDuration) : undefined,
-      
-      // Integrated Charger Options
-      chargerIncluded: posIncludeCharger,
-      chargerType: posIncludeCharger ? posChargerType : undefined,
-      chargerSerial: posIncludeCharger ? posChargerSerial : undefined,
-      chargerWarrantyActive: posIncludeCharger ? posChargerWarrantyActive : false,
-      chargerWarrantyMonths: (posIncludeCharger && posChargerWarrantyActive) ? posChargerWarrantyDuration : 0,
-      
-      scooterWarrantyMonths: posScooterWarrantyDuration,
-      scooterWarrantyActive: s5ScooterWarrantyActive,
-      
-      warrantyNotes: s5Notes,
-      operator: currentUser.username
-    });
+    // 1. IF SCOOTER IS INCLUDED: Submit via assembly pipeline POS
+    if (posIncludeScooter && selectedPOSScooterId) {
+      const scooterWarrantyStatus = s5ScooterWarrantyActive ? 'Active' : 'None';
+      const cleanBatteries = posIncludeBattery ? s4Batteries.filter(b => b && b.trim() !== '') : [];
+      const cleanBatteryFlags = posIncludeBattery ? s4BatteryWarranties : [];
+      const cleanBatteryMonths = posIncludeBattery ? s4BatteryWarrantyMonths.map(() => posBatteryWarrantyActive ? posBatteryWarrantyDuration : 0) : [];
 
-    if (success) {
-      triggerAlert('success', `POS Completed! Dispatch logged and scooter warranty active.`);
+      const scootSuccess = await onSubmitAssembly({
+        id: selectedPOSScooterId,
+        actionType: 'pos_stage3_4',
+        buyerName: s3BuyerName.trim(),
+        buyerContact: s3BuyerContact.trim(),
+        salesBillNo: s3BillNo.trim(),
+        deliveryChallanNo: s3DeliveryChallanNo.trim(),
+        batterySerials: cleanBatteries,
+        batteryWarrantyFlags: cleanBatteryFlags,
+        batteryWarrantyMonths: cleanBatteryMonths,
+        scooterWarrantyStatus,
+        scooterWarrantyExpiry: s5ScooterWarrantyActive ? getFutureDateByMonths(posScooterWarrantyDuration) : undefined,
+        batteryWarrantyStatus: (posIncludeBattery && posBatteryWarrantyActive && cleanBatteries.length > 0) ? 'Active' : 'None',
+        batteryWarrantyExpiry: (posIncludeBattery && posBatteryWarrantyActive && cleanBatteries.length > 0) ? getFutureDateByMonths(posBatteryWarrantyDuration) : undefined,
+        
+        // Integrated Charger Options
+        chargerIncluded: posIncludeCharger,
+        chargerType: posIncludeCharger ? posChargerType : undefined,
+        chargerSerial: posIncludeCharger ? posChargerSerial : undefined,
+        chargerWarrantyActive: posIncludeCharger ? posChargerWarrantyActive : false,
+        chargerWarrantyMonths: (posIncludeCharger && posChargerWarrantyActive) ? posChargerWarrantyDuration : 0,
+        
+        scooterWarrantyMonths: posScooterWarrantyDuration,
+        scooterWarrantyActive: s5ScooterWarrantyActive,
+        
+        warrantyNotes: s5Notes,
+        operator: currentUser.username
+      });
+
+      if (!scootSuccess) overallSuccess = false;
+    }
+
+    // 2. IF SCOOTER IS NOT INCLUDED (Standalone Battery / Charger sale or combination)
+    if (!posIncludeScooter) {
+      // Dispatch Battery sale if enabled
+      const cleanBatteries = s4Batteries.filter(b => b && b.trim() !== '');
+      const parsedBatQty = Math.max(parseInt(s3WholesaleBatteryQty, 10) || 1, cleanBatteries.length);
+      const batSeries = s3WholesaleBatterySeries || 'Alpha';
+      const startNoVal = s3WholesaleBatteryStartNo.trim().toUpperCase() || (cleanBatteries[0] || 'N/A');
+      const endNoVal = s3WholesaleBatteryEndNo.trim().toUpperCase() || (cleanBatteries[cleanBatteries.length - 1] || 'N/A');
+
+      let finalSerials = cleanBatteries;
+      if (cleanBatteries.length === 0 && startNoVal !== 'N/A' && endNoVal !== 'N/A') {
+        finalSerials = generateSerialRangeHelper(startNoVal, endNoVal, parsedBatQty, batSeries);
+      } else if (cleanBatteries.length > 0 && cleanBatteries.length < parsedBatQty && startNoVal !== 'N/A' && endNoVal !== 'N/A') {
+        const generatedRange = generateSerialRangeHelper(startNoVal, endNoVal, parsedBatQty, batSeries);
+        if (generatedRange.length >= parsedBatQty) {
+          finalSerials = generatedRange;
+        }
+      }
+
+      if (posIncludeBattery && (cleanBatteries.length > 0 || parsedBatQty > 0)) {
+        const batPayload = {
+          buyerName: s3BuyerName.trim(),
+          buyerContact: s3BuyerContact.trim(),
+          buyerAddress: s3BuyerAddress.trim(),
+          batterySeries: batSeries,
+          startNo: startNoVal,
+          endNo: endNoVal,
+          quantity: parsedBatQty,
+          serialNumbers: finalSerials.length > 0 ? finalSerials : undefined,
+          notes: s5Notes,
+          salesBillNo: s3BillNo.trim(),
+          deliveryChallanNo: s3DeliveryChallanNo.trim(),
+          isUnderWarranty: posBatteryWarrantyActive,
+          warrantyDurationMonths: posBatteryWarrantyActive ? posBatteryWarrantyDuration : 0,
+          status: 'sold' as const
+        };
+
+        if (onSubmitBatterySale) {
+          const batSuccess = await onSubmitBatterySale(batPayload as any);
+          if (!batSuccess) overallSuccess = false;
+        } else {
+          try {
+            const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...batPayload, operator: currentUser.username })
+            });
+            if (!res.ok) overallSuccess = false;
+          } catch (err) {
+            overallSuccess = false;
+          }
+        }
+      }
+
+      // Dispatch Charger sale if enabled
+      if (posIncludeCharger) {
+        const cleanChargerSerial = posChargerSerial.trim().toUpperCase();
+        const chgType = posChargerType || '60V Standard Charger';
+        const chgStart = s3WholesaleChargerStartNo.trim().toUpperCase() || cleanChargerSerial || 'N/A';
+        const chgEnd = s3WholesaleChargerEndNo.trim().toUpperCase() || cleanChargerSerial || 'N/A';
+        
+        let parsedChgQty = Math.max(1, parseInt(s3WholesaleChargerQty, 10) || 1);
+        let chgSerials = cleanChargerSerial ? [cleanChargerSerial] : [];
+        if (s3WholesaleChargerSerials.trim()) {
+          const splitSerials = s3WholesaleChargerSerials.split(/[\n,;\t\r]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+          if (splitSerials.length > 0) {
+            chgSerials = splitSerials;
+          }
+        }
+        if (chgSerials.length === 0 && chgStart !== 'N/A') {
+          chgSerials = generateSerialRangeHelper(chgStart, chgEnd, parsedChgQty, chgType);
+        }
+        parsedChgQty = Math.max(parsedChgQty, chgSerials.length);
+
+        const chgPayload = {
+          buyerName: s3BuyerName.trim(),
+          buyerContact: s3BuyerContact.trim(),
+          buyerAddress: s3BuyerAddress.trim(),
+          chargerType: chgType,
+          startNo: chgStart,
+          endNo: chgEnd,
+          quantity: parsedChgQty,
+          serialNumbers: chgSerials.length > 0 ? chgSerials : undefined,
+          notes: s5Notes,
+          salesBillNo: s3BillNo.trim(),
+          deliveryChallanNo: s3DeliveryChallanNo.trim(),
+          isUnderWarranty: posChargerWarrantyActive,
+          warrantyDurationMonths: posChargerWarrantyActive ? posChargerWarrantyDuration : 0,
+          status: 'sold' as const
+        };
+
+        if (onSubmitChargerSale) {
+          const chgSuccess = await onSubmitChargerSale(chgPayload as any);
+          if (!chgSuccess) overallSuccess = false;
+        } else {
+          try {
+            const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...chgPayload, operator: currentUser.username })
+            });
+            if (!res.ok) overallSuccess = false;
+          } catch (err) {
+            overallSuccess = false;
+          }
+        }
+      }
+    }
+
+    if (overallSuccess) {
+      const itemTypes = [];
+      if (posIncludeScooter) itemTypes.push('Scooter');
+      if (posIncludeBattery) itemTypes.push('Battery');
+      if (posIncludeCharger) itemTypes.push('Charger');
+
+      triggerAlert('success', `Challan Sale Completed! Dispatched [${itemTypes.join(' + ')}] under Delivery Challan #${s3DeliveryChallanNo.toUpperCase()}.`);
       setS3BuyerName('');
       setS3BuyerContact('');
       setS3BuyerAddress('');
-      setS3Price('');
       setS3BillNo('');
       setS3DeliveryChallanNo('');
       setS4Batteries(['']);
@@ -994,6 +1409,7 @@ export default function AssemblyPipeline({
       setS5Notes('');
       setSelectedPOSScooterId('');
       setS3ModelSelected('');
+      setPosIncludeScooter(true);
       setPosIncludeBattery(true);
       setPosBatteryWarrantyActive(true);
       setPosBatteryWarrantyDuration(12);
@@ -1008,7 +1424,7 @@ export default function AssemblyPipeline({
       setPosEditPreassignedBatteries(false);
       onRefresh();
     } else {
-      triggerAlert('error', 'Checkout transaction failed.');
+      triggerAlert('error', 'Checkout transaction failed. Please check field inputs and try again.');
     }
     setLoading(false);
   };
@@ -1050,7 +1466,6 @@ export default function AssemblyPipeline({
       setS3BuyerName('');
       setS3BuyerContact('');
       setS3BuyerAddress('');
-      setS3Price('');
       setSelectedPOSScooterId('');
       onRefresh();
     } else {
@@ -1134,14 +1549,38 @@ export default function AssemblyPipeline({
   // Filter & Search Logic
   const filteredScooters = scooterUnits.filter(scoot => {
     const query = searchQuery.toLowerCase().trim();
-    const matchesSearch = !query || 
-      String(scoot.chassisNo || '').toLowerCase().includes(query) ||
-      String(scoot.motorNo || '').toLowerCase().includes(query) ||
-      String(scoot.controllerNo || '').toLowerCase().includes(query) ||
-      String(scoot.modelName || '').toLowerCase().includes(query) ||
-      String(scoot.color || '').toLowerCase().includes(query) ||
-      (scoot.buyerName && String(scoot.buyerName || '').toLowerCase().includes(query)) ||
-      (scoot.heldFor && String(scoot.heldFor || '').toLowerCase().includes(query));
+
+    let matchesSearch = true;
+    if (query) {
+      if (searchTargetFilter === 'buyer') {
+        const buyer = String(scoot.buyerName || scoot.heldFor || '').toLowerCase();
+        matchesSearch = buyer.includes(query);
+      } else if (searchTargetFilter === 'chassis') {
+        matchesSearch = String(scoot.chassisNo || '').toLowerCase().includes(query);
+      } else if (searchTargetFilter === 'motor') {
+        matchesSearch = String(scoot.motorNo || '').toLowerCase().includes(query);
+      } else if (searchTargetFilter === 'controller') {
+        matchesSearch = String(scoot.controllerNo || '').toLowerCase().includes(query);
+      } else if (searchTargetFilter === 'model') {
+        matchesSearch = String(scoot.modelName || '').toLowerCase().includes(query);
+      } else if (searchTargetFilter === 'color') {
+        matchesSearch = String(scoot.color || '').toLowerCase().includes(query);
+      } else { // 'all'
+        matchesSearch = 
+          String(scoot.chassisNo || '').toLowerCase().includes(query) ||
+          String(scoot.motorNo || '').toLowerCase().includes(query) ||
+          String(scoot.controllerNo || '').toLowerCase().includes(query) ||
+          String(scoot.modelName || '').toLowerCase().includes(query) ||
+          String(scoot.color || '').toLowerCase().includes(query) ||
+          (scoot.buyerName && String(scoot.buyerName || '').toLowerCase().includes(query)) ||
+          (scoot.heldFor && String(scoot.heldFor || '').toLowerCase().includes(query));
+      }
+    } else {
+      // If query is empty but filter is explicitly set to 'buyer', show only units with buyer/reservation
+      if (searchTargetFilter === 'buyer') {
+        matchesSearch = !!(scoot.buyerName || scoot.heldFor);
+      }
+    }
 
     const matchesStatus = statusFilter === 'all' || scoot.status === statusFilter;
     const matchesTires = tireFilter === 'all' || scoot.tireSize === tireFilter;
@@ -1678,240 +2117,75 @@ export default function AssemblyPipeline({
                 )}
 
                 <div>
-                  {/* Toggle between Single, Bulk, and Standalone Battery/Charger POS Sales */}
+                  {/* Toggle between Retail POS and Wholesale Challan POS */}
                   {currentUser.role !== 'manufacturer' && (
-                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl mb-4 overflow-x-auto whitespace-nowrap hide-scrollbar" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }} id="stage3-mode-selector">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-100 p-1.5 rounded-2xl mb-4" id="stage3-mode-selector">
                       <button
                         type="button"
-                        onClick={() => { setS3IsBulk(false); setS3Mode('single'); }}
-                        className={`flex-1 flex-shrink-0 min-w-max py-2.5 px-3 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
+                        onClick={() => { setS3IsBulk(false); setS3Mode('single'); setPosIncludeScooter(true); }}
+                        className={`py-3 px-3 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center flex items-center justify-center gap-2 ${
                           s3Mode === 'single' 
-                            ? 'bg-white text-slate-800 shadow-sm' 
+                            ? 'bg-white text-slate-900 shadow-sm font-extrabold ring-1 ring-slate-200' 
                             : 'text-slate-500 hover:text-slate-800'
                         }`}
                       >
-                        🛍️ Retail POS
+                        <span>🛍️ Retail POS</span>
                       </button>
                       <button
                         type="button"
                         onClick={() => { setS3IsBulk(true); setS3Mode('bulk'); }}
-                        className={`flex-1 flex-shrink-0 min-w-max py-2.5 px-3 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
+                        className={`py-3 px-3 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center flex items-center justify-center gap-2 ${
                           s3Mode === 'bulk' 
-                            ? 'bg-white text-slate-800 shadow-sm' 
+                            ? 'bg-slate-900 text-white shadow-sm font-extrabold' 
                             : 'text-slate-500 hover:text-slate-800'
                         }`}
                       >
-                        📦 Wholesale POS
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setS3IsBulk(false); setS3Mode('battery'); }}
-                        className={`flex-1 flex-shrink-0 min-w-max py-2.5 px-3 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
-                          s3Mode === 'battery' 
-                            ? 'bg-white text-slate-800 shadow-sm' 
-                            : 'text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        🔋 Battery POS
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setS3IsBulk(false); setS3Mode('charger'); }}
-                        className={`flex-1 flex-shrink-0 min-w-max py-2.5 px-3 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
-                          s3Mode === 'charger' 
-                            ? 'bg-white text-slate-800 shadow-sm' 
-                            : 'text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        🔌 Charger POS
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setS3IsBulk(false); setS3Mode('assign_battery'); }}
-                        className={`flex-1 flex-shrink-0 min-w-max py-2.5 px-3 text-xs sm:text-[10px] font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center ${
-                          s3Mode === 'assign_battery' 
-                            ? 'bg-white text-slate-800 shadow-sm' 
-                            : 'text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        ⚡ Assign Battery
+                        <span>🚚 Challan POS (Wholesale Truck Dispatch)</span>
                       </button>
                     </div>
-                  )}
-
-                  {s3Mode === 'assign_battery' && (
-                    // Assign Batteries (Post-Assembly, before sale)
-                    <form onSubmit={handleStage1BatteriesSubmit} className="space-y-4">
-                      <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-xs text-emerald-800">
-                        <p><strong>Step 2: Battery Allocation:</strong> Prep and record battery cells for physical scooter inventory located in the warehouse prior to sale dispatch.</p>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                          Select Assembled Scooter (In Warehouse)
-                        </label>
-                        <SearchableDropdown
-                          options={availableScooters.map((scoot) => ({
-                            value: scoot.id,
-                            label: `${scoot.modelName} (${scoot.color}) - Chassis: ${scoot.chassisNo}`
-                          }))}
-                          value={selectedPrepScooterId}
-                          onChange={(val) => handlePrepScooterSelect(val)}
-                          placeholder="-- Choose Scooter Chassis --"
-                          required
-                        />
-                      </div>
-
-                      {selectedPrepScooterId && (
-                        <motion.div 
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: 'auto' }}
-                          className="space-y-3.5 p-4 bg-slate-50 border border-slate-100 rounded-2xl"
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="block text-[10px] font-bold text-emerald-700 font-sans tracking-wide uppercase">
-                              Allocate Battery Serials (Max 6)
-                            </span>
-                            <span className="text-[10px] font-bold text-slate-600">
-                              {prepBatteries.length} Slots
-                            </span>
-                          </div>
-
-                          <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                            {prepBatteries.map((serial, idx) => {
-                              const months = prepBatteryWarrantyMonths[idx] !== undefined ? prepBatteryWarrantyMonths[idx] : 12;
-                              const currentOption = months === 0 ? 'no_battery' : (months === 13 ? 'with_13_warranty' : 'with_12_warranty');
-                              
-                              return (
-                                <div key={idx} className="flex flex-col gap-2 p-3 bg-white border border-slate-200 rounded-xl shadow-sm">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-[10px] font-bold text-slate-400 w-4">{idx + 1}.</span>
-                                    
-                                    <div className="flex-1 flex flex-col sm:flex-row gap-2">
-                                      <select
-                                        value={currentOption}
-                                        onChange={(e) => {
-                                          const opt = e.target.value;
-                                          if (opt === 'no_battery') {
-                                            handlePrepBatteryChange(idx, '');
-                                            handlePrepBatteryMonthsChange(idx, 0);
-                                            handlePrepBatteryWarrantyChange(idx, false);
-                                          } else if (opt === 'with_13_warranty') {
-                                            handlePrepBatteryMonthsChange(idx, 13);
-                                            handlePrepBatteryWarrantyChange(idx, true);
-                                          } else {
-                                            handlePrepBatteryMonthsChange(idx, 12);
-                                            handlePrepBatteryWarrantyChange(idx, true);
-                                          }
-                                        }}
-                                        className="bg-slate-50 border border-slate-200 rounded-lg p-2 text-base sm:text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans font-semibold cursor-pointer shrink-0"
-                                      >
-                                        <option value="with_12_warranty">🔋 12 Months Warranty</option>
-                                        <option value="with_13_warranty">🔋 13 Months Warranty</option>
-                                        <option value="no_battery">❌ No Battery / Slot Empty</option>
-                                      </select>
-                                      
-                                      <div className="flex-1 flex gap-1.5 items-center">
-                                        <input
-                                          type="text"
-                                          placeholder={currentOption === 'no_battery' ? 'Without Battery' : `Enter Battery Serial #${idx + 1}`}
-                                          value={serial}
-                                          onChange={(e) => handlePrepBatteryChange(idx, e.target.value)}
-                                          disabled={currentOption === 'no_battery'}
-                                          className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-2 text-base sm:text-xs text-slate-800 font-sans uppercase focus:border-cyan-500 outline-none disabled:opacity-50 disabled:bg-slate-100 font-semibold"
-                                          required={currentOption !== 'no_battery'} 
-                                        />
-                                        {currentOption !== 'no_battery' && (
-                                          <button
-                                            type="button"
-                                            onClick={() => setAssemblyScannerTarget({ type: 'battery_prep', index: idx })}
-                                            className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg cursor-pointer transition-all flex items-center justify-center shrink-0 text-sm"
-                                            title="Scan QR Code"
-                                          >
-                                            📷
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-                                    
-                                    {prepBatteries.length > 1 && (
-                                      <button
-                                        type="button"
-                                        onClick={() => removePrepBatterySlot(idx)}
-                                        className="p-1.5 text-rose-600 hover:bg-rose-50 rounded-xl cursor-pointer transition-colors"
-                                      >
-                                        <Trash className="h-3.5 w-3.5" />
-                                      </button>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-
-                          {prepBatteries.length < 6 && (
-                            <button
-                              type="button"
-                              onClick={addPrepBatterySlot}
-                              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-[10px] font-bold text-emerald-700 border border-slate-200 rounded-xl flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                            >
-                              <Plus className="h-3.5 w-3.5" />
-                              <span>Add Battery Slot</span>
-                            </button>
-                          )}
-                        </motion.div>
-                      )}
-
-                      <button
-                        type="submit"
-                        disabled={loading || !selectedPrepScooterId}
-                        className="w-full py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-sans font-bold text-sm sm:text-xs transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-                      >
-                        <Battery className="h-4.5 w-4.5" />
-                        <span>Assign Batteries to Inventory</span>
-                      </button>
-                    </form>
                   )}
 
                   {s3Mode === 'single' && (
                     <form onSubmit={handleStage3Submit} className="space-y-4">
                       {/* 1. MODEL & CHASSIS SELECTION */}
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                            1. Filter by Scooter Model
-                          </label>
-                          <SearchableDropdown
-                            options={[{ value: '', label: '-- All Models --' }, ...products.map((p) => ({ value: p.name, label: p.name }))]}
-                            value={s3ModelSelected}
-                            onChange={(val) => {
-                              setS3ModelSelected(val);
-                              setSelectedPOSScooterId(''); // Reset selected chassis when model changes
-                            }}
-                            placeholder="-- All Models --"
-                          />
-                        </div>
+                      {posIncludeScooter && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                              1. Filter by Scooter Model
+                            </label>
+                            <SearchableDropdown
+                              options={[{ value: '', label: '-- All Models --' }, ...products.map((p) => ({ value: p.name, label: p.name }))]}
+                              value={s3ModelSelected}
+                              onChange={(val) => {
+                                setS3ModelSelected(val);
+                                setSelectedPOSScooterId(''); // Reset selected chassis when model changes
+                              }}
+                              placeholder="-- All Models --"
+                            />
+                          </div>
 
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                            2. Choose Scooter Chassis *
-                          </label>
-                          <SearchableDropdown
-                            options={scooterUnits
-                              .filter(u => (u.status === 'available' || u.status === 'hold') && (!s3ModelSelected || u.modelName === s3ModelSelected))
-                              .map((scoot) => ({
-                                value: scoot.id,
-                                label: `${scoot.modelName} (${scoot.color}) - Chassis: ${scoot.chassisNo}${scoot.status === 'hold' ? ` [🤝 HELD FOR ${scoot.heldFor?.toUpperCase()}]` : ''}`
-                              }))}
-                            value={selectedPOSScooterId}
-                            onChange={(val) => handlePOSScooterSelect(val)}
-                            placeholder="-- Choose Chassis --"
-                            required
-                          />
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                              2. Choose Scooter Chassis *
+                            </label>
+                            <SearchableDropdown
+                              options={scooterUnits
+                                .filter(u => (u.status === 'available' || u.status === 'hold') && (!s3ModelSelected || u.modelName === s3ModelSelected))
+                                .map((scoot) => ({
+                                  value: scoot.id,
+                                  label: `Chassis: ${scoot.chassisNo} — Model: ${scoot.modelName} (${scoot.color})${scoot.status === 'hold' ? ` [🤝 HELD FOR ${scoot.heldFor?.toUpperCase()}]` : ''}`
+                                }))}
+                              value={selectedPOSScooterId}
+                              onChange={(val) => handlePOSScooterSelect(val)}
+                              placeholder="-- Choose Chassis --"
+                              required
+                            />
+                          </div>
                         </div>
-                      </div>
+                      )}
 
-                      {selectedPOSScooterId && (
+                      {(posIncludeScooter ? Boolean(selectedPOSScooterId) : (posIncludeBattery || posIncludeCharger)) && (
                         <motion.div 
                           initial={{ opacity: 0, height: 0 }}
                           animate={{ opacity: 1, height: 'auto' }}
@@ -2050,7 +2324,7 @@ export default function AssemblyPipeline({
                                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
                                   <div>
                                     <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                                      Bill Number *
+                                      Bill Number * <span className="text-[9px] text-amber-600 font-normal lowercase">(Optional for Hold)</span>
                                     </label>
                                     <input
                                       type="text"
@@ -2058,22 +2332,64 @@ export default function AssemblyPipeline({
                                       value={s3BillNo}
                                       onChange={(e) => setS3BillNo(e.target.value)}
                                       className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-base sm:text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans uppercase font-semibold"
-                                      required
                                     />
                                   </div>
 
                                   <div>
-                                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                                      Chalan (Challan) Number *
-                                    </label>
+                                    <div className="flex items-center justify-between mb-1 font-sans">
+                                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                                        Chalan (Challan) Number * <span className="text-[9px] text-amber-600 font-normal lowercase">(Optional for Hold)</span>
+                                      </label>
+                                      {s3DeliveryChallanNo ? (
+                                        <span className="text-[11px] font-mono font-black text-cyan-800 bg-cyan-100 border border-cyan-300 px-2 py-0.5 rounded-md shadow-2xs">
+                                          [ Challan #{s3DeliveryChallanNo.toUpperCase()} ]
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] font-mono text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                                          [ No Challan Selected ]
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    {/* Clickable Active Pending Challans Bar */}
+                                    {s3ActiveChallanNumbers.length > 0 && (
+                                      <div className="mb-2 p-2 bg-cyan-50 border border-cyan-200 rounded-xl">
+                                        <span className="block text-[10px] font-extrabold text-cyan-900 uppercase tracking-wider mb-1 font-sans">
+                                          📋 Click to auto-fill pending Delivery Challan:
+                                        </span>
+                                        <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                                          {s3ActiveChallanNumbers.map((cNo) => (
+                                            <button
+                                              key={cNo}
+                                              type="button"
+                                              onClick={() => setS3DeliveryChallanNo(cNo)}
+                                              className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer border ${
+                                                s3DeliveryChallanNo.toUpperCase() === cNo
+                                                  ? 'bg-cyan-600 text-white border-cyan-700 shadow-xs scale-105'
+                                                  : 'bg-white text-cyan-800 border-cyan-200 hover:bg-cyan-100'
+                                              }`}
+                                            >
+                                              #{cNo}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+
                                     <input
                                       type="text"
-                                      placeholder="Enter delivery chalan number"
+                                      placeholder="Enter delivery chalan number (or click active above)"
+                                      list="s3-active-challans-list"
                                       value={s3DeliveryChallanNo}
                                       onChange={(e) => setS3DeliveryChallanNo(e.target.value)}
                                       className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-base sm:text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans uppercase font-semibold"
-                                      required
                                     />
+                                    <datalist id="s3-active-challans-list">
+                                      {s3ActiveChallanNumbers.map(cNo => (
+                                        <option key={cNo} value={cNo} />
+                                      ))}
+                                    </datalist>
+                                    <ChallanStatusCard info={s3ChallanInfo} currentUser={currentUser} />
                                   </div>
                                 </div>
 
@@ -2223,14 +2539,6 @@ export default function AssemblyPipeline({
                                               className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-2 text-base sm:text-xs text-slate-800 font-sans uppercase focus:border-cyan-500 outline-none font-semibold"
                                               required
                                             />
-                                            <button
-                                              type="button"
-                                              onClick={() => setAssemblyScannerTarget({ type: 'battery_checkout', index: idx })}
-                                              className="p-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg cursor-pointer transition-all flex items-center justify-center shrink-0 text-sm"
-                                              title="Scan QR Code"
-                                            >
-                                              📷
-                                            </button>
                                           </div>
                                           {s4Batteries.length > 1 && (
                                             <button
@@ -2361,9 +2669,9 @@ export default function AssemblyPipeline({
                                       />
                                       <button
                                         type="button"
-                                        onClick={() => setAssemblyScannerTarget({ type: 'charger_checkout' })}
+                                        onClick={() => {}}
                                         className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 rounded-lg cursor-pointer transition-all flex items-center justify-center shrink-0 text-sm"
-                                        title="Scan QR Code"
+                                        title="Scan QR Code" hidden
                                       >
                                         📷
                                       </button>
@@ -2413,69 +2721,71 @@ export default function AssemblyPipeline({
                             )}
                           </div>
 
-                          {/* 5. SCOOTER FRAME WARRANTY SELECTION */}
-                          <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl space-y-3.5">
-                            <span className="block text-[10px] font-bold text-purple-700 font-sans tracking-wide uppercase">
-                              🛡️ Scooter Frame Warranty Coverage
-                            </span>
+                          {/* 5. SCOOTER WARRANTY SELECTION */}
+                          {posIncludeScooter && (
+                            <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl space-y-3.5">
+                              <span className="block text-[10px] font-bold text-purple-700 font-sans tracking-wide uppercase">
+                                🛡️ Scooter Warranty Coverage
+                              </span>
 
-                            <div className="space-y-3">
-                              <div className="flex items-center justify-between">
-                                <label className="text-xs text-slate-700 font-bold flex items-center gap-2 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={s5ScooterWarrantyActive}
-                                    onChange={(e) => setS5ScooterWarrantyActive(e.target.checked)}
-                                    className="rounded border-slate-300 bg-white text-purple-600 focus:ring-0 h-4 w-4 cursor-pointer"
-                                  />
-                                  <span>Include Frame Warranty</span>
-                                </label>
-                                <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${s5ScooterWarrantyActive ? 'bg-purple-100 text-purple-800 border-purple-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                                  {s5ScooterWarrantyActive ? `${posScooterWarrantyDuration} Months` : 'No Warranty'}
-                                </span>
-                              </div>
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <label className="text-xs text-slate-700 font-bold flex items-center gap-2 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={s5ScooterWarrantyActive}
+                                      onChange={(e) => setS5ScooterWarrantyActive(e.target.checked)}
+                                      className="rounded border-slate-300 bg-white text-purple-600 focus:ring-0 h-4 w-4 cursor-pointer"
+                                    />
+                                    <span>Include Scooter Warranty</span>
+                                  </label>
+                                  <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${s5ScooterWarrantyActive ? 'bg-purple-100 text-purple-800 border-purple-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                                    {s5ScooterWarrantyActive ? `${posScooterWarrantyDuration} Months` : 'No Warranty'}
+                                  </span>
+                                </div>
 
-                              {s5ScooterWarrantyActive && (
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white border border-slate-200 rounded-xl p-3">
-                                  <div>
-                                    <label className="block text-[9px] text-slate-500 font-sans uppercase font-bold mb-1">
-                                      Frame Warranty Duration
-                                    </label>
-                                    <select
-                                      value={posScooterWarrantyDuration}
-                                      onChange={(e) => setPosScooterWarrantyDuration(Number(e.target.value))}
-                                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs text-slate-800 font-sans cursor-pointer font-semibold focus:border-purple-500 outline-none"
-                                    >
-                                      <option value={12}>12 Months Warranty (Standard)</option>
-                                      <option value={13}>12+1 Months Warranty</option>
-                                      <option value={6}>6 Months Warranty</option>
-                                      <option value={18}>18 Months Warranty</option>
-                                      <option value={24}>24 Months Warranty</option>
-                                    </select>
-                                  </div>
-                                  <div>
-                                    <span className="block text-[9px] text-slate-500 font-sans uppercase font-bold mb-1">Expiry Date</span>
-                                    <div className="p-2 border border-slate-100 bg-slate-50 rounded-lg text-xs font-mono font-bold text-slate-700">
-                                      📅 {s5ScooterExpiry}
+                                {s5ScooterWarrantyActive && (
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white border border-slate-200 rounded-xl p-3">
+                                    <div>
+                                      <label className="block text-[9px] text-slate-500 font-sans uppercase font-bold mb-1">
+                                        Scooter Warranty Duration
+                                      </label>
+                                      <select
+                                        value={posScooterWarrantyDuration}
+                                        onChange={(e) => setPosScooterWarrantyDuration(Number(e.target.value))}
+                                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-xs text-slate-800 font-sans cursor-pointer font-semibold focus:border-purple-500 outline-none"
+                                      >
+                                        <option value={12}>12 Months Warranty (Standard)</option>
+                                        <option value={13}>12+1 Months Warranty</option>
+                                        <option value={6}>6 Months Warranty</option>
+                                        <option value={18}>18 Months Warranty</option>
+                                        <option value={24}>24 Months Warranty</option>
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <span className="block text-[9px] text-slate-500 font-sans uppercase font-bold mb-1">Expiry Date</span>
+                                      <div className="p-2 border border-slate-100 bg-slate-50 rounded-lg text-xs font-mono font-bold text-slate-700">
+                                        📅 {s5ScooterExpiry}
+                                      </div>
                                     </div>
                                   </div>
-                                </div>
-                              )}
-                            </div>
+                                )}
+                              </div>
 
-                            <div className="pt-1">
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                                Retail Warranty Terms / Special Remarks
-                              </label>
-                              <textarea
-                                placeholder="Add terms, e.g., structural, motor restrictions, body damage exclusion..."
-                                value={s5Notes}
-                                onChange={(e) => setS5Notes(e.target.value)}
-                                rows={2}
-                                className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
-                              />
+                              <div className="pt-1">
+                                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                                  Retail Warranty Terms / Special Remarks
+                                </label>
+                                <textarea
+                                  placeholder="Add terms, e.g., structural, motor restrictions, body damage exclusion..."
+                                  value={s5Notes}
+                                  onChange={(e) => setS5Notes(e.target.value)}
+                                  rows={2}
+                                  className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
+                                />
+                              </div>
                             </div>
-                          </div>
+                          )}
 
                           {/* 6. TERMS & CONDITIONS (MANDATORY APPLICABILITY NOTICE) */}
                           <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl space-y-2.5">
@@ -2484,7 +2794,7 @@ export default function AssemblyPipeline({
                               <span>Terms & Conditions Apply *</span>
                             </div>
                             <p className="text-[11px] text-amber-800 leading-relaxed font-sans">
-                              Warranties issued for Scooter Frame, Battery cells, and Charger units are strictly subject to standard manufacturer conditions and customer service policies.
+                              Warranties issued for Scooter, Battery cells, and Charger units are strictly subject to standard manufacturer conditions and customer service policies.
                             </p>
                             <label className="flex items-center gap-2 pt-1 font-bold text-xs text-slate-800 cursor-pointer">
                               <input
@@ -2500,7 +2810,7 @@ export default function AssemblyPipeline({
                         </motion.div>
                       )}
 
-                      {selectedPOSScooterId && scooterUnits.find(u => u.id === selectedPOSScooterId)?.status === 'hold' && (
+                      {posIncludeScooter && selectedPOSScooterId && scooterUnits.find(u => u.id === selectedPOSScooterId)?.status === 'hold' && (
                         <div className="p-3.5 bg-amber-500/5 border border-amber-500/15 text-amber-800 rounded-2xl text-xs flex items-center gap-2">
                           <Info className="h-4 w-4 text-amber-600 shrink-0" />
                           <span>This scooter is currently <strong>Reserved / On Hold</strong> for <strong>{scooterUnits.find(u => u.id === selectedPOSScooterId)?.heldFor}</strong>. Finalizing the sale will complete the POS and transition status to SOLD.</span>
@@ -2510,43 +2820,133 @@ export default function AssemblyPipeline({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <button
                           type="submit"
-                          disabled={loading || !selectedPOSScooterId}
+                          disabled={loading || (posIncludeScooter && !selectedPOSScooterId) || s3ChallanInfo.isFinished || (!posIncludeScooter && !posIncludeBattery && !posIncludeCharger)}
                           className="py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-sans font-bold text-xs active:scale-[0.99] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-sm animate-pulse-slow"
                         >
                           <ShoppingBag className="h-4.5 w-4.5" />
-                          <span>Finalize Sale & Dispatch</span>
+                          <span>
+                            {posIncludeScooter 
+                              ? 'Finalize Sale & Dispatch' 
+                              : `Dispatch ${[posIncludeBattery && 'Battery', posIncludeCharger && 'Charger'].filter(Boolean).join(' & ')} Sale`}
+                          </span>
                         </button>
 
-                        <button
-                          type="button"
-                          onClick={handlePlaceOnHold}
-                          disabled={loading || !selectedPOSScooterId || scooterUnits.find(u => u.id === selectedPOSScooterId)?.status === 'hold'}
-                          className="py-3.5 rounded-2xl bg-amber-50 border border-amber-200 hover:bg-amber-100 text-amber-700 font-sans font-bold text-xs active:scale-[0.99] transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-                        >
-                          <User className="h-4.5 w-4.5 text-amber-600" />
-                          <span>Place on Hold / Reserve</span>
-                        </button>
+                        {posIncludeScooter && (
+                          <button
+                            type="button"
+                            onClick={handlePlaceOnHold}
+                            disabled={loading || !selectedPOSScooterId || scooterUnits.find(u => u.id === selectedPOSScooterId)?.status === 'hold' || s3ChallanInfo.isFinished}
+                            className="py-3.5 rounded-2xl bg-amber-50 border border-amber-200 hover:bg-amber-100 text-amber-700 font-sans font-bold text-xs active:scale-[0.99] transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                          >
+                            <User className="h-4.5 w-4.5 text-amber-600" />
+                            <span>Place on Hold / Reserve</span>
+                          </button>
+                        )}
                       </div>
                     </form>
                   )}
 
                   {s3Mode === 'bulk' && (
-                    // BULK WHOLESALE SALES FORM
-                    <form onSubmit={handleStage3BulkSubmit} className="space-y-4">
-                      <div className="p-4 bg-cyan-50 border border-cyan-100 rounded-2xl text-xs text-cyan-800">
-                        <p><strong>Wholesale Dispatch:</strong> Dispatch multiple units of the same model and color in a single transaction. Paste chassis numbers to auto-map or manually check items from the physical inventory below.</p>
-                      </div>
+                    // BULK WHOLESALE SALES FORM CONTAINER
+                    <div className="space-y-4">
+                      {/* Item Inclusion Toggle Bar for Wholesale Challan Sales Chain */}
+                      <div className="p-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl shadow-md space-y-3 font-sans">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="p-1.5 bg-cyan-500/20 text-cyan-400 rounded-lg">
+                              <ClipboardList className="h-4 w-4" />
+                            </span>
+                            <div>
+                              <h4 className="text-xs font-black uppercase tracking-wider text-white">Challan Sales Chain (Truck Dispatch)</h4>
+                              <p className="text-[10px] text-slate-300">Select wholesale item categories to include on this truck Delivery Challan:</p>
+                            </div>
+                          </div>
+                          <span className="hidden sm:inline-block text-[10px] font-mono text-cyan-300 bg-cyan-950/80 px-2.5 py-1 rounded-lg border border-cyan-800/60 font-bold">
+                            [ Wholesale Chain Active ]
+                          </span>
+                        </div>
 
-                      <div className="grid grid-cols-2 gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                          {/* Scooter Checkbox */}
+                          <label className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer select-none ${
+                            posIncludeScooter 
+                              ? 'bg-cyan-500/20 border-cyan-400 text-white shadow-xs font-extrabold ring-1 ring-cyan-400/50' 
+                              : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                          }`}>
+                            <input
+                              type="checkbox"
+                              checked={posIncludeScooter}
+                              onChange={(e) => setPosIncludeScooter(e.target.checked)}
+                              className="h-4.5 w-4.5 rounded border-slate-600 text-cyan-500 focus:ring-cyan-400 accent-cyan-500 cursor-pointer"
+                            />
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="text-lg">🛴</span>
+                              <span>Vehicle / Scooter Batch</span>
+                            </div>
+                          </label>
+
+                          {/* Battery Checkbox */}
+                          <label className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer select-none ${
+                            posIncludeBattery 
+                              ? 'bg-emerald-500/20 border-emerald-400 text-white shadow-xs font-extrabold ring-1 ring-emerald-400/50' 
+                              : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                          }`}>
+                            <input
+                              type="checkbox"
+                              checked={posIncludeBattery}
+                              onChange={(e) => setPosIncludeBattery(e.target.checked)}
+                              className="h-4.5 w-4.5 rounded border-slate-600 text-emerald-500 focus:ring-emerald-400 accent-emerald-500 cursor-pointer"
+                            />
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="text-lg">🔋</span>
+                              <span>Battery Pack Batch</span>
+                            </div>
+                          </label>
+
+                          {/* Charger Checkbox */}
+                          <label className={`flex items-center gap-3 p-3 rounded-xl border transition-all cursor-pointer select-none ${
+                            posIncludeCharger 
+                              ? 'bg-amber-500/20 border-amber-400 text-white shadow-xs font-extrabold ring-1 ring-amber-400/50' 
+                              : 'bg-slate-800/80 border-slate-700/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                          }`}>
+                            <input
+                              type="checkbox"
+                              checked={posIncludeCharger}
+                              onChange={(e) => setPosIncludeCharger(e.target.checked)}
+                              className="h-4.5 w-4.5 rounded border-slate-600 text-amber-500 focus:ring-amber-400 accent-amber-500 cursor-pointer"
+                            />
+                            <div className="flex items-center gap-2 text-xs">
+                              <span className="text-lg">⚡</span>
+                              <span>Charger Unit Batch</span>
+                            </div>
+                          </label>
+                        </div>
+
+                        {!posIncludeScooter && !posIncludeBattery && !posIncludeCharger && (
+                          <div className="p-2.5 bg-rose-500/20 border border-rose-500/40 rounded-xl text-rose-200 text-xs text-center font-bold">
+                            ⚠️ Please select at least one item category above (Scooter, Battery, or Charger) to build your Wholesale Delivery Challan!
+                          </div>
+                        )}
+                      </div>
+                      {posIncludeScooter && (
+                        <div className="space-y-4">
+                          <div className="p-4 bg-cyan-50 border border-cyan-100 rounded-2xl text-xs text-cyan-800">
+                            <p><strong>Wholesale Dispatch Engine:</strong> Select items across multiple models and colors. Use the search bar to find chassis, motor, or controller numbers. Selected items accumulate in your dispatch list below.</p>
+                          </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <div>
                           <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
                             Scooter Model Filter
                           </label>
                           <SearchableDropdown
-                            options={products.map((p) => ({ value: p.name, label: p.name }))}
+                            options={[
+                              { value: 'ALL', label: '⚡ ALL MODELS (Mixed Wholesale)' },
+                              ...products.map((p) => ({ value: p.name, label: p.name }))
+                            ]}
                             value={s3BulkModel}
                             onChange={(val) => handleBulkPOSModelChange(val)}
-                            placeholder="-- Choose Blueprint --"
+                            placeholder="-- Choose Model --"
                             required
                           />
                         </div>
@@ -2556,197 +2956,547 @@ export default function AssemblyPipeline({
                             Color Filter
                           </label>
                           <SearchableDropdown
-                            options={s3BulkModel ? (products.find(p => p.name === s3BulkModel)?.colors || []) : []}
+                            options={[
+                              { value: 'ALL', label: '🌈 ALL COLORS' },
+                              ...(s3BulkModel && s3BulkModel !== 'ALL' 
+                                ? (products.find(p => p.name === s3BulkModel)?.colors || []).map(c => ({ value: c, label: c }))
+                                : Array.from(new Set(products.flatMap(p => p.colors))).map(c => ({ value: c, label: c }))
+                              )
+                            ]}
                             value={s3BulkColor}
                             onChange={(val) => setS3BulkColor(val)}
                             placeholder="-- Choose Color --"
-                            disabled={!s3BulkModel}
                             required
                           />
                         </div>
                       </div>
 
-                      {s3BulkModel && s3BulkColor && (
-                        <div className="space-y-3">
-                          {/* Search & Paste Chassis numbers for quick selection */}
-                          <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl space-y-2">
-                            <label className="block text-[10px] font-bold text-cyan-700 font-sans uppercase tracking-wide">
-                              🔍 Search & Auto-Select Chassis Numbers
-                            </label>
-                            <p className="text-[10px] text-slate-600 leading-relaxed font-semibold">
-                              Paste a column of chassis serial numbers (one per line or separated by commas). The matching checkboxes below will instantly check themselves!
-                            </p>
-                            <textarea
-                              rows={3}
-                              placeholder="VOLT-CH1001&#10;VOLT-CH1002"
-                              value={s3BulkChassisPasted}
-                              onChange={(e) => setS3BulkChassisPasted(e.target.value)}
-                              className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-base sm:text-xs text-slate-800 font-sans focus:border-cyan-500 outline-none"
-                            />
-                          </div>
+                      {/* Direct Search Bar for Chassis, Motor, or Controller Number */}
+                      <div className="p-3 bg-white border border-slate-200 rounded-2xl shadow-sm flex items-center gap-2">
+                        <Search className="h-4 w-4 text-cyan-600 flex-shrink-0" />
+                        <input
+                          type="text"
+                          placeholder="Search Chassis No, Motor No, or Controller No..."
+                          value={s3BulkSearchTerm}
+                          onChange={(e) => setS3BulkSearchTerm(e.target.value)}
+                          className="w-full bg-transparent text-xs font-semibold text-slate-800 placeholder-slate-400 outline-none font-sans"
+                        />
+                        {s3BulkSearchTerm && (
+                          <button
+                            type="button"
+                            onClick={() => setS3BulkSearchTerm('')}
+                            className="text-[10px] font-bold text-slate-400 hover:text-slate-600 px-1.5 py-0.5 rounded bg-slate-100"
+                          >
+                            Clear
+                          </button>
+                        )}
+                      </div>
 
-                          {/* Available matching stock list */}
-                          <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-3">
-                            <div className="flex justify-between items-center text-[10px] font-sans">
-                              <span className="text-slate-500 font-bold uppercase tracking-wide">Available Physical Stock</span>
-                              <span className="text-cyan-700 font-bold bg-white px-2.5 py-1 rounded-full border border-slate-200 shadow-sm">
-                                {s3BulkSelectedIds.length} / {availableBulkStock.length} Selected
+                      <div className="space-y-3">
+                        {/* Search & Paste Chassis numbers for quick selection */}
+                        <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl space-y-2">
+                          <label className="block text-[10px] font-bold text-cyan-700 font-sans uppercase tracking-wide">
+                            🔍 Batch Auto-Select Chassis / Motor / Controller Serials
+                          </label>
+                          <p className="text-[10px] text-slate-600 leading-relaxed font-semibold">
+                            Paste a list of Chassis, Motor, or Controller serial numbers (one per line or separated by commas/tabs). Matching warehouse stock will auto-check into your dispatch cart!
+                          </p>
+                          <textarea
+                            rows={2}
+                            placeholder="VOLT-CH1001&#10;VOLT-CH1002"
+                            value={s3BulkChassisPasted}
+                            onChange={(e) => setS3BulkChassisPasted(e.target.value)}
+                            className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-base sm:text-xs text-slate-800 font-sans focus:border-cyan-500 outline-none"
+                          />
+                        </div>
+
+                        {/* Selected Dispatch Queue / Cart Table */}
+                        {s3BulkSelectedIds.length > 0 && (
+                          <div className="p-4 bg-cyan-900 text-white rounded-2xl space-y-3 shadow-md">
+                            <div className="flex justify-between items-center text-xs font-bold font-sans">
+                              <span className="flex items-center gap-1.5">
+                                🛒 Selected Dispatch List ({s3BulkSelectedIds.length} Vehicles Chosen)
                               </span>
+                              <button
+                                type="button"
+                                onClick={() => setS3BulkSelectedIds([])}
+                                className="text-[10px] font-bold bg-cyan-800 hover:bg-cyan-700 text-cyan-200 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                              >
+                                Clear All Selections
+                              </button>
                             </div>
 
-                            <div className="max-h-[160px] overflow-y-auto border border-slate-200 rounded-xl text-[11px] font-sans bg-white">
-                              {availableBulkStock.length === 0 ? (
-                                <p className="p-4 text-center text-slate-500 text-xs italic font-medium">No matching frame stock is available in Stage 1/Warehouse.</p>
-                              ) : (
-                                <table className="w-full text-left">
-                                  <thead className="bg-slate-100 text-slate-700 text-[9px] uppercase sticky top-0 font-bold">
-                                    <tr>
-                                      <th className="p-2 text-center w-8">Select</th>
-                                      <th className="p-2">Chassis Number</th>
-                                      <th className="p-2">Motor / Controller</th>
-                                      <th className="p-2">Warehouse Batteries</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody className="divide-y divide-slate-100">
-                                    {availableBulkStock.map((unit) => {
-                                      const isSelected = s3BulkSelectedIds.includes(unit.id);
-                                      return (
-                                        <tr 
-                                          key={unit.id} 
-                                          className={`cursor-pointer transition-colors ${
-                                            isSelected ? 'bg-cyan-50/70 text-cyan-900' : 'hover:bg-slate-50 text-slate-700'
-                                          }`}
-                                          onClick={() => {
-                                            if (isSelected) {
-                                              setS3BulkSelectedIds(s3BulkSelectedIds.filter(id => id !== unit.id));
-                                            } else {
-                                              setS3BulkSelectedIds([...s3BulkSelectedIds, unit.id]);
-                                            }
-                                          }}
-                                        >
-                                          <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
-                                            <input
-                                              type="checkbox"
-                                              checked={isSelected}
-                                              onChange={(e) => {
-                                                if (e.target.checked) {
-                                                  setS3BulkSelectedIds([...s3BulkSelectedIds, unit.id]);
-                                                } else {
-                                                  setS3BulkSelectedIds(s3BulkSelectedIds.filter(id => id !== unit.id));
-                                                }
-                                              }}
-                                              className="rounded border-slate-300 bg-white text-cyan-600 focus:ring-0 h-3.5 w-3.5 cursor-pointer"
-                                            />
-                                          </td>
-                                          <td className="p-2 font-bold text-slate-800">
-                                            <div className="flex items-center gap-1.5 flex-wrap">
-                                              <span>{unit.chassisNo}</span>
-                                              {unit.status === 'hold' && (
-                                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
-                                                  🤝 HOLD: {unit.heldFor}
-                                                </span>
-                                              )}
-                                            </div>
-                                          </td>
-                                          <td className="p-2 text-[10px] text-slate-500 font-medium">
-                                            {unit.motorNo} / {unit.controllerNo}
-                                          </td>
-                                          <td className="p-2">
-                                            {unit.batterySerials && unit.batterySerials.length > 0 ? (
-                                              <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 font-bold">
-                                                🔋 {unit.batterySerials.join(', ')}
-                                              </span>
-                                            ) : (
-                                              <span className="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 font-bold">
-                                                ❌ Needs batteries
+                            <div className="max-h-[140px] overflow-y-auto border border-cyan-800 rounded-xl bg-cyan-950 text-[11px] font-sans">
+                              <table className="w-full text-left">
+                                <thead className="bg-cyan-900 text-cyan-200 text-[9px] uppercase sticky top-0 font-bold">
+                                  <tr>
+                                    <th className="p-2">Model & Color</th>
+                                    <th className="p-2">Chassis No</th>
+                                    <th className="p-2">Motor / Controller</th>
+                                    <th className="p-2 text-center">Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-cyan-900/50">
+                                  {s3BulkSelectedIds.map((id) => {
+                                    const u = scooterUnits.find(unit => unit.id === id);
+                                    if (!u) return null;
+                                    return (
+                                      <tr key={id} className="hover:bg-cyan-900/30">
+                                        <td className="p-2 font-bold text-white">
+                                          {u.modelName} <span className="text-[10px] text-cyan-300 font-normal">({u.color})</span>
+                                        </td>
+                                        <td className="p-2 font-mono font-bold text-cyan-300">{u.chassisNo}</td>
+                                        <td className="p-2 text-[10px] text-cyan-200">{u.motorNo} / {u.controllerNo}</td>
+                                        <td className="p-2 text-center">
+                                          <button
+                                            type="button"
+                                            onClick={() => setS3BulkSelectedIds(s3BulkSelectedIds.filter(i => i !== id))}
+                                            className="p-1 text-rose-300 hover:text-rose-100 rounded cursor-pointer"
+                                            title="Remove from dispatch cart"
+                                          >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Available matching stock list */}
+                        <div className="bg-slate-50 border border-slate-100 rounded-2xl p-4 space-y-3">
+                          <div className="flex justify-between items-center text-[10px] font-sans">
+                            <span className="text-slate-500 font-bold uppercase tracking-wide">Available Warehouse Inventory</span>
+                            <span className="text-cyan-700 font-bold bg-white px-2.5 py-1 rounded-full border border-slate-200 shadow-sm">
+                              {s3BulkSelectedIds.length} Selected / {availableBulkStock.length} Visible Stock
+                            </span>
+                          </div>
+
+                          <div className="max-h-[160px] overflow-y-auto border border-slate-200 rounded-xl text-[11px] font-sans bg-white">
+                            {availableBulkStock.length === 0 ? (
+                              <p className="p-4 text-center text-slate-500 text-xs italic font-medium">No matching frame stock is available in Stage 1/Warehouse.</p>
+                            ) : (
+                              <table className="w-full text-left">
+                                <thead className="bg-slate-100 text-slate-700 text-[9px] uppercase sticky top-0 font-bold">
+                                  <tr>
+                                    <th className="p-2 text-center w-8">Select</th>
+                                    <th className="p-2">Model & Color</th>
+                                    <th className="p-2">Chassis Number</th>
+                                    <th className="p-2">Motor / Controller</th>
+                                    <th className="p-2">Warehouse Batteries</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                  {availableBulkStock.map((unit) => {
+                                    const isSelected = s3BulkSelectedIds.includes(unit.id);
+                                    return (
+                                      <tr 
+                                        key={unit.id} 
+                                        className={`cursor-pointer transition-colors ${
+                                          isSelected ? 'bg-cyan-50/70 text-cyan-900 font-bold' : 'hover:bg-slate-50 text-slate-700'
+                                        }`}
+                                        onClick={() => {
+                                          if (isSelected) {
+                                            setS3BulkSelectedIds(s3BulkSelectedIds.filter(id => id !== unit.id));
+                                          } else {
+                                            setS3BulkSelectedIds([...s3BulkSelectedIds, unit.id]);
+                                          }
+                                        }}
+                                      >
+                                        <td className="p-2 text-center" onClick={(e) => e.stopPropagation()}>
+                                          <input
+                                            type="checkbox"
+                                            checked={isSelected}
+                                            onChange={(e) => {
+                                              if (e.target.checked) {
+                                                setS3BulkSelectedIds([...s3BulkSelectedIds, unit.id]);
+                                              } else {
+                                                setS3BulkSelectedIds(s3BulkSelectedIds.filter(id => id !== unit.id));
+                                              }
+                                            }}
+                                            className="rounded border-slate-300 bg-white text-cyan-600 focus:ring-0 h-3.5 w-3.5 cursor-pointer"
+                                          />
+                                        </td>
+                                        <td className="p-2">
+                                          <span className="font-bold text-slate-800">{unit.modelName}</span>
+                                          <span className="text-[10px] text-slate-400 block font-normal">{unit.color}</span>
+                                        </td>
+                                        <td className="p-2 font-bold text-slate-800">
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="font-mono text-cyan-900">{unit.chassisNo}</span>
+                                            {unit.status === 'hold' && (
+                                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                                                🤝 HOLD: {unit.heldFor}
                                               </span>
                                             )}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
+                                          </div>
+                                        </td>
+                                        <td className="p-2 text-[10px] text-slate-500 font-medium">
+                                          {unit.motorNo} / {unit.controllerNo}
+                                        </td>
+                                        <td className="p-2">
+                                          {unit.batterySerials && unit.batterySerials.length > 0 ? (
+                                            <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 font-bold">
+                                              🔋 {unit.batterySerials.join(', ')}
+                                            </span>
+                                          ) : (
+                                            <span className="text-[10px] text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-100 font-bold">
+                                              ❌ Needs batteries
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            )}
+                          </div>
+                        </div>
+
+                          {/* Scooter Warranty Configuration - ONLY shown when Scooter section is checked */}
+                          <div className="p-3.5 bg-cyan-900/10 border border-cyan-200 rounded-2xl space-y-2 font-sans">
+                            <div className="flex items-center justify-between">
+                              <label className="text-xs text-slate-800 font-bold flex items-center gap-2 cursor-pointer font-sans">
+                                <input
+                                  type="checkbox"
+                                  checked={s5ScooterWarrantyActive}
+                                  onChange={(e) => setS5ScooterWarrantyActive(e.target.checked)}
+                                  className="rounded border-slate-300 bg-white text-cyan-600 focus:ring-0 h-4 w-4 cursor-pointer"
+                                />
+                                <span>🛵 Scooter Warranty Active</span>
+                              </label>
+                              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border font-sans ${s5ScooterWarrantyActive ? 'bg-cyan-100 text-cyan-800 border-cyan-300' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                                {s5ScooterWarrantyActive ? 'Active' : 'No Warranty'}
+                              </span>
+                            </div>
+                            {s5ScooterWarrantyActive && (
+                              <div className="grid grid-cols-2 gap-2 pt-1 font-sans">
+                                <div>
+                                  <span className="block text-[10px] text-slate-600 font-bold uppercase tracking-wider mb-1">Scooter Warranty Expiry Date</span>
+                                  <input
+                                    type="date"
+                                    value={s5ScooterExpiry}
+                                    onChange={(e) => setS5ScooterExpiry(e.target.value)}
+                                    className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs text-slate-800 font-sans"
+                                    required
+                                  />
+                                </div>
+                                <div className="flex items-end text-[10px] text-slate-500 italic pb-1">
+                                  Defaults to 1 year from dispatch date
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                      {/* 2. BATTERY PACK BATCH MANAGER (When Battery is checked) */}
+                      {posIncludeBattery && (
+                        <div className="p-4 bg-emerald-50/70 border border-emerald-200 rounded-3xl space-y-3 font-sans">
+                          <div className="flex items-center justify-between px-1">
+                            <span className="text-xs font-black text-emerald-900 uppercase tracking-wide flex items-center gap-1.5 font-sans">
+                              🔋 Wholesale Battery Pack Batch Manager
+                            </span>
+                            <span className="text-[10px] text-emerald-800 font-bold bg-white px-2.5 py-1 rounded-full border border-emerald-200 shadow-2xs font-sans">
+                              Range + Serials + Warranty
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3.5 rounded-2xl border border-emerald-100">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wide mb-1 font-sans">
+                                Battery Series
+                              </label>
+                              <SearchableDropdown
+                                options={[
+                                  ...batterySeriesList.map(s => ({ value: s, label: `${s} Series` })),
+                                  { value: 'custom', label: '✏️ Enter Custom Series Name' }
+                                ]}
+                                value={s3WholesaleBatterySeries}
+                                onChange={(val) => setS3WholesaleBatterySeries(val)}
+                                placeholder="Select Battery Series"
+                              />
+                              {s3WholesaleBatterySeries && (
+                                <div className="mt-1.5 p-2 rounded-xl bg-emerald-50/90 border border-emerald-200 text-[11px] font-sans flex items-center justify-between">
+                                  <span className="font-bold text-emerald-950 flex items-center gap-1">
+                                    📦 Available Stock:
+                                  </span>
+                                  <span className="font-mono text-emerald-800 font-extrabold text-xs">
+                                    {posBatteryStockMap[s3WholesaleBatterySeries]?.available ?? 0} Packs
+                                  </span>
+                                </div>
                               )}
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wide mb-1 font-sans">
+                                Total Battery Pack Quantity {s3WholesaleBatteryWarrantyActive && <span className="text-emerald-700 font-bold">(🔒 Warranty Auto-Derived)</span>}
+                              </label>
+                              <input
+                                type="number"
+                                min="1"
+                                placeholder="Qty e.g. 20"
+                                value={s3WholesaleBatteryQty}
+                                onChange={(e) => !s3WholesaleBatteryWarrantyActive && setS3WholesaleBatteryQty(e.target.value)}
+                                readOnly={s3WholesaleBatteryWarrantyActive}
+                                className={`w-full border rounded-xl p-2.5 text-xs font-bold font-sans outline-none ${
+                                  s3WholesaleBatteryWarrantyActive
+                                    ? 'bg-emerald-50/80 border-emerald-300 text-emerald-900 cursor-not-allowed'
+                                    : 'bg-slate-50 border-slate-200 text-slate-800 focus:border-emerald-500'
+                                }`}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wide mb-1 font-sans">
+                                Start Serial Number (e.g. SENZO 201)
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="Start Serial No"
+                                value={s3WholesaleBatteryStartNo}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setS3WholesaleBatteryStartNo(val);
+                                  const qty = parseInt(s3WholesaleBatteryQty, 10) || 1;
+                                  const match = val.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+                                  if (match) {
+                                    const pfx = match[1];
+                                    const sNum = parseInt(match[2], 10);
+                                    const pLen = match[2].length;
+                                    const eNum = sNum + qty - 1;
+                                    setS3WholesaleBatteryEndNo(`${pfx}${String(eNum).padStart(pLen, '0')}`);
+                                  }
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 uppercase outline-none focus:border-emerald-500"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wide mb-1 font-sans">
+                                End Serial Number (e.g. SENZO 220)
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="End Serial No"
+                                value={s3WholesaleBatteryEndNo}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setS3WholesaleBatteryEndNo(val);
+                                  const sMatch = s3WholesaleBatteryStartNo.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+                                  const eMatch = val.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+                                  if (sMatch && eMatch) {
+                                    const sNum = parseInt(sMatch[2], 10);
+                                    const eNum = parseInt(eMatch[2], 10);
+                                    if (eNum >= sNum) {
+                                      setS3WholesaleBatteryQty(String(eNum - sNum + 1));
+                                    }
+                                  }
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 uppercase outline-none focus:border-emerald-500"
+                              />
                             </div>
                           </div>
 
-                          {/* High volume wholesale sequential battery matching mapping */}
-                          {s3BulkSelectedIds.length > 0 && (
-                            <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl space-y-3.5">
-                              <div className="flex justify-between items-center">
-                                <span className="block text-[10px] font-bold text-emerald-700 font-sans tracking-wide uppercase">
-                                  ⚡ Wholesale Battery Assign Engine
-                                </span>
-                                <span className="text-[9px] font-bold text-slate-500 bg-white px-2 py-0.5 rounded-full border border-slate-200 shadow-sm">
-                                  Auto-Mapping System
-                                </span>
-                              </div>
+                          {/* Warranty setup */}
+                          <div className="bg-white p-3.5 rounded-2xl border border-emerald-100 grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                            <label className="flex items-center gap-2 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={s3WholesaleBatteryWarrantyActive}
+                                onChange={(e) => setS3WholesaleBatteryWarrantyActive(e.target.checked)}
+                                className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                              />
+                              <span className="text-xs font-bold text-slate-800 font-sans">
+                                Enable Battery Warranty
+                              </span>
+                            </label>
 
-                              <div className="grid grid-cols-2 gap-2">
-                                <div>
-                                  <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">Batteries Per Scooter</label>
-                                  <input
-                                    type="number"
-                                    min={1}
-                                    max={6}
-                                    value={s3BulkBatteriesPerScooter}
-                                    onChange={(e) => setS3BulkBatteriesPerScooter(Math.max(1, Math.min(6, Number(e.target.value) || 1)))}
-                                    className="w-full bg-white border border-slate-200 rounded-xl p-2 text-base sm:text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
-                                  />
-                                </div>
-                                <div className="text-[10px] text-slate-600 font-semibold flex items-center leading-relaxed">
-                                  Only scooters missing pre-allocated warehouse batteries will get assigned cells from the block below.
-                                </div>
-                              </div>
-
+                            {s3WholesaleBatteryWarrantyActive && (
                               <div>
-                                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide font-sans mb-1.5">
-                                  Paste Battery Serial Numbers Block (one per line)
+                                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                                  Warranty Duration
                                 </label>
-                                <textarea
-                                  rows={4}
-                                  placeholder="BAT-SER1001&#10;BAT-SER1002&#10;BAT-SER1003"
-                                  value={s3BulkBatteriesRaw}
-                                  onChange={(e) => setS3BulkBatteriesRaw(e.target.value)}
-                                  className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-base sm:text-xs text-slate-800 font-sans focus:border-emerald-500 outline-none"
-                                />
+                                <select
+                                  value={s3WholesaleBatteryWarrantyMonths}
+                                  onChange={(e) => setS3WholesaleBatteryWarrantyMonths(Number(e.target.value))}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-bold text-slate-800 outline-none focus:border-emerald-500"
+                                >
+                                  <option value={6}>6 Months Warranty</option>
+                                  <option value={12}>12 Months (1 Year) Warranty</option>
+                                  <option value={13}>13 Months (1 Year + 1 Mo) Warranty</option>
+                                  <option value={18}>18 Months Warranty</option>
+                                  <option value={24}>24 Months (2 Years) Warranty</option>
+                                </select>
                               </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
-                              {/* Mapping visualizer */}
-                              <div className="space-y-1.5 max-h-[140px] overflow-y-auto border border-slate-200 rounded-xl p-3 bg-white">
-                                <span className="block text-[10px] font-bold text-slate-400 font-sans uppercase tracking-wide mb-2">Live Allocation Plan</span>
-                                {bulkPOSBatteryAllocation.allocation.map((alloc, idx) => (
-                                  <div key={idx} className="flex justify-between items-center bg-slate-50 border border-slate-100 px-3 py-2 rounded-xl text-[11px] font-sans">
-                                    <div className="flex items-center gap-1.5">
-                                      <span className="text-slate-400 font-bold">#{idx + 1}</span>
-                                      <span className="text-slate-800 font-bold">{alloc.chassisNo}</span>
-                                    </div>
-                                    <div>
-                                      {alloc.preassigned ? (
-                                        <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 font-bold">
-                                          Preassigned: {alloc.batteries.join(', ')}
-                                        </span>
-                                      ) : alloc.error ? (
-                                        <span className="text-[10px] text-rose-700 bg-rose-50 px-2 py-0.5 rounded-full border border-rose-100 font-bold animate-pulse">
-                                          ⚠️ {alloc.error}
-                                        </span>
-                                      ) : (
-                                        <span className="text-[10px] text-cyan-700 bg-cyan-50 px-2 py-0.5 rounded-full border border-cyan-100 font-bold">
-                                          Allocated: {alloc.batteries.join(', ')}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
-                                ))}
-                                {bulkPOSBatteryAllocation.unusedBatteries.length > 0 && (
-                                  <div className="text-[10px] text-amber-700 font-semibold pt-1 font-sans">
-                                    💡 {bulkPOSBatteryAllocation.unusedBatteries.length} extra battery serials pasted will be ignored.
-                                  </div>
-                                )}
-                              </div>
+                      {/* 3. CHARGER UNIT BATCH MANAGER (When Charger is checked) */}
+                      {posIncludeCharger && (
+                        <div className="p-4 bg-amber-50/70 border border-amber-200 rounded-3xl space-y-3 font-sans">
+                          <div className="flex items-center justify-between px-1">
+                            <span className="text-xs font-black text-amber-900 uppercase tracking-wide flex items-center gap-1.5 font-sans">
+                              ⚡ Wholesale Charger Unit Batch Manager
+                            </span>
+                            <span className="text-[10px] text-amber-800 font-bold bg-white px-2.5 py-1 rounded-full border border-amber-200 shadow-2xs font-sans">
+                              Serials + Range + Warranty
+                            </span>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white p-3.5 rounded-2xl border border-amber-100">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wide mb-1 font-sans">
+                                Charger Model / Type
+                              </label>
+                              <SearchableDropdown
+                                options={chargerTypeList.map(t => ({ value: t, label: t }))}
+                                value={s3WholesaleChargerType}
+                                onChange={(val) => setS3WholesaleChargerType(val)}
+                                placeholder="Select Charger Type"
+                              />
+                              {s3WholesaleChargerType && (
+                                <div className="mt-1.5 p-2 rounded-xl bg-amber-50/90 border border-amber-200 text-[11px] font-sans flex items-center justify-between">
+                                  <span className="font-bold text-amber-950 flex items-center gap-1">
+                                    ⚡ Available Stock:
+                                  </span>
+                                  <span className="font-mono text-amber-800 font-extrabold text-xs">
+                                    {posChargerStockMap[s3WholesaleChargerType]?.available ?? 0} Units
+                                  </span>
+                                </div>
+                              )}
                             </div>
-                          )}
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wide mb-1 font-sans">
+                                Total Charger Units Quantity {s3WholesaleChargerWarrantyActive && <span className="text-amber-800 font-bold">(🔒 Warranty Auto-Derived)</span>}
+                              </label>
+                              <input
+                                type="number"
+                                min="1"
+                                placeholder="Qty e.g. 10"
+                                value={s3WholesaleChargerQty}
+                                onChange={(e) => !s3WholesaleChargerWarrantyActive && setS3WholesaleChargerQty(e.target.value)}
+                                readOnly={s3WholesaleChargerWarrantyActive}
+                                className={`w-full border rounded-xl p-2.5 text-xs font-bold font-sans outline-none ${
+                                  s3WholesaleChargerWarrantyActive
+                                    ? 'bg-amber-50/80 border-amber-300 text-amber-900 cursor-not-allowed'
+                                    : 'bg-slate-50 border-slate-200 text-slate-800 focus:border-amber-500'
+                                }`}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wide mb-1 font-sans">
+                                Start Serial Number (e.g. CHG-2001)
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="Start Serial No"
+                                value={s3WholesaleChargerStartNo}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setS3WholesaleChargerStartNo(val);
+                                  const qty = parseInt(s3WholesaleChargerQty, 10) || 1;
+                                  const match = val.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+                                  if (match) {
+                                    const pfx = match[1];
+                                    const sNum = parseInt(match[2], 10);
+                                    const pLen = match[2].length;
+                                    const eNum = sNum + qty - 1;
+                                    setS3WholesaleChargerEndNo(`${pfx}${String(eNum).padStart(pLen, '0')}`);
+                                  }
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 uppercase outline-none focus:border-amber-500"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wide mb-1 font-sans">
+                                End Serial Number (e.g. CHG-2010)
+                              </label>
+                              <input
+                                type="text"
+                                placeholder="End Serial No"
+                                value={s3WholesaleChargerEndNo}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setS3WholesaleChargerEndNo(val);
+                                  const sMatch = s3WholesaleChargerStartNo.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+                                  const eMatch = val.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+                                  if (sMatch && eMatch) {
+                                    const sNum = parseInt(sMatch[2], 10);
+                                    const eNum = parseInt(eMatch[2], 10);
+                                    if (eNum >= sNum) {
+                                      setS3WholesaleChargerQty(String(eNum - sNum + 1));
+                                    }
+                                  }
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs font-bold text-slate-800 uppercase outline-none focus:border-amber-500"
+                              />
+                            </div>
+
+                            <div className="sm:col-span-2">
+                              <label className="block text-[10px] font-bold text-slate-600 uppercase tracking-wide mb-1 font-sans">
+                                Paste / Scan Specific Charger Serials (Optional)
+                              </label>
+                              <textarea
+                                rows={2}
+                                placeholder="Paste or scan serial numbers separated by commas or line breaks..."
+                                value={s3WholesaleChargerSerials}
+                                onChange={(e) => {
+                                  setS3WholesaleChargerSerials(e.target.value);
+                                  const count = e.target.value.split(/[\n,;\t\r]+/).map(s => s.trim()).filter(Boolean).length;
+                                  if (count > 0) {
+                                    setS3WholesaleChargerQty(String(count));
+                                  }
+                                }}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-mono font-bold text-slate-800 uppercase outline-none focus:border-amber-500"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Warranty setup */}
+                          <div className="bg-white p-3.5 rounded-2xl border border-amber-100 grid grid-cols-1 sm:grid-cols-2 gap-3 items-center">
+                            <label className="flex items-center gap-2 cursor-pointer select-none">
+                              <input
+                                type="checkbox"
+                                checked={s3WholesaleChargerWarrantyActive}
+                                onChange={(e) => setS3WholesaleChargerWarrantyActive(e.target.checked)}
+                                className="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                              />
+                              <span className="text-xs font-bold text-slate-800 font-sans">
+                                Enable Charger Warranty
+                              </span>
+                            </label>
+
+                            {s3WholesaleChargerWarrantyActive && (
+                              <div>
+                                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                                  Warranty Duration
+                                </label>
+                                <select
+                                  value={s3WholesaleChargerWarrantyMonths}
+                                  onChange={(e) => setS3WholesaleChargerWarrantyMonths(Number(e.target.value))}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-bold text-slate-800 outline-none focus:border-amber-500"
+                                >
+                                  <option value={6}>6 Months Warranty</option>
+                                  <option value={12}>12 Months (1 Year) Warranty</option>
+                                  <option value={18}>18 Months Warranty</option>
+                                  <option value={24}>24 Months (2 Years) Warranty</option>
+                                </select>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
                           {/* Buyer Details */}
                           <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl space-y-3.5">
@@ -2818,143 +3568,145 @@ export default function AssemblyPipeline({
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
                               <div>
                                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                                  Bill Number *
+                                  Bill Number (Optional)
                                 </label>
                                 <input
                                   type="text"
-                                  placeholder="Enter wholesale bill number"
+                                  placeholder="Enter wholesale bill number (optional)"
                                   value={s3BillNo}
                                   onChange={(e) => setS3BillNo(e.target.value)}
                                   className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-base sm:text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans uppercase font-semibold"
-                                  required
                                 />
                               </div>
 
                               <div>
                                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                                  Chalan (Challan) Number *
+                                  Chalan (Challan) Number {s3DispatchMode === 'hold' ? '(Optional for Hold)' : '*'}
                                 </label>
+
+                                {/* Clickable Active Pending Challans Bar */}
+                                {s3ActiveChallanNumbers.length > 0 && (
+                                  <div className="mb-2 p-2 bg-cyan-50 border border-cyan-200 rounded-xl">
+                                    <span className="block text-[10px] font-extrabold text-cyan-900 uppercase tracking-wider mb-1 font-sans">
+                                      📋 Click to auto-fill pending Delivery Challan:
+                                    </span>
+                                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                                      {s3ActiveChallanNumbers.map((cNo) => (
+                                        <button
+                                          key={cNo}
+                                          type="button"
+                                          onClick={() => setS3DeliveryChallanNo(cNo)}
+                                          className={`px-2 py-1 rounded-lg text-[10px] font-mono font-bold transition-all cursor-pointer border ${
+                                            s3DeliveryChallanNo.toUpperCase() === cNo
+                                              ? 'bg-cyan-600 text-white border-cyan-700 shadow-xs scale-105'
+                                              : 'bg-white text-cyan-800 border-cyan-200 hover:bg-cyan-100'
+                                          }`}
+                                        >
+                                          #{cNo}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
                                 <input
                                   type="text"
-                                  placeholder="Enter delivery chalan number"
+                                  placeholder="Enter delivery chalan number (or click active above)"
+                                  list="s3-active-challans-list-bulk"
                                   value={s3DeliveryChallanNo}
                                   onChange={(e) => setS3DeliveryChallanNo(e.target.value)}
                                   className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-base sm:text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans uppercase font-semibold"
-                                  required
+                                  required={s3DispatchMode !== 'hold'}
                                 />
+                                <datalist id="s3-active-challans-list-bulk">
+                                  {s3ActiveChallanNumbers.map(cNo => (
+                                    <option key={cNo} value={cNo} />
+                                  ))}
+                                </datalist>
+                                <ChallanStatusCard info={s3ChallanInfo} currentUser={currentUser} />
                               </div>
                             </div>
                           </div>
 
-                          {/* General Warranty Setup */}
-                          <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl space-y-3.5">
-                            <span className="block text-[10px] font-bold text-purple-700 font-sans tracking-wide uppercase">
-                              Warranty Coverage
-                            </span>
+                          {/* Challan Remarks & Notes */}
+                          <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl space-y-2 font-sans">
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
+                              Challan Notes / Dispatch Remarks
+                            </label>
+                            <textarea
+                              placeholder="Add wholesale dispatch remarks, custom terms, or conditions..."
+                              value={s5Notes}
+                              onChange={(e) => setS5Notes(e.target.value)}
+                              rows={2}
+                              className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
+                            />
+                          </div>
 
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between">
-                                <label className="text-xs text-slate-700 font-bold flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    checked={s5ScooterWarrantyActive}
-                                    onChange={(e) => setS5ScooterWarrantyActive(e.target.checked)}
-                                    className="rounded border-slate-300 bg-white text-cyan-600 focus:ring-0 h-3.5 w-3.5 cursor-pointer"
-                                  />
-                                  <span>Scooter Frame Warranty</span>
-                                </label>
-                                <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full border ${s5ScooterWarrantyActive ? 'bg-cyan-100 text-cyan-800 border-cyan-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
-                                  {s5ScooterWarrantyActive ? 'Active' : 'No Warranty'}
-                                </span>
-                              </div>
-                              {s5ScooterWarrantyActive && (
-                                <div className="grid grid-cols-2 gap-2 pl-5">
-                                  <div>
-                                    <span className="block text-[9px] text-slate-500 font-sans uppercase font-bold mb-1">Expiry Date</span>
-                                    <input
-                                      type="date"
-                                      value={s5ScooterExpiry}
-                                      onChange={(e) => setS5ScooterExpiry(e.target.value)}
-                                      className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs text-slate-800 font-sans"
-                                      required
-                                    />
-                                  </div>
-                                  <div className="flex items-end text-[10px] text-slate-500 italic">
-                                    Defaults to 1 year
-                                  </div>
-                                </div>
-                              )}
-                            </div>
+                      <div className="space-y-3 pt-2">
+                        {/* Action Mode Toggle */}
+                        <div className="bg-slate-100 p-2.5 rounded-2xl border border-slate-200/80 space-y-1.5">
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide font-sans px-1">
+                            Final Action Type Selection:
+                          </label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setS3DispatchMode('sold')}
+                              className={`py-2.5 px-3 rounded-xl font-sans font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                                s3DispatchMode === 'sold'
+                                  ? 'bg-slate-900 text-white shadow-sm'
+                                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-200'
+                              }`}
+                            >
+                              <ShoppingBag className="h-3.5 w-3.5" />
+                              <span>Finish Dispatch & Sale</span>
+                            </button>
 
-                            <div className="pt-1">
-                              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                                Warranty Notes / Remarks
-                              </label>
-                              <textarea
-                                placeholder="Add terms, e.g., conditions, duration, etc."
-                                value={s5Notes}
-                                onChange={(e) => setS5Notes(e.target.value)}
-                                rows={2}
-                                className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
-                              />
-                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setS3DispatchMode('hold')}
+                              className={`py-2.5 px-3 rounded-xl font-sans font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                                s3DispatchMode === 'hold'
+                                  ? 'bg-amber-600 text-white shadow-sm'
+                                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-200'
+                              }`}
+                            >
+                              <User className="h-3.5 w-3.5" />
+                              <span>Put Selection on Hold</span>
+                            </button>
                           </div>
                         </div>
-                      )}
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <button
-                          type="submit"
-                          disabled={loading || s3BulkSelectedIds.length === 0}
-                          className="py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-sans font-bold text-xs active:scale-[0.99] transition-all flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
-                        >
-                          <ShoppingBag className="h-4.5 w-4.5" />
-                          <span>Finalize Bulk Sale & Dispatch ({s3BulkSelectedIds.length} Items)</span>
-                        </button>
-
+                        {/* Single Finishing Action Button */}
                         <button
                           type="button"
-                          onClick={() => handleStage3BulkSubmit(undefined, 'hold')}
-                          disabled={loading || s3BulkSelectedIds.length === 0}
-                          className="py-3.5 rounded-2xl bg-amber-50 border border-amber-200 hover:bg-amber-100 text-amber-700 font-sans font-bold text-xs active:scale-[0.99] transition-all flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-sm"
+                          onClick={(e) => handleStage3BulkSubmit(e, s3DispatchMode)}
+                          disabled={loading || (posIncludeScooter && s3BulkSelectedIds.length === 0) || (!posIncludeScooter && !posIncludeBattery && !posIncludeCharger) || s3ChallanInfo.isFinished}
+                          className={`w-full py-4 rounded-2xl font-sans font-extrabold text-xs sm:text-sm text-white transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-md active:scale-[0.99] ${
+                            s3DispatchMode === 'hold'
+                              ? 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800'
+                              : 'bg-slate-900 hover:bg-slate-800 active:bg-black'
+                          }`}
                         >
-                          <User className="h-4.5 w-4.5 text-amber-600" />
-                          <span>Place Selection on Hold / Reserve</span>
+                          {loading ? (
+                            <>
+                              <RefreshCw className="h-4.5 w-4.5 animate-spin" />
+                              <span>Processing Wholesale Order...</span>
+                            </>
+                          ) : s3DispatchMode === 'hold' ? (
+                            <>
+                              <User className="h-4.5 w-4.5" />
+                              <span>Place Selection on Reservation Hold</span>
+                            </>
+                          ) : (
+                            <>
+                              <ShoppingBag className="h-4.5 w-4.5" />
+                              <span>Finalize Wholesale Truck Dispatch</span>
+                            </>
+                          )}
                         </button>
                       </div>
-                    </form>
-                  )}
-
-                  {s3Mode === 'battery' && (
-                    <BatterySalesManager
-                      buyers={buyers}
-                      batterySales={batterySales}
-                      batteryImports={batteryImports}
-                      scooterUnits={scooterUnits}
-                      currentUser={currentUser}
-                      onRefresh={onRefresh}
-                      onSubmitBatterySale={onSubmitBatterySale}
-                      batterySeriesList={batterySeriesList}
-                      isPipelineView={true}
-                      onAddBuyer={onAddBuyer}
-                    />
-                  )}
-
-                  {s3Mode === 'charger' && (
-                    <ChargerSalesManager
-                      buyers={buyers}
-                      chargerSales={chargerSales}
-                      chargerImports={chargerImports}
-                      chargerTypesList={chargerTypeList}
-                      currentUser={currentUser}
-                      onRefresh={onRefresh}
-                      onSubmitChargerSale={onSubmitChargerSale}
-                      onSubmitChargerImport={onSubmitChargerImport}
-                      onReleaseHold={onReleaseChargerHold}
-                      onFinalizeHold={onFinalizeChargerHold}
-                      isPipelineView={true}
-                      onAddBuyer={onAddBuyer}
-                    />
+                    </div>
                   )}
                 </div>
               </motion.div>
@@ -2983,7 +3735,7 @@ export default function AssemblyPipeline({
                     <SearchableDropdown
                       options={scooterUnits.map((scoot) => ({
                         value: scoot.id,
-                        label: `${scoot.modelName} (${scoot.color}) - Chassis: ${scoot.chassisNo} [${scoot.status.toUpperCase()}]`
+                        label: `Chassis: ${scoot.chassisNo} — Model: ${scoot.modelName} (${scoot.color}) [${scoot.status.toUpperCase()}]`
                       }))}
                       value={selectedCustomizeScooterId}
                       onChange={(val) => handleCustomizeScooterSelect(val)}
@@ -3260,16 +4012,33 @@ export default function AssemblyPipeline({
           </div>
 
           {/* Filtering */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5 bg-slate-50 p-3 rounded-2xl border border-slate-100" id="registry-filters">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5 bg-slate-50 p-3 rounded-2xl border border-slate-100" id="registry-filters">
             <div className="relative">
               <input
                 type="text"
-                placeholder="Search Chassis / Buyers..."
+                placeholder={searchTargetFilter === 'buyer' ? "Search Buyer Name..." : searchTargetFilter === 'chassis' ? "Search Chassis No..." : "Search Records..."}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full bg-white border border-slate-200 rounded-xl py-2 pl-8 pr-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
               />
               <Search className="absolute left-2.5 top-3 h-3.5 w-3.5 text-slate-400" />
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] font-bold text-slate-500 shrink-0 font-sans">Field:</span>
+              <select
+                value={searchTargetFilter}
+                onChange={(e) => setSearchTargetFilter(e.target.value as any)}
+                className="w-full bg-white border border-slate-200 rounded-xl py-2 px-3 text-xs text-slate-700 font-semibold outline-none cursor-pointer focus:border-cyan-500 font-sans"
+              >
+                <option value="all">🔍 Search All Fields</option>
+                <option value="buyer">👤 Buyer / Customer Name Only</option>
+                <option value="chassis">🆔 Chassis Number Only</option>
+                <option value="motor">⚡ Motor Number Only</option>
+                <option value="controller">🔌 Controller Number Only</option>
+                <option value="model">🛵 Model Name Only</option>
+                <option value="color">🎨 Color Only</option>
+              </select>
             </div>
 
             <div className="flex items-center gap-1.5">
@@ -3336,7 +4105,7 @@ export default function AssemblyPipeline({
                           </span>
                           
                           <span className="text-[10px] font-sans px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-bold">
-                            F: {scoot.frontTireSize === '10-inch' ? '10"' : '12"'} / R: {scoot.rearTireSize === '10-inch' ? '10"' : '12"'}{scoot.brakeType ? ` / ${scoot.brakeType}` : ''}
+                            F: {scoot.frontTireSize === '10-inch' ? '10"' : '12"'} / R: {scoot.rearTireSize === '10-inch' ? '10"' : '12"'}
                           </span>
                         </div>
                       </div>
@@ -3347,7 +4116,6 @@ export default function AssemblyPipeline({
                         <div>Color: <span className="text-slate-800 font-semibold">{scoot.color}</span></div>
                         <div>Front Tyre: <span className="text-slate-800 font-semibold">{scoot.frontTireSize === '10-inch' ? '10-inches' : '12-inches'}</span></div>
                         <div>Rear Tyre: <span className="text-slate-800 font-semibold">{scoot.rearTireSize === '10-inch' ? '10-inches' : '12-inches'}</span></div>
-                        {scoot.brakeType && <div>Brakes: <span className="text-slate-800 font-semibold">{scoot.brakeType}</span></div>}
                         <div className="sm:col-span-1 font-sans">Motor No: <span className="text-slate-900 font-mono font-bold text-[11px]">{scoot.motorNo}</span></div>
                         <div className="sm:col-span-2 font-sans">Controller: <span className="text-slate-900 font-mono font-bold text-[11px]">{scoot.controllerNo}</span></div>
                         <div className="col-span-full border-t border-slate-100 pt-1.5 mt-0.5 text-[11px] text-slate-400">Registered By: <strong className="text-slate-600">{scoot.createdOperator}</strong></div>
@@ -3577,12 +4345,6 @@ export default function AssemblyPipeline({
                             <span className="text-slate-400">Wheels (F/R):</span>
                             <span className="font-semibold text-slate-700">F: {scoot.frontTireSize === '10-inch' ? '10"' : '12"'} / R: {scoot.rearTireSize === '10-inch' ? '10"' : '12"'}</span>
                           </div>
-                          {scoot.brakeType && (
-                            <div className="flex justify-between">
-                              <span className="text-slate-400">Brake Type:</span>
-                              <span className="font-semibold text-slate-700">{scoot.brakeType}</span>
-                            </div>
-                          )}
                           <div className="flex justify-between">
                             <span className="text-slate-400">Motor / Controller:</span>
                             <span className="font-mono text-[10px] text-slate-700 font-semibold">{scoot.motorNo} / {scoot.controllerNo}</span>
@@ -3890,47 +4652,6 @@ export default function AssemblyPipeline({
 
         </div>
       </div>
-      )}
-
-      {/* Assembly/POS Serial Code Scanner Modal Overlay */}
-      {assemblyScannerTarget && (
-        <div className="fixed inset-0 z-[110] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <QRSerialScanner
-            title={
-              assemblyScannerTarget.type === 'charger_checkout'
-                ? "🔌 Scan Charger Serial"
-                : `🔋 Scan Battery Serial #${(assemblyScannerTarget.index ?? 0) + 1}`
-            }
-            type={assemblyScannerTarget.type === 'charger_checkout' ? 'charger' : 'battery'}
-            existingSerials={
-              assemblyScannerTarget.type === 'charger_checkout'
-                ? (posChargerSerial ? [posChargerSerial] : [])
-                : assemblyScannerTarget.type === 'battery_checkout'
-                ? (s4Batteries[assemblyScannerTarget.index ?? 0] ? [s4Batteries[assemblyScannerTarget.index ?? 0]] : [])
-                : (prepBatteries[assemblyScannerTarget.index ?? 0] ? [prepBatteries[assemblyScannerTarget.index ?? 0]] : [])
-            }
-            allRegisteredSerials={
-              assemblyScannerTarget.type === 'charger_checkout'
-                ? allRegisteredChargerSerialsInAssembly
-                : allRegisteredBatterySerialsInAssembly
-            }
-            targetQuantity={1}
-            onConfirm={(scannedSerials) => {
-              const scannedValue = scannedSerials[0] || '';
-              if (assemblyScannerTarget.type === 'charger_checkout') {
-                setPosChargerSerial(scannedValue);
-              } else if (assemblyScannerTarget.type === 'battery_checkout') {
-                const idx = assemblyScannerTarget.index ?? 0;
-                handleBatterySerialChange(idx, scannedValue);
-              } else if (assemblyScannerTarget.type === 'battery_prep') {
-                const idx = assemblyScannerTarget.index ?? 0;
-                handlePrepBatteryChange(idx, scannedValue);
-              }
-              setAssemblyScannerTarget(null);
-            }}
-            onCancel={() => setAssemblyScannerTarget(null)}
-          />
-        </div>
       )}
 
     </div>

@@ -4,14 +4,17 @@ import {
   Zap, Plus, Sparkles, User, Calendar, ClipboardList, CheckCircle2, 
   AlertCircle, Search, ShieldAlert, Ban, Timer, Check, Info, ShieldCheck, RefreshCw, X
 } from 'lucide-react';
-import { Buyer, ChargerSale, ChargerImport } from '../types';
-import QRSerialScanner from './QRSerialScanner';
+import { Buyer, ChargerSale, ChargerImport, ScooterUnit, BatterySale } from '../types';
+import { inspectChallanNumber, isChallanRestrictedForUser } from '../utils/challanUtils';
+import { ChallanStatusCard } from './ChallanStatusCard';
 
 interface ChargerSalesManagerProps {
   buyers: Buyer[];
   chargerSales: ChargerSale[];
   chargerImports?: ChargerImport[];
   chargerTypesList: string[];
+  scooterUnits?: ScooterUnit[];
+  batterySales?: BatterySale[];
   currentUser: any;
   onRefresh: () => void;
   onSubmitChargerSale: (data: {
@@ -55,6 +58,8 @@ export default function ChargerSalesManager({
   chargerSales = [],
   chargerImports = [],
   chargerTypesList = [],
+  scooterUnits = [],
+  batterySales = [],
   currentUser,
   onRefresh,
   onSubmitChargerSale,
@@ -73,6 +78,67 @@ export default function ChargerSalesManager({
   const [endNo, setEndNo] = useState('');
   const [quantity, setQuantity] = useState('');
   const [notes, setNotes] = useState('');
+  const [deliveryChallanNo, setDeliveryChallanNo] = useState('');
+  const [billNo, setBillNo] = useState('');
+  const [submitMode, setSubmitMode] = useState<'sold' | 'hold' | 'attach_challan'>('sold');
+
+  // Collect active pending delivery challan numbers for chargers
+  const activeChallanNumbers = useMemo(() => {
+    const set = new Set<string>();
+    if (chargerSales) {
+      chargerSales.forEach(s => {
+        if (s.deliveryChallanNo && s.challanStatus !== 'finished') set.add(s.deliveryChallanNo.toUpperCase());
+      });
+    }
+    if (scooterUnits) {
+      scooterUnits.forEach(u => {
+        if (u.deliveryChallanNo && u.challanStatus !== 'finished') set.add(u.deliveryChallanNo.toUpperCase());
+      });
+    }
+    if (batterySales) {
+      batterySales.forEach(b => {
+        if (b.deliveryChallanNo && b.challanStatus !== 'finished') set.add(b.deliveryChallanNo.toUpperCase());
+      });
+    }
+    return Array.from(set);
+  }, [chargerSales, scooterUnits, batterySales]);
+
+  // Inspect current Delivery Challan Number
+  const currentChallanInfo = useMemo(() => {
+    return inspectChallanNumber(deliveryChallanNo, scooterUnits, batterySales, chargerSales);
+  }, [deliveryChallanNo, scooterUnits, batterySales, chargerSales]);
+
+  // Auto-fill or reset buyer details and bill number when delivery challan number changes
+  useEffect(() => {
+    if (submitMode === 'attach_challan') {
+      const cleanNo = deliveryChallanNo.trim();
+      if (!cleanNo) {
+        setBuyerName('');
+        setBuyerContact('');
+        setBuyerAddress('');
+        setBillNo('');
+        return;
+      }
+
+      if (currentChallanInfo.exists && !currentChallanInfo.isFinished) {
+        const name = currentChallanInfo.buyerName || '';
+        const contact = currentChallanInfo.buyerContact || '';
+        const bill = currentChallanInfo.billNo || '';
+        setBuyerName(name);
+        setBuyerContact(contact);
+        setBillNo(bill);
+
+        const matchedBuyer = buyers.find(b => b.name.toLowerCase() === name.toLowerCase());
+        setBuyerAddress(matchedBuyer?.address || '');
+      } else {
+        // Reset buyer fields completely when entering a new/unregistered challan number
+        setBuyerName('');
+        setBuyerContact('');
+        setBuyerAddress('');
+        setBillNo('');
+      }
+    }
+  }, [deliveryChallanNo, currentChallanInfo, submitMode, buyers]);
 
   // Auto-populate contact and address info when standard buyer is selected
   useEffect(() => {
@@ -124,7 +190,6 @@ export default function ChargerSalesManager({
   }, [chargerImports, chargerSales]);
 
   // Submit and loading states
-  const [submitMode, setSubmitMode] = useState<'sold' | 'hold'>('sold');
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -196,35 +261,60 @@ export default function ChargerSalesManager({
   }, [chargerImports, chargerSales, chargerTypesList]);
 
   // Auto-calculate quantity helper when start/end numbers are updated
-  const handleStartOrEndChange = (type: 'start' | 'end', value: string) => {
-    if (type === 'start') {
-      setStartNo(value);
-      calculateQty(value, endNo);
-    } else {
-      setEndNo(value);
-      calculateQty(startNo, value);
+  // Helper to calculate end serial from start serial and quantity
+  const calculateEndNo = (start: string, qtyStr: string): string => {
+    if (!start || !qtyStr) return '';
+    const qty = parseInt(qtyStr, 10);
+    if (isNaN(qty) || qty <= 0) return '';
+
+    const match = start.trim().toUpperCase().match(/^([A-Z0-9\-_]*?)(\d+)$/);
+    if (match) {
+      const prefix = match[1];
+      const startNum = parseInt(match[2], 10);
+      const numDigits = match[2].length;
+      const endNum = startNum + qty - 1;
+      const paddedEndNum = String(endNum).padStart(numDigits, '0');
+      return `${prefix}${paddedEndNum}`;
     }
+    return '';
   };
 
-  const calculateQty = (start: string, end: string) => {
+  const calculateQtyFromRange = (start: string, end: string) => {
     if (!start || !end) return;
-    
-    // Extract trailing digits if any
     const startMatch = start.match(/\d+$/);
     const endMatch = end.match(/\d+$/);
-
     if (startMatch && endMatch) {
       const startNum = parseInt(startMatch[0], 10);
       const endNum = parseInt(endMatch[0], 10);
-      
       if (endNum >= startNum) {
         const calculated = endNum - startNum + 1;
         setQuantity(String(calculated));
-      } else {
-        setQuantity('');
+      }
+    }
+  };
+
+  const handleStartOrEndChange = (type: 'start' | 'end', value: string) => {
+    if (type === 'start') {
+      setStartNo(value);
+      if (quantity && parseInt(quantity, 10) > 0) {
+        const autoEnd = calculateEndNo(value, quantity);
+        if (autoEnd) setEndNo(autoEnd);
+      } else if (endNo) {
+        calculateQtyFromRange(value, endNo);
       }
     } else {
-      setQuantity('');
+      setEndNo(value);
+      if (startNo) {
+        calculateQtyFromRange(startNo, value);
+      }
+    }
+  };
+
+  const handleQuantityChange = (val: string) => {
+    setQuantity(val);
+    if (startNo && val) {
+      const autoEnd = calculateEndNo(startNo, val);
+      if (autoEnd) setEndNo(autoEnd);
     }
   };
 
@@ -252,9 +342,21 @@ export default function ChargerSalesManager({
   };
 
   // Submit Sale / Hold Form
-  const handleFormSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!buyerName.trim()) {
+  const handleFormSubmit = async (e?: React.FormEvent, overrideMode?: 'sold' | 'hold' | 'attach_challan') => {
+    if (e) e.preventDefault();
+    setStatus(null);
+
+    const activeMode = overrideMode || submitMode;
+
+    if (currentChallanInfo.cleanNo && currentChallanInfo.isFinished) {
+      setStatus({ 
+        type: 'error', 
+        text: `⛔ Delivery Challan #${currentChallanInfo.cleanNo} is FINISHED & VERIFIED! This challan is locked. You cannot attach items to a finished challan. Please use a NEW, unique Delivery Challan Number.` 
+      });
+      return;
+    }
+
+    if (!isPipelineView && !buyerName.trim()) {
       setStatus({ type: 'error', text: 'Please enter a buyer name.' });
       return;
     }
@@ -281,14 +383,22 @@ export default function ChargerSalesManager({
         finalStartNo = scannedSerials[0];
         finalEndNo = scannedSerials[scannedSerials.length - 1];
       } else {
-        if (!startNo.trim() || !endNo.trim()) {
-          setStatus({ type: 'error', text: 'Starting and ending series numbers are required for under-warranty chargers.' });
+        if (!startNo.trim()) {
+          setStatus({ type: 'error', text: 'Starting serial number is required for under-warranty chargers.' });
           return;
         }
         finalStartNo = startNo.trim().toUpperCase();
-        finalEndNo = endNo.trim().toUpperCase();
 
-        // Recalculate quantity to enforce
+        if (endNo.trim()) {
+          finalEndNo = endNo.trim().toUpperCase();
+        } else if (qtyNum > 0) {
+          const autoEnd = calculateEndNo(finalStartNo, String(qtyNum));
+          finalEndNo = autoEnd || finalStartNo;
+        } else {
+          finalEndNo = finalStartNo;
+        }
+
+        // Validate range if end matches digits
         const startMatch = finalStartNo.match(/\d+$/);
         const endMatch = finalEndNo.match(/\d+$/);
         if (startMatch && endMatch) {
@@ -296,14 +406,11 @@ export default function ChargerSalesManager({
           const eNum = parseInt(endMatch[0], 10);
           if (eNum >= sNum) {
             const calculatedQty = eNum - sNum + 1;
-            qtyNum = calculatedQty;
+            qtyNum = Math.max(qtyNum, calculatedQty);
           } else {
-            setStatus({ type: 'error', text: 'Ending series number must be greater than or equal to starting series number.' });
+            setStatus({ type: 'error', text: 'Ending serial number must be greater than or equal to starting serial number.' });
             return;
           }
-        } else {
-          setStatus({ type: 'error', text: 'Invalid serial formats. Series numbers must end with numeric values (e.g. CHG48-1001).' });
-          return;
         }
       }
     } else {
@@ -324,6 +431,46 @@ export default function ChargerSalesManager({
         text: `Insufficient stock! Only ${currentAvailable} units of ${chargerType} are available.` 
       });
       return;
+    }
+
+    if (!isPipelineView && activeMode === 'sold') {
+      const cleanChallan = deliveryChallanNo.trim().toUpperCase();
+      if (!cleanChallan) {
+        setStatus({ 
+          type: 'error', 
+          text: '❌ Delivery Challan Number is MANDATORY for Direct Sale / Dispatch. Please enter a unique Delivery Challan Number.' 
+        });
+        return;
+      }
+
+      const isExisting = activeChallanNumbers.some(cNo => cNo.toUpperCase() === cleanChallan) || (currentChallanInfo.exists && currentChallanInfo.cleanNo === cleanChallan);
+      if (isExisting) {
+        setStatus({ 
+          type: 'error', 
+          text: `❌ Delivery Challan #${cleanChallan} already exists as an active pending challan. Direct Sale / Dispatch requires a BRAND NEW unique Delivery Challan Number. If you want to attach items to this existing challan, please switch to 'Attach Challan' mode.` 
+        });
+        return;
+      }
+    }
+
+    if (!isPipelineView && activeMode === 'attach_challan') {
+      const cleanChallan = deliveryChallanNo.trim().toUpperCase();
+      if (!cleanChallan) {
+        setStatus({ 
+          type: 'error', 
+          text: '❌ Delivery Challan Number is 100% MANDATORY to attach chargers to a Delivery Challan! Please select or enter an active Delivery Challan Number.' 
+        });
+        return;
+      }
+
+      const existsInPending = activeChallanNumbers.some(cNo => cNo.toUpperCase() === cleanChallan) || (currentChallanInfo.exists && !currentChallanInfo.isFinished);
+      if (!existsInPending) {
+        setStatus({ 
+          type: 'error', 
+          text: `❌ Delivery Challan #${cleanChallan} does not exist. In 'Attach Challan' mode, you can only attach items to an existing active Delivery Challan. Please select an active pending challan or switch to 'Direct Sale / Dispatch' mode to create a new dispatch.` 
+        });
+        return;
+      }
     }
 
     setSaving(true);
@@ -347,24 +494,39 @@ export default function ChargerSalesManager({
       notes: notes.trim() || undefined,
       isUnderWarranty: !!isUnderWarranty,
       warrantyDurationMonths: isUnderWarranty ? Number(warrantyDuration) : undefined,
-      status: submitMode,
-      heldFor: submitMode === 'hold' ? buyerName.trim() : undefined,
-      serialNumbers: inputMethod === 'scan' ? scannedSerials : undefined
+      status: activeMode === 'hold' ? 'hold' : 'sold',
+      heldFor: activeMode === 'hold' ? buyerName.trim() : undefined,
+      serialNumbers: (inputMethod === 'scan' && scannedSerials.length > 0)
+        ? scannedSerials
+        : (finalStartNo !== 'N/A' && finalEndNo !== 'N/A')
+        ? generateSerialRange(finalStartNo, finalEndNo, qtyNum)
+        : undefined,
+      deliveryChallanNo: deliveryChallanNo.trim().toUpperCase(),
+      billNo: billNo.trim().toUpperCase()
     };
 
-    const success = await onSubmitChargerSale(data);
+    const success = await onSubmitChargerSale(data as any);
     setSaving(false);
 
     if (success) {
       setStatus({ 
         type: 'success', 
-        text: submitMode === 'hold' 
+        text: activeMode === 'hold' 
           ? `Successfully put ${qtyNum} units of ${chargerType} on HOLD for ${buyerName}.` 
+          : activeMode === 'attach_challan'
+          ? `Successfully attached ${qtyNum} units of ${chargerType} to Delivery Challan #${deliveryChallanNo.trim().toUpperCase()}.`
           : `Successfully registered sale of ${qtyNum} units of ${chargerType} to ${buyerName}.`
       });
       // Reset
       setBuyerName('');
       setBuyerContact('');
+      setBuyerAddress('');
+      setStartNo('');
+      setEndNo('');
+      setQuantity('');
+      setNotes('');
+      setDeliveryChallanNo('');
+      setBillNo('');
       setBuyerAddress('');
       setStartNo('');
       setEndNo('');
@@ -542,27 +704,7 @@ export default function ChargerSalesManager({
           <div className="flex justify-between items-center border-b border-slate-100 pb-4">
             <div>
               <h2 className="text-sm font-bold text-slate-800 uppercase tracking-wide">Dispatch Standalone Charger</h2>
-              <p className="text-xs text-slate-500 mt-0.5">Create a stand-alone customer sale or reservation hold for power charger units.</p>
-            </div>
-            <div className="flex bg-slate-100 p-1 rounded-xl">
-              <button
-                type="button"
-                onClick={() => setSubmitMode('sold')}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                  submitMode === 'sold' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Sale/Dispatch
-              </button>
-              <button
-                type="button"
-                onClick={() => setSubmitMode('hold')}
-                className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                  submitMode === 'hold' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                Reservation Hold
-              </button>
+              <p className="text-xs text-slate-500 mt-0.5">Dispatch power charger units directly under a Delivery Challan Number.</p>
             </div>
           </div>
 
@@ -577,29 +719,108 @@ export default function ChargerSalesManager({
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
-                Buyer / Customer Name *
-              </label>
-              <div className="relative">
-                <User className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+          {/* Delivery Challan Primary Step when Attach Challan Mode is Active */}
+          {submitMode === 'attach_challan' && (
+            <div className="bg-cyan-50/90 border-2 border-cyan-400 p-4 rounded-2xl space-y-3 shadow-xs font-sans">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-cyan-950 uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                  🚚 Step 1: Select Active Delivery Challan
+                </span>
+                {deliveryChallanNo ? (
+                  <span className="text-xs font-mono font-black text-cyan-900 bg-cyan-200 border border-cyan-400 px-2.5 py-1 rounded-lg shadow-2xs">
+                    [ Challan #{deliveryChallanNo.toUpperCase()} ]
+                  </span>
+                ) : (
+                  <span className="text-[11px] font-mono font-bold text-slate-500 bg-slate-200 border border-slate-300 px-2 py-0.5 rounded-lg">
+                    [ Select Active Challan ]
+                  </span>
+                )}
+              </div>
+
+              {activeChallanNumbers.length > 0 ? (
+                <div className="space-y-1.5">
+                  <label className="block text-[10px] font-extrabold text-cyan-900 uppercase tracking-wide font-sans">
+                    Active Pending Challan Numbers (Click to Select):
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1 bg-white/80 rounded-xl border border-cyan-200">
+                    {activeChallanNumbers.map((cNo) => {
+                      const isSelected = deliveryChallanNo.toUpperCase() === cNo.toUpperCase();
+                      return (
+                        <button
+                          key={cNo}
+                          type="button"
+                          onClick={() => setDeliveryChallanNo(cNo)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-mono font-black transition-all cursor-pointer border flex items-center gap-1.5 ${
+                            isSelected
+                              ? 'bg-cyan-700 text-white border-cyan-800 ring-2 ring-cyan-500/30 shadow-xs scale-105'
+                              : 'bg-white text-cyan-900 border-cyan-300 hover:bg-cyan-100 hover:border-cyan-400'
+                          }`}
+                        >
+                          <span>#{cNo}</span>
+                          {isSelected && <Check className="h-3.5 w-3.5 text-cyan-200" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] font-medium text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200 font-sans">
+                  ⚠️ No active pending Delivery Challans found. Enter a custom challan number below or create a new challan.
+                </p>
+              )}
+
+              <div className="pt-2 border-t border-cyan-200/80 flex items-center gap-2 font-sans">
+                <span className="text-[10px] font-bold text-cyan-900 uppercase shrink-0">Challan Number:</span>
                 <input
                   type="text"
-                  placeholder="Enter customer or buyer name"
-                  value={buyerName}
-                  onChange={(e) => setBuyerName(e.target.value)}
-                  list="buyers-datalist"
-                  className="w-full pl-9 pr-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all"
-                  required
+                  placeholder="e.g. DC-1001"
+                  value={deliveryChallanNo}
+                  onChange={(e) => setDeliveryChallanNo(e.target.value)}
+                  className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 font-mono font-bold uppercase outline-none focus:border-cyan-600 focus:ring-1 focus:ring-cyan-500"
                 />
-                <datalist id="buyers-datalist">
-                  {buyers.map(b => (
-                    <option key={b.id} value={b.name} />
-                  ))}
-                </datalist>
               </div>
             </div>
+          )}
+
+          {submitMode === 'attach_challan' && deliveryChallanNo.trim() && (
+            <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center justify-between text-xs font-bold text-emerald-900 font-sans shadow-2xs">
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                Attached to [ Challan #{deliveryChallanNo.toUpperCase()} ]
+              </span>
+              {currentChallanInfo.buyerName && (
+                <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
+                  Buyer: {currentChallanInfo.buyerName}
+                </span>
+              )}
+            </div>
+          )}
+
+          <div className={`grid grid-cols-1 ${!isPipelineView ? 'md:grid-cols-2' : ''} gap-4`}>
+            {!isPipelineView && (
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Buyer / Customer Name *
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Enter customer or buyer name"
+                    value={buyerName}
+                    onChange={(e) => setBuyerName(e.target.value)}
+                    list="buyers-datalist"
+                    className="w-full pl-9 pr-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all"
+                    required
+                  />
+                  <datalist id="buyers-datalist">
+                    {buyers.map(b => (
+                      <option key={b.id} value={b.name} />
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
@@ -608,13 +829,43 @@ export default function ChargerSalesManager({
               <select
                 value={chargerType}
                 onChange={(e) => setChargerType(e.target.value)}
-                className="w-full px-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-sans cursor-pointer"
+                className="w-full px-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-sans cursor-pointer font-bold"
                 required
               >
-                {chargerTypesList.map(type => (
-                  <option key={type} value={type}>{type}</option>
-                ))}
+                {chargerTypesList.map(type => {
+                  const avail = typeStockMap[type]?.available || 0;
+                  return (
+                    <option key={type} value={type}>
+                      {type} ({avail} Available in Warehouse)
+                    </option>
+                  );
+                })}
               </select>
+
+              {/* Stock Badge for Charger */}
+              {(() => {
+                const stock = typeStockMap[chargerType] || { imported: 0, soldStandalone: 0, available: 0 };
+                return (
+                  <div className="mt-2 p-2.5 rounded-xl border flex items-center justify-between text-xs font-sans transition-all bg-red-50/80 border-red-200">
+                    <div className="flex items-center gap-2">
+                      <span className="text-base">⚡</span>
+                      <div>
+                        <span className="font-extrabold text-red-950 block">
+                          Available Stock: <span className="text-red-700 text-xs sm:text-sm font-black">{stock.available} Units</span>
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-medium">
+                          Total Imported: {stock.imported} | Dispatched/Sold: {stock.soldStandalone}
+                        </span>
+                      </div>
+                    </div>
+                    {stock.available === 0 && (
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-md border border-amber-300">
+                        ⚠️ Out of Stock
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -653,19 +904,10 @@ export default function ChargerSalesManager({
               </label>
               <input
                 type="number"
-                placeholder={isUnderWarranty ? "Derived from serial range..." : "Specify units count"}
+                placeholder="Specify units count (e.g. 20)"
                 value={quantity}
-                onChange={(e) => {
-                  if (!isUnderWarranty) {
-                    setQuantity(e.target.value);
-                  }
-                }}
-                readOnly={isUnderWarranty === true}
-                className={`w-full px-4 py-2.5 text-sm rounded-xl border focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-mono font-bold ${
-                  isUnderWarranty
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800 cursor-not-allowed'
-                    : 'bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 border-slate-200'
-                }`}
+                onChange={(e) => handleQuantityChange(e.target.value)}
+                className="w-full px-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-mono font-bold"
                 required
               />
             </div>
@@ -755,6 +997,53 @@ export default function ChargerSalesManager({
             )}
           </div>
 
+          {/* Bill Number & Delivery Challan Number Inputs (hidden in pipeline view since specified at dispatch level) */}
+          {!isPipelineView && (
+            <div className={`grid grid-cols-1 ${submitMode !== 'attach_challan' ? 'md:grid-cols-2' : ''} gap-4`}>
+              <div>
+                <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                  Sales Bill Number (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. BILL-9081 (optional)"
+                  value={billNo}
+                  onChange={(e) => setBillNo(e.target.value)}
+                  className="w-full px-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-mono font-bold uppercase"
+                />
+              </div>
+
+              {submitMode !== 'attach_challan' && (
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
+                      Delivery Challan Number (Mandatory) *
+                    </label>
+                    {deliveryChallanNo ? (
+                      <span className="text-xs font-mono font-black text-red-800 bg-red-100 border border-red-300 px-2 py-0.5 rounded-md shadow-2xs">
+                        [ Challan #{deliveryChallanNo.toUpperCase()} ]
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md">
+                        [ New Unique Challan ]
+                      </span>
+                    )}
+                  </div>
+
+                  <input
+                    type="text"
+                    placeholder="Enter a Delivery Challan No (e.g. DC-2005) *"
+                    value={deliveryChallanNo}
+                    onChange={(e) => setDeliveryChallanNo(e.target.value)}
+                    className="w-full px-4 py-2.5 text-sm bg-slate-50 hover:bg-slate-100 focus:bg-white text-slate-800 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-red-500 transition-all font-mono font-bold uppercase"
+                    required
+                  />
+                  <ChallanStatusCard info={currentChallanInfo} currentUser={currentUser} />
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">
               Dispatch Notes / Serial numbers checklist
@@ -768,34 +1057,48 @@ export default function ChargerSalesManager({
             />
           </div>
 
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="submit"
-              disabled={saving}
-              className={`w-full px-6 py-3 font-semibold rounded-xl text-white shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer ${
-                submitMode === 'hold' 
-                  ? 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800' 
-                  : 'bg-red-600 hover:bg-red-700 active:bg-red-800'
-              }`}
-            >
-              {saving ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                  Registering...
-                </>
-              ) : submitMode === 'hold' ? (
-                <>
-                  <Timer className="h-4 w-4" />
-                  Put Chargers on Hold
-                </>
-              ) : (
-                <>
-                  <CheckCircle2 className="h-4 w-4" />
-                  Finalize Charger Dispatch
-                </>
-              )}
-            </button>
-          </div>
+          {/* Single Finishing Action Bar Button */}
+          {!isPipelineView && (
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={saving || currentChallanInfo.isFinished || isChallanRestrictedForUser(currentChallanInfo, currentUser)}
+                className={`w-full py-3.5 font-sans font-bold text-xs sm:text-sm rounded-xl shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 active:scale-[0.98] text-white ${
+                  submitMode === 'hold' 
+                    ? 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800' 
+                    : submitMode === 'attach_challan'
+                    ? 'bg-cyan-700 hover:bg-cyan-800 active:bg-cyan-900'
+                    : 'bg-red-600 hover:bg-red-700 active:bg-red-800'
+                }`}
+              >
+                {saving ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>Processing...</span>
+                  </>
+                ) : submitMode === 'hold' ? (
+                  <>
+                    <Timer className="h-4 w-4" />
+                    <span>Place Chargers on Reservation Hold</span>
+                  </>
+                ) : submitMode === 'attach_challan' ? (
+                  <>
+                    <ClipboardList className="h-4 w-4" />
+                    <span>
+                      {deliveryChallanNo.trim()
+                        ? `Attach Chargers to Challan #${deliveryChallanNo.trim().toUpperCase()}`
+                        : 'Attach Chargers to Delivery Challan'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    <span>Complete Direct Sale / Dispatch</span>
+                  </>
+                )}
+              </button>
+            </div>
+          )}
         </form>
       </div>
     );
@@ -948,27 +1251,7 @@ export default function ChargerSalesManager({
             <div className="flex justify-between items-center border-b border-slate-100 pb-4">
               <div>
                 <h2 className="text-lg font-bold text-slate-800">Dispatch Standalone Charger</h2>
-                <p className="text-xs text-slate-500 mt-0.5">Create a stand-alone customer sale or reservation hold for power charger units.</p>
-              </div>
-              <div className="flex bg-slate-100 p-1 rounded-xl">
-                <button
-                  type="button"
-                  onClick={() => setSubmitMode('sold')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                    submitMode === 'sold' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  Sale/Dispatch
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSubmitMode('hold')}
-                  className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
-                    submitMode === 'hold' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  Reservation Hold
-                </button>
+                <p className="text-xs text-slate-500 mt-0.5">Dispatch power charger units directly under a Delivery Challan Number.</p>
               </div>
             </div>
 
@@ -980,6 +1263,83 @@ export default function ChargerSalesManager({
               }`}>
                 {status.type === 'success' ? <CheckCircle2 className="h-5 w-5 shrink-0" /> : <AlertCircle className="h-5 w-5 shrink-0" />}
                 <span>{status.text}</span>
+              </div>
+            )}
+
+            {/* Delivery Challan Primary Step when Attach Challan Mode is Active */}
+            {submitMode === 'attach_challan' && (
+              <div className="bg-cyan-50/90 border-2 border-cyan-400 p-4 rounded-2xl space-y-3 shadow-xs font-sans">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-black text-cyan-950 uppercase tracking-wider flex items-center gap-1.5 font-sans">
+                    🚚 Step 1: Select Active Delivery Challan
+                  </span>
+                  {deliveryChallanNo ? (
+                    <span className="text-xs font-mono font-black text-cyan-900 bg-cyan-200 border border-cyan-400 px-2.5 py-1 rounded-lg shadow-2xs">
+                      [ Challan #{deliveryChallanNo.toUpperCase()} ]
+                    </span>
+                  ) : (
+                    <span className="text-[11px] font-mono font-bold text-slate-500 bg-slate-200 border border-slate-300 px-2 py-0.5 rounded-lg">
+                      [ Select Active Challan ]
+                    </span>
+                  )}
+                </div>
+
+                {activeChallanNumbers.length > 0 ? (
+                  <div className="space-y-1.5">
+                    <label className="block text-[10px] font-extrabold text-cyan-900 uppercase tracking-wide font-sans">
+                      Active Pending Challan Numbers (Click to Select):
+                    </label>
+                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto p-1 bg-white/80 rounded-xl border border-cyan-200">
+                      {activeChallanNumbers.map((cNo) => {
+                        const isSelected = deliveryChallanNo.toUpperCase() === cNo.toUpperCase();
+                        return (
+                          <button
+                            key={cNo}
+                            type="button"
+                            onClick={() => setDeliveryChallanNo(cNo)}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-mono font-black transition-all cursor-pointer border flex items-center gap-1.5 ${
+                              isSelected
+                                ? 'bg-cyan-700 text-white border-cyan-800 ring-2 ring-cyan-500/30 shadow-xs scale-105'
+                                : 'bg-white text-cyan-900 border-cyan-300 hover:bg-cyan-100 hover:border-cyan-400'
+                            }`}
+                          >
+                            <span>#{cNo}</span>
+                            {isSelected && <Check className="h-3.5 w-3.5 text-cyan-200" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[11px] font-medium text-amber-800 bg-amber-50 p-2.5 rounded-xl border border-amber-200 font-sans">
+                    ⚠️ No active pending Delivery Challans found. Enter a custom challan number below or create a new challan.
+                  </p>
+                )}
+
+                <div className="pt-2 border-t border-cyan-200/80 flex items-center gap-2 font-sans">
+                  <span className="text-[10px] font-bold text-cyan-900 uppercase shrink-0">Challan Number:</span>
+                  <input
+                    type="text"
+                    placeholder="e.g. DC-1001"
+                    value={deliveryChallanNo}
+                    onChange={(e) => setDeliveryChallanNo(e.target.value)}
+                    className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-1.5 text-xs text-slate-800 font-mono font-bold uppercase outline-none focus:border-cyan-600 focus:ring-1 focus:ring-cyan-500"
+                  />
+                </div>
+              </div>
+            )}
+
+            {submitMode === 'attach_challan' && deliveryChallanNo.trim() && (
+              <div className="p-3 bg-emerald-50 border border-emerald-300 rounded-xl flex items-center justify-between text-xs font-bold text-emerald-900 font-sans shadow-2xs">
+                <span className="flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  Attached to [ Challan #{deliveryChallanNo.toUpperCase()} ]
+                </span>
+                {currentChallanInfo.buyerName && (
+                  <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-md">
+                    Buyer: {currentChallanInfo.buyerName}
+                  </span>
+                )}
               </div>
             )}
 
@@ -1090,7 +1450,7 @@ export default function ChargerSalesManager({
                         inputMethod === 'scan' ? 'bg-white text-red-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'
                       }`}
                     >
-                      📷 Scan QR/Codes
+                      ✍️ Individual Serials
                     </button>
                   </div>
                 </div>
@@ -1154,14 +1514,6 @@ export default function ChargerSalesManager({
                         <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">Units Registered</span>
                       </div>
                     </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setShowScanner(true)}
-                      className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-sans font-bold text-xs rounded-xl transition flex items-center justify-center gap-2"
-                    >
-                      📷 Launch Camera QR Scanner
-                    </button>
 
                     {scannedSerials.length > 0 && (
                       <div className="bg-white border border-slate-200 p-2.5 rounded-xl space-y-1">
@@ -1322,18 +1674,25 @@ export default function ChargerSalesManager({
                 className={`w-full md:w-auto px-6 py-3 font-semibold rounded-xl text-white shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer ${
                   submitMode === 'hold' 
                     ? 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800' 
+                    : submitMode === 'attach_challan'
+                    ? 'bg-cyan-700 hover:bg-cyan-800 active:bg-cyan-900'
                     : 'bg-red-600 hover:bg-red-700 active:bg-red-800'
                 }`}
               >
                 {saving ? (
                   <>
                     <RefreshCw className="h-4 w-4 animate-spin" />
-                    Registering...
+                    Processing...
                   </>
                 ) : submitMode === 'hold' ? (
                   <>
                     <Timer className="h-4 w-4" />
                     Put Chargers on Hold
+                  </>
+                ) : submitMode === 'attach_challan' ? (
+                  <>
+                    <ClipboardList className="h-4 w-4" />
+                    Attach Chargers to Delivery Challan
                   </>
                 ) : (
                   <>
@@ -1841,7 +2200,7 @@ export default function ChargerSalesManager({
                               <span>📊</span> Imported Charger Serials
                             </h4>
                             <p className="text-[10px] text-slate-400 mt-0.5">
-                              Scan or register the QR codes of each incoming charger.
+                              Register the serial numbers of each incoming charger.
                             </p>
                           </div>
                           <div className="text-right">
@@ -1851,14 +2210,6 @@ export default function ChargerSalesManager({
                             <span className="text-[9px] text-slate-400 font-bold uppercase tracking-wider font-mono">Units Registered</span>
                           </div>
                         </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setShowImportScanner(true)}
-                          className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-sans font-bold text-xs rounded-xl transition flex items-center justify-center gap-2"
-                        >
-                          📷 Launch Import QR Scanner
-                        </button>
 
                         {scannedImportSerials.length > 0 && (
                           <div className="bg-white border border-slate-200 p-2.5 rounded-xl space-y-1">
@@ -1954,40 +2305,45 @@ export default function ChargerSalesManager({
           </div>
         )}
       </AnimatePresence>
-
-      {/* Sale Camera Scanner overlay modal */}
-      {showScanner && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <QRSerialScanner
-            title="📷 Scan Sold Chargers"
-            type="charger"
-            existingSerials={scannedSerials}
-            allRegisteredSerials={allRegisteredChargerSerials}
-            onConfirm={(serials) => {
-              setScannedSerials(serials);
-              setShowScanner(false);
-            }}
-            onCancel={() => setShowScanner(false)}
-          />
-        </div>
-      )}
-
-      {/* Import Camera Scanner overlay modal */}
-      {showImportScanner && (
-        <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <QRSerialScanner
-            title="📥 Scan Imported Chargers"
-            type="charger"
-            existingSerials={scannedImportSerials}
-            allRegisteredSerials={allRegisteredChargerSerials}
-            onConfirm={(serials) => {
-              setScannedImportSerials(serials);
-              setShowImportScanner(false);
-            }}
-            onCancel={() => setShowImportScanner(false)}
-          />
-        </div>
-      )}
     </div>
   );
+}
+
+function generateSerialRange(start: string, end: string, count: number): string[] {
+  if (!start || start === 'N/A') return [];
+  
+  const cleanStart = start.trim();
+  const cleanEnd = end && end !== 'N/A' ? end.trim() : '';
+  
+  const startMatch = cleanStart.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+  
+  if (startMatch) {
+    const prefix = startMatch[1] !== undefined ? startMatch[1] : '';
+    const startNum = parseInt(startMatch[2], 10);
+    const paddingLength = startMatch[2].length;
+    
+    let countToGen = Math.max(1, count);
+    
+    if (cleanEnd) {
+      const endMatch = cleanEnd.match(/^(.*?[\s\-_/\\#]*?)(\d+)$/i);
+      if (endMatch) {
+        const endNum = parseInt(endMatch[2], 10);
+        if (endNum >= startNum) {
+          countToGen = Math.max(countToGen, endNum - startNum + 1);
+        }
+      }
+    }
+    
+    const list: string[] = [];
+    for (let i = 0; i < countToGen; i++) {
+      const numStr = String(startNum + i).padStart(paddingLength, '0');
+      list.push(`${prefix}${numStr}`);
+    }
+    return list;
+  }
+  
+  if (cleanEnd) {
+    return [cleanStart, cleanEnd];
+  }
+  return [cleanStart];
 }

@@ -46,6 +46,7 @@ export default function SearchConsole({
   currentUser
 }: SearchConsoleProps) {
   const [query, setQuery] = useState('');
+  const [searchCategory, setSearchCategory] = useState<string>('all');
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
 
   // Parse all searchable index pools
@@ -65,15 +66,28 @@ export default function SearchConsole({
       const billMatch = scoot.billNo?.toLowerCase().includes(lowerQuery);
       const stockInMatch = scoot.stockInNo?.toLowerCase().includes(lowerQuery);
       const buyerMatch = scoot.buyerName?.toLowerCase().includes(lowerQuery);
+      const phoneMatch = scoot.buyerContact?.toLowerCase().includes(lowerQuery);
 
-      if (chassisMatch || motorMatch || controllerMatch || modelMatch || colorMatch || billMatch || stockInMatch || buyerMatch) {
+      let isMatch = false;
+      if (searchCategory === 'all') isMatch = !!(chassisMatch || motorMatch || controllerMatch || modelMatch || colorMatch || billMatch || stockInMatch || buyerMatch || phoneMatch);
+      else if (searchCategory === 'chassis') isMatch = !!chassisMatch;
+      else if (searchCategory === 'motor') isMatch = !!motorMatch;
+      else if (searchCategory === 'controller') isMatch = !!controllerMatch;
+      else if (searchCategory === 'bill' || searchCategory === 'invoice') isMatch = !!billMatch;
+      else if (searchCategory === 'stock_in' || searchCategory === 'challan') isMatch = !!stockInMatch;
+      else if (searchCategory === 'model') isMatch = !!modelMatch;
+      else if (searchCategory === 'color') isMatch = !!colorMatch;
+
+      if (isMatch) {
         let matchReason = '';
         if (chassisMatch) matchReason = `Chassis: ${scoot.chassisNo}`;
         else if (motorMatch) matchReason = `Motor: ${scoot.motorNo}`;
         else if (controllerMatch) matchReason = `Controller: ${scoot.controllerNo}`;
         else if (billMatch) matchReason = `Bill #: ${scoot.billNo}`;
-        else if (stockInMatch) matchReason = `Stock IN: ${scoot.stockInNo}`;
+        else if (stockInMatch) matchReason = `Stock IN / Challan: ${scoot.stockInNo}`;
         else if (buyerMatch) matchReason = `Buyer: ${scoot.buyerName}`;
+        else if (phoneMatch) matchReason = `Contact: ${scoot.buyerContact}`;
+        else if (colorMatch) matchReason = `Color: ${scoot.color}`;
         else matchReason = `${scoot.modelName} (${scoot.color})`;
 
         results.push({
@@ -89,181 +103,211 @@ export default function SearchConsole({
     });
 
     // --- 2. BUYERS INDEXING ---
-    buyers.forEach(buyer => {
-      const nameMatch = buyer.name?.toLowerCase().includes(lowerQuery);
-      const contactMatch = buyer.contact?.toLowerCase().includes(lowerQuery);
-      const addressMatch = buyer.address?.toLowerCase().includes(lowerQuery);
+    if (searchCategory === 'all' || searchCategory === 'buyer' || searchCategory === 'phone' || searchCategory === 'contact') {
+      buyers.forEach(buyer => {
+        const nameMatch = buyer.name?.toLowerCase().includes(lowerQuery);
+        const contactMatch = buyer.contact?.toLowerCase().includes(lowerQuery);
+        const addressMatch = buyer.address?.toLowerCase().includes(lowerQuery);
 
-      if (nameMatch || contactMatch || addressMatch) {
-        results.push({
-          id: `buyer-${buyer.id}`,
-          category: 'buyer',
-          title: buyer.name,
-          subtitle: `Contact: ${buyer.contact || 'N/A'} | ${buyer.address || 'No Address'}`,
-          badge: 'Buyer Profile',
-          badgeColor: 'bg-indigo-50 text-indigo-700 border-indigo-100',
-          refData: buyer
-        });
-      }
-    });
+        let isMatch = false;
+        if (searchCategory === 'all') isMatch = !!(nameMatch || contactMatch || addressMatch);
+        else if (searchCategory === 'buyer') isMatch = !!nameMatch;
+        else if (searchCategory === 'phone' || searchCategory === 'contact') isMatch = !!contactMatch;
+
+        if (isMatch) {
+          results.push({
+            id: `buyer-${buyer.id}`,
+            category: 'buyer',
+            title: buyer.name,
+            subtitle: `Contact: ${buyer.contact || 'N/A'} | ${buyer.address || 'No Address'}`,
+            badge: 'Buyer Profile',
+            badgeColor: 'bg-indigo-50 text-indigo-700 border-indigo-100',
+            refData: buyer
+          });
+        }
+      });
+    }
 
     // --- 3. MODELS / BLUEPRINTS INDEXING ---
-    products.forEach(p => {
-      if (p.name.toLowerCase().includes(lowerQuery)) {
-        results.push({
-          id: `prod-${p.id}`,
-          category: 'model',
-          title: p.name,
-          subtitle: `Blueprint Colors: ${p.colors.join(', ')}`,
-          badge: 'Model Blueprint',
-          badgeColor: 'bg-amber-50 text-amber-700 border-amber-100',
-          refData: p
-        });
-      }
-    });
+    if (searchCategory === 'all' || searchCategory === 'model' || searchCategory === 'color') {
+      products.forEach(p => {
+        const nameMatch = p.name.toLowerCase().includes(lowerQuery);
+        const colorMatch = p.colors.some(c => c.toLowerCase().includes(lowerQuery));
+
+        let isMatch = false;
+        if (searchCategory === 'all') isMatch = nameMatch || colorMatch;
+        else if (searchCategory === 'model') isMatch = nameMatch;
+        else if (searchCategory === 'color') isMatch = colorMatch;
+
+        if (isMatch) {
+          results.push({
+            id: `prod-${p.id}`,
+            category: 'model',
+            title: p.name,
+            subtitle: `Blueprint Colors: ${p.colors.join(', ')}`,
+            badge: 'Model Blueprint',
+            badgeColor: 'bg-amber-50 text-amber-700 border-amber-100',
+            refData: p
+          });
+        }
+      });
+    }
 
     // --- 4. UNIQUE BILL NUMBERS INDEXING ---
-    const seenBills = new Set<string>();
-    
-    // Find bills in scooterUnits
-    scooterUnits.forEach(s => {
-      if (s.billNo && s.billNo.toLowerCase().includes(lowerQuery) && !seenBills.has(s.billNo)) {
-        seenBills.add(s.billNo);
-        results.push({
-          id: `bill-${s.billNo}`,
-          category: 'bill',
-          title: `Bill Ref: ${s.billNo}`,
-          subtitle: 'Associated with domestic/imported scooter units',
-          badge: 'Bill #',
-          badgeColor: 'bg-rose-50 text-rose-700 border-rose-100',
-          refData: { billNo: s.billNo }
-        });
-      }
-    });
+    if (searchCategory === 'all' || searchCategory === 'bill' || searchCategory === 'invoice') {
+      const seenBills = new Set<string>();
+      
+      // Find bills in scooterUnits
+      scooterUnits.forEach(s => {
+        if (s.billNo && s.billNo.toLowerCase().includes(lowerQuery) && !seenBills.has(s.billNo)) {
+          seenBills.add(s.billNo);
+          results.push({
+            id: `bill-${s.billNo}`,
+            category: 'bill',
+            title: `Bill Ref: ${s.billNo}`,
+            subtitle: 'Associated with domestic/imported scooter units',
+            badge: 'Bill #',
+            badgeColor: 'bg-rose-50 text-rose-700 border-rose-100',
+            refData: { billNo: s.billNo }
+          });
+        }
+      });
 
-    // Find bills in batteryImports
-    batteryImports.forEach(b => {
-      if (b.billNo && b.billNo.toLowerCase().includes(lowerQuery) && !seenBills.has(b.billNo)) {
-        seenBills.add(b.billNo);
-        results.push({
-          id: `bill-${b.billNo}`,
-          category: 'bill',
-          title: `Bill Ref: ${b.billNo}`,
-          subtitle: `Associated with battery imports (${b.batterySeries} Series)`,
-          badge: 'Bill #',
-          badgeColor: 'bg-rose-50 text-rose-700 border-rose-100',
-          refData: { billNo: b.billNo }
-        });
-      }
-    });
+      // Find bills in batteryImports
+      batteryImports.forEach(b => {
+        if (b.billNo && b.billNo.toLowerCase().includes(lowerQuery) && !seenBills.has(b.billNo)) {
+          seenBills.add(b.billNo);
+          results.push({
+            id: `bill-${b.billNo}`,
+            category: 'bill',
+            title: `Bill Ref: ${b.billNo}`,
+            subtitle: `Associated with battery imports (${b.batterySeries} Series)`,
+            badge: 'Bill #',
+            badgeColor: 'bg-rose-50 text-rose-700 border-rose-100',
+            refData: { billNo: b.billNo }
+          });
+        }
+      });
 
-    // Find bills in chargerImports
-    chargerImports.forEach(c => {
-      if (c.billNo && c.billNo.toLowerCase().includes(lowerQuery) && !seenBills.has(c.billNo)) {
-        seenBills.add(c.billNo);
-        results.push({
-          id: `bill-${c.billNo}`,
-          category: 'bill',
-          title: `Bill Ref: ${c.billNo}`,
-          subtitle: `Associated with charger imports (${c.chargerType})`,
-          badge: 'Bill #',
-          badgeColor: 'bg-rose-50 text-rose-700 border-rose-100',
-          refData: { billNo: c.billNo }
-        });
-      }
-    });
+      // Find bills in chargerImports
+      chargerImports.forEach(c => {
+        if (c.billNo && c.billNo.toLowerCase().includes(lowerQuery) && !seenBills.has(c.billNo)) {
+          seenBills.add(c.billNo);
+          results.push({
+            id: `bill-${c.billNo}`,
+            category: 'bill',
+            title: `Bill Ref: ${c.billNo}`,
+            subtitle: `Associated with charger imports (${c.chargerType})`,
+            badge: 'Bill #',
+            badgeColor: 'bg-rose-50 text-rose-700 border-rose-100',
+            refData: { billNo: c.billNo }
+          });
+        }
+      });
 
-    // Find bills in general stock logs
-    stockLogs.forEach(l => {
-      if (l.billNo && l.billNo.toLowerCase().includes(lowerQuery) && !seenBills.has(l.billNo)) {
-        seenBills.add(l.billNo);
-        results.push({
-          id: `bill-${l.billNo}`,
-          category: 'bill',
-          title: `Bill Ref: ${l.billNo}`,
-          subtitle: `General Stock Log: ${l.modelName} ${l.color}`,
-          badge: 'Bill #',
-          badgeColor: 'bg-rose-50 text-rose-700 border-rose-100',
-          refData: { billNo: l.billNo }
-        });
-      }
-    });
+      // Find bills in general stock logs
+      stockLogs.forEach(l => {
+        if (l.billNo && l.billNo.toLowerCase().includes(lowerQuery) && !seenBills.has(l.billNo)) {
+          seenBills.add(l.billNo);
+          results.push({
+            id: `bill-${l.billNo}`,
+            category: 'bill',
+            title: `Bill Ref: ${l.billNo}`,
+            subtitle: `General Stock Log: ${l.modelName} ${l.color}`,
+            badge: 'Bill #',
+            badgeColor: 'bg-rose-50 text-rose-700 border-rose-100',
+            refData: { billNo: l.billNo }
+          });
+        }
+      });
+    }
 
-    // --- 5. UNIQUE STOCK IN NUMBERS INDEXING ---
-    const seenStockIn = new Set<string>();
-    
-    // Find in scooterUnits
-    scooterUnits.forEach(s => {
-      if (s.stockInNo && s.stockInNo.toLowerCase().includes(lowerQuery) && !seenStockIn.has(s.stockInNo)) {
-        seenStockIn.add(s.stockInNo);
-        results.push({
-          id: `stkin-${s.stockInNo}`,
-          category: 'stock_in',
-          title: `Stock IN Ref: ${s.stockInNo}`,
-          subtitle: 'Associated with assembled scooter stock procurement',
-          badge: 'Stock IN #',
-          badgeColor: 'bg-violet-50 text-violet-700 border-violet-100',
-          refData: { stockInNo: s.stockInNo }
-        });
-      }
-    });
+    // --- 5. UNIQUE STOCK IN / CHALLAN NUMBERS INDEXING ---
+    if (searchCategory === 'all' || searchCategory === 'challan' || searchCategory === 'stock_in') {
+      const seenStockIn = new Set<string>();
+      
+      // Find in scooterUnits
+      scooterUnits.forEach(s => {
+        if (s.stockInNo && s.stockInNo.toLowerCase().includes(lowerQuery) && !seenStockIn.has(s.stockInNo)) {
+          seenStockIn.add(s.stockInNo);
+          results.push({
+            id: `stkin-${s.stockInNo}`,
+            category: 'stock_in',
+            title: `Stock IN / Challan Ref: ${s.stockInNo}`,
+            subtitle: 'Associated with assembled scooter stock procurement',
+            badge: 'Challan / Stock IN',
+            badgeColor: 'bg-violet-50 text-violet-700 border-violet-100',
+            refData: { stockInNo: s.stockInNo }
+          });
+        }
+      });
 
-    // Find in batteryImports
-    batteryImports.forEach(b => {
-      if (b.stockInNo && b.stockInNo.toLowerCase().includes(lowerQuery) && !seenStockIn.has(b.stockInNo)) {
-        seenStockIn.add(b.stockInNo);
-        results.push({
-          id: `stkin-${b.stockInNo}`,
-          category: 'stock_in',
-          title: `Stock IN Ref: ${b.stockInNo}`,
-          subtitle: `Associated with battery imports (${b.batterySeries} Series)`,
-          badge: 'Stock IN #',
-          badgeColor: 'bg-violet-50 text-violet-700 border-violet-100',
-          refData: { stockInNo: b.stockInNo }
-        });
-      }
-    });
+      // Find in batteryImports
+      batteryImports.forEach(b => {
+        if (b.stockInNo && b.stockInNo.toLowerCase().includes(lowerQuery) && !seenStockIn.has(b.stockInNo)) {
+          seenStockIn.add(b.stockInNo);
+          results.push({
+            id: `stkin-${b.stockInNo}`,
+            category: 'stock_in',
+            title: `Stock IN / Challan Ref: ${b.stockInNo}`,
+            subtitle: `Associated with battery imports (${b.batterySeries} Series)`,
+            badge: 'Challan / Stock IN',
+            badgeColor: 'bg-violet-50 text-violet-700 border-violet-100',
+            refData: { stockInNo: b.stockInNo }
+          });
+        }
+      });
 
-    // Find in chargerImports
-    chargerImports.forEach(c => {
-      if (c.stockInNo && c.stockInNo.toLowerCase().includes(lowerQuery) && !seenStockIn.has(c.stockInNo)) {
-        seenStockIn.add(c.stockInNo);
-        results.push({
-          id: `stkin-${c.stockInNo}`,
-          category: 'stock_in',
-          title: `Stock IN Ref: ${c.stockInNo}`,
-          subtitle: `Associated with charger imports (${c.chargerType})`,
-          badge: 'Stock IN #',
-          badgeColor: 'bg-violet-50 text-violet-700 border-violet-100',
-          refData: { stockInNo: c.stockInNo }
-        });
-      }
-    });
+      // Find in chargerImports
+      chargerImports.forEach(c => {
+        if (c.stockInNo && c.stockInNo.toLowerCase().includes(lowerQuery) && !seenStockIn.has(c.stockInNo)) {
+          seenStockIn.add(c.stockInNo);
+          results.push({
+            id: `stkin-${c.stockInNo}`,
+            category: 'stock_in',
+            title: `Stock IN / Challan Ref: ${c.stockInNo}`,
+            subtitle: `Associated with charger imports (${c.chargerType})`,
+            badge: 'Challan / Stock IN',
+            badgeColor: 'bg-violet-50 text-violet-700 border-violet-100',
+            refData: { stockInNo: c.stockInNo }
+          });
+        }
+      });
 
-    // Find in stockLogs
-    stockLogs.forEach(l => {
-      if (l.stockInNo && l.stockInNo.toLowerCase().includes(lowerQuery) && !seenStockIn.has(l.stockInNo)) {
-        seenStockIn.add(l.stockInNo);
-        results.push({
-          id: `stkin-${l.stockInNo}`,
-          category: 'stock_in',
-          title: `Stock IN Ref: ${l.stockInNo}`,
-          subtitle: `General Stock Log: ${l.modelName} ${l.color}`,
-          badge: 'Stock IN #',
-          badgeColor: 'bg-violet-50 text-violet-700 border-violet-100',
-          refData: { stockInNo: l.stockInNo }
-        });
-      }
-    });
+      // Find in stockLogs
+      stockLogs.forEach(l => {
+        if (l.stockInNo && l.stockInNo.toLowerCase().includes(lowerQuery) && !seenStockIn.has(l.stockInNo)) {
+          seenStockIn.add(l.stockInNo);
+          results.push({
+            id: `stkin-${l.stockInNo}`,
+            category: 'stock_in',
+            title: `Stock IN / Challan Ref: ${l.stockInNo}`,
+            subtitle: `General Stock Log: ${l.modelName} ${l.color}`,
+            badge: 'Challan / Stock IN',
+            badgeColor: 'bg-violet-50 text-violet-700 border-violet-100',
+            refData: { stockInNo: l.stockInNo }
+          });
+        }
+      });
+    }
 
     // --- 6. GENERAL STOCK LOGS INDEXING ---
     stockLogs.forEach(log => {
       const modelMatch = log.modelName?.toLowerCase().includes(lowerQuery);
       const colorMatch = log.color?.toLowerCase().includes(lowerQuery);
       const buyerMatch = log.buyerName?.toLowerCase().includes(lowerQuery);
+      const billMatch = log.billNo?.toLowerCase().includes(lowerQuery);
+      const stockInMatch = log.stockInNo?.toLowerCase().includes(lowerQuery);
       const noteMatch = log.notes?.toLowerCase().includes(lowerQuery);
 
-      if (modelMatch || colorMatch || buyerMatch || noteMatch) {
+      let isMatch = false;
+      if (searchCategory === 'all') isMatch = !!(modelMatch || colorMatch || buyerMatch || billMatch || stockInMatch || noteMatch);
+      else if (searchCategory === 'model') isMatch = !!modelMatch;
+      else if (searchCategory === 'color') isMatch = !!colorMatch;
+      else if (searchCategory === 'bill' || searchCategory === 'invoice') isMatch = !!billMatch;
+      else if (searchCategory === 'stock_in' || searchCategory === 'challan') isMatch = !!stockInMatch;
+
+      if (isMatch) {
         results.push({
           id: `log-${log.id}`,
           category: 'stock_log',
@@ -276,8 +320,90 @@ export default function SearchConsole({
       }
     });
 
+    // --- 7. BATTERY SALES & SERIAL RANGES INDEXING ---
+    batterySales.forEach(sale => {
+      const buyerMatch = sale.buyerName?.toLowerCase().includes(lowerQuery);
+      const seriesMatch = sale.batterySeries?.toLowerCase().includes(lowerQuery);
+      const challanMatch = sale.deliveryChallanNo?.toLowerCase().includes(lowerQuery);
+      const billMatch = sale.billNo?.toLowerCase().includes(lowerQuery);
+      
+      let serialMatch = false;
+      if (sale.serialNumbers && Array.isArray(sale.serialNumbers)) {
+        serialMatch = sale.serialNumbers.some(s => String(s).toLowerCase().includes(lowerQuery));
+      }
+      
+      let rangeMatch = false;
+      if (sale.startNo && sale.endNo) {
+        const qNum = parseInt(lowerQuery.replace(/[^0-9]/g, ''), 10);
+        const sNum = parseInt(String(sale.startNo).replace(/[^0-9]/g, ''), 10);
+        const eNum = parseInt(String(sale.endNo).replace(/[^0-9]/g, ''), 10);
+        if (!isNaN(qNum) && !isNaN(sNum) && !isNaN(eNum)) {
+          rangeMatch = qNum >= sNum && qNum <= eNum;
+        }
+      }
+
+      let isMatch = false;
+      if (searchCategory === 'all') {
+        isMatch = !!(buyerMatch || seriesMatch || challanMatch || billMatch || serialMatch || rangeMatch);
+      } else if (searchCategory === 'challan') {
+        isMatch = !!challanMatch;
+      } else if (searchCategory === 'bill' || searchCategory === 'invoice') {
+        isMatch = !!billMatch;
+      } else if (searchCategory === 'model') {
+        isMatch = !!seriesMatch;
+      }
+
+      if (isMatch) {
+        results.push({
+          id: `batsale-${sale.id}`,
+          category: 'stock_log',
+          title: `Battery Dispatch: ${sale.batterySeries} Series (${sale.quantity} Batteries)`,
+          subtitle: `Buyer: ${sale.buyerName} | Serials: ${sale.startNo} to ${sale.endNo} | Challan: ${sale.deliveryChallanNo || 'N/A'}`,
+          badge: sale.isUnderWarranty ? `${sale.warrantyDurationMonths || 12}M Warranty` : 'No Warranty',
+          badgeColor: sale.isUnderWarranty ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-slate-100 text-slate-600 border-slate-200',
+          refData: sale
+        });
+      }
+    });
+
+    // --- 8. CHARGER SALES INDEXING ---
+    chargerSales.forEach(sale => {
+      const buyerMatch = sale.buyerName?.toLowerCase().includes(lowerQuery);
+      const typeMatch = sale.chargerType?.toLowerCase().includes(lowerQuery);
+      const challanMatch = sale.deliveryChallanNo?.toLowerCase().includes(lowerQuery);
+      const billMatch = sale.billNo?.toLowerCase().includes(lowerQuery);
+
+      let serialMatch = false;
+      if (sale.serialNumbers && Array.isArray(sale.serialNumbers)) {
+        serialMatch = sale.serialNumbers.some(s => String(s).toLowerCase().includes(lowerQuery));
+      }
+
+      let isMatch = false;
+      if (searchCategory === 'all') {
+        isMatch = !!(buyerMatch || typeMatch || challanMatch || billMatch || serialMatch);
+      } else if (searchCategory === 'challan') {
+        isMatch = !!challanMatch;
+      } else if (searchCategory === 'bill' || searchCategory === 'invoice') {
+        isMatch = !!billMatch;
+      } else if (searchCategory === 'model') {
+        isMatch = !!typeMatch;
+      }
+
+      if (isMatch) {
+        results.push({
+          id: `chgsale-${sale.id}`,
+          category: 'stock_log',
+          title: `Charger Dispatch: ${sale.chargerType} (${sale.quantity} Units)`,
+          subtitle: `Buyer: ${sale.buyerName} | Serials: ${sale.startNo || 'N/A'} to ${sale.endNo || 'N/A'} | Challan: ${sale.deliveryChallanNo || 'N/A'}`,
+          badge: sale.isUnderWarranty ? 'Under Warranty' : 'Charger Sale',
+          badgeColor: 'bg-amber-50 text-amber-700 border-amber-100',
+          refData: sale
+        });
+      }
+    });
+
     return results;
-  }, [query, scooterUnits, buyers, products, batteryImports, chargerImports, stockLogs]);
+  }, [query, searchCategory, scooterUnits, buyers, products, batteryImports, chargerImports, stockLogs, batterySales, chargerSales]);
 
   // Deep detail inspectors for selected entities
   const inspectorContent = useMemo(() => {
@@ -334,10 +460,6 @@ export default function SearchConsole({
                   <span className="text-slate-500 font-medium">Wheel Tyre Sizes (F/R)</span>
                   <span className="font-bold text-slate-800 font-mono">{scoot.frontTireSize || '12-inch'} / {scoot.rearTireSize || '12-inch'}</span>
                 </div>
-                <div className="flex items-center justify-between p-3 text-xs">
-                  <span className="text-slate-500 font-medium">Braking Technology</span>
-                  <span className="font-bold text-slate-800">{scoot.brakeType || 'Disk Brake'}</span>
-                </div>
               </div>
             </div>
 
@@ -388,7 +510,7 @@ export default function SearchConsole({
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3.5 text-xs">
                 <div>
                   <div className="flex justify-between items-center">
-                    <span className="font-bold text-slate-700">Scooter Frame Warranty</span>
+                    <span className="font-bold text-slate-700">Scooter Warranty</span>
                     <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${
                       scoot.scooterWarrantyStatus === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-600'
                     }`}>{scoot.scooterWarrantyStatus || 'None'}</span>
@@ -914,25 +1036,65 @@ export default function SearchConsole({
 
       {/* Main Search Panel */}
       <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm" id="search-panel">
-        <div className="relative" id="search-input-wrapper">
-          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-            <Search className="h-5 w-5 text-slate-400" />
-          </div>
-          <input
-            type="text"
-            className="block w-full pl-12 pr-4 py-4 border border-slate-200 rounded-2xl text-sm placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all font-sans"
-            placeholder="Type anything (e.g. chassis #, bill #, stock-in #, buyer name, model)..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          {query && (
-            <button 
-              onClick={() => setQuery('')}
-              className="absolute inset-y-0 right-0 pr-4 flex items-center text-xs text-slate-400 hover:text-slate-700 font-bold font-sans cursor-pointer"
+        <div className="flex flex-col sm:flex-row items-stretch gap-3" id="search-input-wrapper">
+          {/* Search Parameter Dropdown */}
+          <div className="sm:w-60 shrink-0 relative">
+            <select
+              value={searchCategory}
+              onChange={(e) => setSearchCategory(e.target.value)}
+              className="w-full h-full min-h-[50px] bg-slate-50 border border-slate-200 hover:border-slate-300 rounded-2xl px-3.5 py-3 text-xs font-bold text-slate-800 outline-none focus:bg-white focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all cursor-pointer font-sans"
             >
-              Clear
-            </button>
-          )}
+              <option value="all">🔍 Search In: All Fields</option>
+              <option value="chassis">🚲 Chassis Number</option>
+              <option value="motor">⚙️ Motor Number</option>
+              <option value="controller">🔌 Controller Number</option>
+              <option value="bill">📄 Bill Number</option>
+              <option value="invoice">🧾 Invoice Number</option>
+              <option value="buyer">👤 Buyer's Name</option>
+              <option value="phone">📞 Phone Number</option>
+              <option value="contact">📱 Contact Number</option>
+              <option value="stock_in">📦 Stock IN Number</option>
+              <option value="challan">📋 Challan Number</option>
+              <option value="model">🏷️ Model Name</option>
+              <option value="color">🎨 Color / Product Variant</option>
+            </select>
+          </div>
+
+          {/* Search Text Input */}
+          <div className="relative flex-1">
+            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+              <Search className="h-5 w-5 text-slate-400" />
+            </div>
+            <input
+              type="text"
+              className="block w-full pl-12 pr-12 py-3.5 border border-slate-200 rounded-2xl text-sm placeholder-slate-400 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all font-sans h-full"
+              placeholder={
+                searchCategory === 'chassis' ? "Search by chassis number..." :
+                searchCategory === 'motor' ? "Search by motor number..." :
+                searchCategory === 'controller' ? "Search by controller number..." :
+                searchCategory === 'bill' ? "Search by bill number..." :
+                searchCategory === 'invoice' ? "Search by invoice number..." :
+                searchCategory === 'buyer' ? "Search by buyer name..." :
+                searchCategory === 'phone' ? "Search by phone number..." :
+                searchCategory === 'contact' ? "Search by contact number..." :
+                searchCategory === 'stock_in' ? "Search by stock IN number..." :
+                searchCategory === 'challan' ? "Search by challan number..." :
+                searchCategory === 'model' ? "Search by model name..." :
+                searchCategory === 'color' ? "Search by color / variant..." :
+                "Type anything (e.g. chassis #, motor #, bill #, stock-in #, buyer name, model)..."
+              }
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            {query && (
+              <button 
+                onClick={() => setQuery('')}
+                className="absolute inset-y-0 right-0 pr-4 flex items-center text-xs text-slate-400 hover:text-slate-700 font-bold font-sans cursor-pointer"
+              >
+                Clear
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Dynamic Help Indicator */}

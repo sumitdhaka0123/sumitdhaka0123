@@ -21,7 +21,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   // Server URL State for Capacitor / Android Native deployment
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [serverUrl, setServerUrl] = useState(() => {
-    return localStorage.getItem('SENZO_API_SERVER_URL') || 'https://ais-pre-ok3o3tltxmte4gbcr2v3di-403794027483.asia-east1.run.app';
+    return localStorage.getItem('SENZO_API_SERVER_URL') || 'https://sumitdhaka0123.onrender.com';
   });
   const [tempServerUrl, setTempServerUrl] = useState(serverUrl);
 
@@ -42,7 +42,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
 
   const handleResetServerUrl = () => {
     localStorage.removeItem('SENZO_API_SERVER_URL');
-    const defaultUrl = 'https://ais-pre-ok3o3tltxmte4gbcr2v3di-403794027483.asia-east1.run.app';
+    const defaultUrl = 'https://sumitdhaka0123.onrender.com';
     setServerUrl(defaultUrl);
     setTempServerUrl(defaultUrl);
     setShowServerConfig(false);
@@ -323,7 +323,68 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           </button>
         </div>
 
-
+        {/* Server Connection Configuration (especially for Capacitor Android) */}
+        <div className="mt-6 pt-4 border-t border-slate-100 flex flex-col items-center">
+          {!showServerConfig ? (
+            <button
+              type="button"
+              onClick={() => setShowServerConfig(true)}
+              className="text-[10px] font-semibold text-slate-400 hover:text-slate-600 transition-all flex items-center gap-1.5"
+            >
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+              <span>Server: {serverUrl ? new URL(serverUrl).hostname : 'Default Cloud Server'}</span>
+              <span className="underline">(Change)</span>
+            </button>
+          ) : (
+            <div className="w-full bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                  API Server Connection
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowServerConfig(false);
+                    if (!tempServerUrl.trim()) {
+                      setTempServerUrl('https://ais-pre-ok3o3tltxmte4gbcr2v3di-403794027483.asia-east1.run.app');
+                    }
+                  }}
+                  className="text-[10px] font-bold text-rose-500 hover:underline"
+                >
+                  Close
+                </button>
+              </div>
+              <p className="text-[9px] text-slate-400 leading-normal">
+                When running as an Android App, it must connect to a remote server. Enter your server's IP address or Domain.
+              </p>
+              <div className="flex gap-1.5">
+                <input
+                  type="text"
+                  placeholder="https://your-server-address.com"
+                  value={tempServerUrl}
+                  onChange={(e) => setTempServerUrl(e.target.value)}
+                  className="flex-1 bg-white border border-slate-200 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20 rounded-xl px-2.5 py-1.5 text-xs text-slate-800 font-mono outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveServerUrl}
+                  className="bg-slate-900 text-white font-sans font-bold text-xs px-3 py-1.5 rounded-xl hover:bg-slate-800 transition-all cursor-pointer"
+                >
+                  Save
+                </button>
+              </div>
+              <div className="flex gap-1.5 justify-end">
+                <button
+                  type="button"
+                  onClick={handleResetServerUrl}
+                  className="text-[9px] font-semibold text-slate-400 hover:text-slate-600 transition-all"
+                >
+                  Reset to Default
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </motion.div>
     </div>
   );

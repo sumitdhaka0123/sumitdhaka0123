@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { 
-  Layers, CheckCircle2, AlertCircle, TrendingUp, Settings, 
+  Layers, CheckCircle2, AlertCircle, AlertTriangle, TrendingUp, Settings, 
   ShieldCheck, ShoppingBag, Ship, Hammer, PlusCircle, Battery, HelpCircle,
-  X, Search, Calendar, User, Cpu, Coins
+  X, Search, Calendar, User, Cpu, Coins, Zap, Info
 } from 'lucide-react';
-import { ScooterUnit, Product, StockLog, BatterySale, BatteryImport } from '../types';
+import { ScooterUnit, Product, StockLog, BatterySale, BatteryImport, ChargerSale, ChargerImport } from '../types';
 
 interface DashboardStatsProps {
   products: Product[];
@@ -13,10 +13,26 @@ interface DashboardStatsProps {
   stockLogs: StockLog[];
   batterySales?: BatterySale[];
   batteryImports?: BatteryImport[];
+  chargerSales?: ChargerSale[];
+  chargerImports?: ChargerImport[];
+  buyers?: any[];
   onNavigateToAssembly: () => void;
   onNavigateToBatteries?: () => void;
   onNavigateToStock?: () => void;
   onNavigateToSearch?: () => void;
+  onNavigateToChargers?: () => void;
+  onSubmitAssembly?: (payload: any) => Promise<boolean>;
+  onReleaseBatteryHold?: (id: string) => Promise<boolean>;
+  onFinalizeBatteryHold?: (id: string, extraData?: any) => Promise<boolean>;
+  onReleaseChargerHold?: (id: string) => Promise<boolean>;
+  onFinalizeChargerHold?: (id: string, extraData?: any) => Promise<boolean>;
+  onReleaseScooterHold?: (id: string) => Promise<boolean>;
+  onReleaseWholesalePackage?: (payload: { customerName: string; scooterIds?: string[]; batteryIds?: string[]; chargerIds?: string[]; }) => Promise<boolean>;
+  onFinalizeScooterHold?: (payload: any) => Promise<boolean>;
+  onUpdateBatteryHold?: (payload: any) => Promise<boolean>;
+  onUpdateChargerHold?: (payload: any) => Promise<boolean>;
+  onRefresh?: () => void;
+  currentUser?: any;
 }
 
 export default function DashboardStats({ 
@@ -25,15 +41,63 @@ export default function DashboardStats({
   stockLogs, 
   batterySales = [], 
   batteryImports = [], 
+  chargerSales = [],
+  chargerImports = [],
+  buyers = [],
   onNavigateToAssembly,
   onNavigateToBatteries,
   onNavigateToStock,
-  onNavigateToSearch
+  onNavigateToSearch,
+  onNavigateToChargers,
+  onSubmitAssembly,
+  onReleaseBatteryHold,
+  onFinalizeBatteryHold,
+  onReleaseChargerHold,
+  onFinalizeChargerHold,
+  onReleaseScooterHold,
+  onReleaseWholesalePackage,
+  onFinalizeScooterHold,
+  onUpdateBatteryHold,
+  onUpdateChargerHold,
+  onRefresh,
+  currentUser
 }: DashboardStatsProps) {
   // Modal toggle state
-  const [activeDetailTab, setActiveDetailTab] = useState<'imported' | 'boxes' | 'ready' | 'states' | 'sold' | 'batteries' | 'held' | null>(null);
+  const [activeDetailTab, setActiveDetailTab] = useState<'imported' | 'boxes' | 'ready' | 'states' | 'sold' | 'batteries' | 'chargers' | 'held' | null>(null);
   const [modalSearch, setModalSearch] = useState('');
+  const [modalSearchTarget, setModalSearchTarget] = useState<'all' | 'buyer' | 'chassis' | 'model' | 'color'>('all');
   const [statesSubTab, setStatesSubTab] = useState<'all' | 'frame' | 'battery'>('all');
+
+  // Hold management states
+  const [actionStatus, setActionStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [completingScooter, setCompletingScooter] = useState<ScooterUnit | null>(null);
+  const [completingBuyerName, setCompletingBuyerName] = useState('');
+  const [completingBuyerContact, setCompletingBuyerContact] = useState('');
+  const [completingSalePrice, setCompletingSalePrice] = useState('');
+  const [completingBillingNo, setCompletingBillingNo] = useState('');
+  const [completingDeliveryChallanNo, setCompletingDeliveryChallanNo] = useState('');
+  const [completingNotes, setCompletingNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [docValidationError, setDocValidationError] = useState<string | null>(null);
+
+  // Edit quantity & details state
+  const [editingHoldItem, setEditingHoldItem] = useState<{
+    id: string;
+    itemType: 'battery' | 'charger' | 'scooter';
+    title: string;
+    heldFor: string;
+    buyerName: string;
+    quantity: number;
+    notes: string;
+  } | null>(null);
+
+  // Wholesale customer order package state
+  const [completingCustomerPackage, setCompletingCustomerPackage] = useState<{
+    customerName: string;
+    scooters: ScooterUnit[];
+    batteries: BatterySale[];
+    chargers: ChargerSale[];
+  } | null>(null);
 
   // 1. Precise metric calculations based on User Request
   
@@ -50,6 +114,11 @@ export default function DashboardStats({
 
   const looseBatteriesInStock = Math.max(0, totalBatteryImports - totalBatterySalesWholesale - totalBatteriesInScooters);
   const totalWarehouseBatteriesLeft = looseBatteriesInStock + batteriesInAvailableScooters;
+  
+  // Charger metrics calculations
+  const totalChargerImports = chargerImports.reduce((sum, imp) => sum + (imp.quantity || (imp.serialNumbers ? imp.serialNumbers.length : 0) || 0), 0);
+  const totalChargerSalesWholesale = chargerSales.reduce((sum, sale) => sum + (sale.quantity || (sale.serialNumbers ? sale.serialNumbers.length : 0) || 0), 0);
+  const looseChargersInStock = Math.max(0, totalChargerImports - totalChargerSalesWholesale);
   
   // Total Imported: sum of quantities of all "Stock IN" logs (excluding auto-generated assembly logs)
   const totalImported = stockLogs
@@ -110,14 +179,11 @@ export default function DashboardStats({
   // Real-time stock levels per model & color (for available stock in warehouse)
   const stockLevels: { [model: string]: { [color: string]: number } } = {};
 
-  // Real-time detailed stock levels including Brake Type
+  // Real-time detailed stock levels
   const stockDetails: {
     [model: string]: {
       [color: string]: {
         total: number;
-        Disk: number;
-        Drum: number;
-        unspecified: number;
       }
     }
   } = {};
@@ -128,7 +194,7 @@ export default function DashboardStats({
     stockDetails[p.name] = {};
     p.colors.forEach(c => {
       stockLevels[p.name][c] = 0;
-      stockDetails[p.name][c] = { total: 0, Disk: 0, Drum: 0, unspecified: 0 };
+      stockDetails[p.name][c] = { total: 0 };
     });
   });
 
@@ -147,16 +213,9 @@ export default function DashboardStats({
         stockDetails[unit.modelName] = {};
       }
       if (!stockDetails[unit.modelName][unit.color]) {
-        stockDetails[unit.modelName][unit.color] = { total: 0, Disk: 0, Drum: 0, unspecified: 0 };
+        stockDetails[unit.modelName][unit.color] = { total: 0 };
       }
       stockDetails[unit.modelName][unit.color].total += 1;
-      if (unit.brakeType === 'Disk') {
-        stockDetails[unit.modelName][unit.color].Disk += 1;
-      } else if (unit.brakeType === 'Drum') {
-        stockDetails[unit.modelName][unit.color].Drum += 1;
-      } else {
-        stockDetails[unit.modelName][unit.color].unspecified += 1;
-      }
     }
   });
 
@@ -170,13 +229,20 @@ export default function DashboardStats({
     modelStockTotals[model] = modelTotal;
   });
 
+  // Sort products by highest available stock first (highest on top)
+  const sortedProducts = [...products].sort((a, b) => {
+    const qtyA = modelStockTotals[a.name] || 0;
+    const qtyB = modelStockTotals[b.name] || 0;
+    return qtyB - qtyA;
+  });
+
   const recentRegisteredUnits = scooterUnits.slice(-4).reverse();
 
   return (
     <div className="space-y-6" id="dashboard-container">
       
       {/* 1. Main Stock Details Board (User Requested Metrics) */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4" id="stats-grid">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8 gap-3" id="stats-grid">
         
         {/* Total Imported */}
         <motion.div 
@@ -298,11 +364,17 @@ export default function DashboardStats({
             <ShoppingBag className="h-5 w-5 text-emerald-500" />
           </div>
           <div className="mt-3">
-            <span className="text-3xl font-extrabold text-emerald-600 tracking-tight">{totalSold}</span>
-            <div className="text-[11px] text-slate-500 mt-1 font-medium leading-tight text-slate-500">Delivered to customers and logged to Sheets!</div>
+            <div className="flex items-baseline gap-2">
+              <span className="text-3xl font-extrabold text-emerald-600 tracking-tight">{totalSold}</span>
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Scooters</span>
+            </div>
+            <div className="flex items-center gap-1.5 mt-1.5 pt-1.5 border-t border-slate-100">
+              <span className="text-sm font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg">+{totalBatterySalesWholesale}</span>
+              <span className="text-[10px] text-slate-500 font-bold uppercase tracking-tight">Batteries Sold</span>
+            </div>
           </div>
         </motion.div>
-
+  
         {/* Battery Stock Left */}
         <motion.div 
           onClick={() => { setActiveDetailTab('batteries'); setModalSearch(''); }}
@@ -318,17 +390,43 @@ export default function DashboardStats({
             Click to View
           </div>
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">6. Battery Stock 🔋</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">6. Stock Remaining 🔋</span>
             <Battery className="h-5 w-5 text-emerald-500 fill-emerald-100" />
           </div>
           <div className="mt-3">
             <span className="text-3xl font-extrabold text-emerald-600 tracking-tight">{totalWarehouseBatteriesLeft}</span>
-            <div className="text-[11px] text-slate-500 mt-1 font-medium leading-tight text-slate-500">
-              {looseBatteriesInStock} loose packs / {batteriesInAvailableScooters} prepped
+            <div className="text-[11px] text-slate-500 mt-1 font-medium leading-tight">
+              <span className="text-emerald-700 font-bold">{looseBatteriesInStock}</span> loose / <span className="text-cyan-700 font-bold">{batteriesInAvailableScooters}</span> in ready scooters
             </div>
           </div>
         </motion.div>
-
+  
+        {/* Charger Stock Left */}
+        <motion.div 
+          onClick={() => { setActiveDetailTab('chargers'); setModalSearch(''); }}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.28 }}
+          className="bg-white border-2 border-amber-500/10 hover:border-amber-500/40 hover:shadow-md transition-all rounded-3xl p-5 flex flex-col justify-between shadow-sm cursor-pointer select-none relative group overflow-hidden"
+          id="stat-card-charger-stock"
+        >
+          <div className="absolute top-0 right-0 p-1 bg-amber-500/10 text-amber-600 text-[9px] font-bold rounded-bl-xl opacity-0 group-hover:opacity-100 transition-opacity">
+            Click to View
+          </div>
+          <div className="flex items-center justify-between text-slate-400">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600">7. Charger Stock ⚡</span>
+            <Zap className="h-5 w-5 text-amber-500 fill-amber-100" />
+          </div>
+          <div className="mt-3">
+            <span className="text-3xl font-extrabold text-amber-600 tracking-tight">{looseChargersInStock}</span>
+            <div className="text-[11px] text-slate-500 mt-1 font-medium leading-tight">
+              <span className="text-amber-700 font-bold">{totalChargerImports}</span> imported / <span className="text-emerald-700 font-bold">{totalChargerSalesWholesale}</span> sold
+            </div>
+          </div>
+        </motion.div>
+  
         {/* Held Stock */}
         <motion.div 
           onClick={() => { setActiveDetailTab('held'); setModalSearch(''); }}
@@ -344,7 +442,7 @@ export default function DashboardStats({
             Click to View
           </div>
           <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600">7. Held Stock 🤝</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600">8. Held Stock 🤝</span>
             <User className="h-5 w-5 text-amber-500" />
           </div>
           <div className="mt-3 space-y-1.5">
@@ -380,7 +478,7 @@ export default function DashboardStats({
             </div>
 
             <div className="space-y-4" id="model-stock-distribution-list">
-              {products.map((prod) => {
+              {sortedProducts.map((prod) => {
                 const qty = modelStockTotals[prod.name] || 0;
                 const percentage = availableStock > 0 ? (qty / availableStock) * 100 : 0;
                 
@@ -398,40 +496,21 @@ export default function DashboardStats({
                       ></div>
                     </div>
 
-                    {/* Visual sub-breakdown per color and brake type */}
+                    {/* Visual sub-breakdown per color */}
                     <div className="mt-3 pl-2 border-l-2 border-slate-150 space-y-2">
                       {prod.colors.map((col, cIdx) => {
-                        const colDetail = stockDetails[prod.name]?.[col] || { total: 0, Disk: 0, Drum: 0, unspecified: 0 };
+                        const colDetail = stockDetails[prod.name]?.[col] || { total: 0 };
                         if (colDetail.total === 0) return null; // Only show colors that actually have stock to keep it clean and uncluttered!
                         
                         return (
-                          <div key={cIdx} className="flex flex-col sm:flex-row sm:items-center sm:justify-between text-[11px] text-slate-600 bg-slate-50/50 hover:bg-slate-50 px-3 py-2 rounded-xl border border-slate-100 transition-colors">
+                          <div key={cIdx} className="flex items-center justify-between text-[11px] text-slate-600 bg-slate-50/50 hover:bg-slate-50 px-3 py-2 rounded-xl border border-slate-100 transition-colors">
                             <div className="flex items-center gap-1.5 font-semibold text-slate-700">
                               <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: getColorDotHex(col) }}></span>
                               {col}
-                              <span className="bg-slate-100 text-slate-800 px-1.5 py-0.5 rounded-md font-bold font-mono text-[10px]">
-                                {colDetail.total} units
-                              </span>
                             </div>
-                            
-                            {/* Brake Type Breakdown for this Color */}
-                            <div className="flex gap-2 mt-1 sm:mt-0">
-                              {colDetail.Disk > 0 && (
-                                <span className="bg-cyan-50/60 text-cyan-700 px-2 py-0.5 rounded-md font-medium border border-cyan-100/50 text-[10px]">
-                                  Disk: <strong className="font-bold">{colDetail.Disk}</strong>
-                                </span>
-                              )}
-                              {colDetail.Drum > 0 && (
-                                <span className="bg-indigo-50/60 text-indigo-700 px-2 py-0.5 rounded-md font-medium border border-indigo-100/50 text-[10px]">
-                                  Drum: <strong className="font-bold">{colDetail.Drum}</strong>
-                                </span>
-                              )}
-                              {colDetail.unspecified > 0 && (
-                                <span className="bg-slate-100/60 text-slate-600 px-2 py-0.5 rounded-md font-medium border border-slate-200/50 text-[10px]">
-                                  Unspecified: <strong className="font-bold">{colDetail.unspecified}</strong>
-                                </span>
-                              )}
-                            </div>
+                            <span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded-md font-bold font-mono text-[10px]">
+                              {colDetail.total} units
+                            </span>
                           </div>
                         );
                       })}
@@ -560,6 +639,12 @@ export default function DashboardStats({
                       <span>Battery Inventory & Dispatch Ledger</span>
                     </>
                   )}
+                  {activeDetailTab === 'chargers' && (
+                    <>
+                      <Zap className="h-5 w-5 text-amber-500 fill-amber-100" />
+                      <span>Charger Inventory & Dispatch Ledger</span>
+                    </>
+                  )}
                   {activeDetailTab === 'held' && (
                     <>
                       <User className="h-5 w-5 text-amber-500" />
@@ -574,6 +659,7 @@ export default function DashboardStats({
                   {activeDetailTab === 'states' && "Manage and filter frames with core assembly completed versus fully powered battery packs."}
                   {activeDetailTab === 'sold' && "Complete dispatch record including customer contacts, sales pricing, and active warranties."}
                   {activeDetailTab === 'batteries' && "Detailed balance sheet of battery imports, standalone wholesale, and assemblies."}
+                  {activeDetailTab === 'chargers' && "Detailed breakdown of imported chargers, sales, and standalone warehouse balance."}
                   {activeDetailTab === 'held' && "List of physical scooters currently put on hold/reserved for specific customer orders."}
                 </p>
               </div>
@@ -1143,10 +1229,10 @@ export default function DashboardStats({
                         <span className="text-lg font-extrabold text-slate-800">{totalBatteryImports.toLocaleString()}</span>
                         <span className="block text-[9px] text-slate-500 mt-0.5">Shipments logged</span>
                       </div>
-                      <div className="bg-slate-50 border border-slate-150 rounded-2xl p-3 text-center">
-                        <span className="block text-[9px] font-sans font-bold uppercase tracking-wider text-slate-400 mb-1">Wholesale Dispatched</span>
-                        <span className="text-lg font-extrabold text-slate-800">{totalBatterySalesWholesale.toLocaleString()}</span>
-                        <span className="block text-[9px] text-slate-500 mt-0.5">Standalone sales</span>
+                      <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 text-center shadow-sm">
+                        <span className="block text-[9px] font-sans font-bold uppercase tracking-wider text-emerald-600 mb-1">Total Wholesale Sold</span>
+                        <span className="text-lg font-extrabold text-emerald-700">{totalBatterySalesWholesale.toLocaleString()}</span>
+                        <span className="block text-[9px] text-emerald-500 mt-0.5 font-bold">Standalone Sales</span>
                       </div>
                       <div className="bg-slate-50 border border-slate-150 rounded-2xl p-3 text-center">
                         <span className="block text-[9px] font-sans font-bold uppercase tracking-wider text-slate-400 mb-1">Installed on Scooters</span>
@@ -1300,9 +1386,169 @@ export default function DashboardStats({
                 );
               })()}
 
+              {/* RENDER TAB: CHARGERS DETAIL */}
+              {activeDetailTab === 'chargers' && (() => {
+                const chargerTypeData: { [type: string]: { imported: number; soldWholesale: number; available: number } } = {};
+                
+                ["48V Charger", "60V Charger", "72V Charger"].forEach(t => {
+                  chargerTypeData[t] = { imported: 0, soldWholesale: 0, available: 0 };
+                });
+
+                chargerImports.forEach(imp => {
+                  const t = imp.chargerType || "Standard Charger";
+                  if (!chargerTypeData[t]) chargerTypeData[t] = { imported: 0, soldWholesale: 0, available: 0 };
+                  chargerTypeData[t].imported += (imp.quantity || (imp.serialNumbers ? imp.serialNumbers.length : 0) || 0);
+                });
+
+                chargerSales.forEach(sale => {
+                  const t = sale.chargerType || "Standard Charger";
+                  if (!chargerTypeData[t]) chargerTypeData[t] = { imported: 0, soldWholesale: 0, available: 0 };
+                  chargerTypeData[t].soldWholesale += (sale.quantity || (sale.serialNumbers ? sale.serialNumbers.length : 0) || 0);
+                });
+
+                Object.keys(chargerTypeData).forEach(t => {
+                  chargerTypeData[t].available = Math.max(0, chargerTypeData[t].imported - chargerTypeData[t].soldWholesale);
+                });
+
+                const filteredTypes = Object.entries(chargerTypeData).filter(([typeName]) => {
+                  return typeName.toLowerCase().includes(modalSearch.toLowerCase());
+                });
+
+                const searchLower = modalSearch.toLowerCase();
+                const filteredImports = chargerImports.filter(imp => 
+                  String(imp.chargerType || '').toLowerCase().includes(searchLower) ||
+                  String(imp.supplierName || '').toLowerCase().includes(searchLower) ||
+                  String(imp.containerId || '').toLowerCase().includes(searchLower)
+                ).slice(-5).reverse();
+
+                const filteredSales = chargerSales.filter(sale => 
+                  String(sale.chargerType || '').toLowerCase().includes(searchLower) ||
+                  String(sale.buyerName || '').toLowerCase().includes(searchLower) ||
+                  String(sale.notes || '').toLowerCase().includes(searchLower)
+                ).slice(-5).reverse();
+
+                return (
+                  <div className="space-y-6" id="chargers-detail-container">
+                    {/* Key KPIs inside Modal */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="bg-slate-50 border border-slate-150 rounded-2xl p-3 text-center">
+                        <span className="block text-[9px] font-sans font-bold uppercase tracking-wider text-slate-400 mb-1">Total Imported</span>
+                        <span className="text-lg font-extrabold text-slate-800">{totalChargerImports.toLocaleString()}</span>
+                        <span className="block text-[9px] text-slate-500 mt-0.5">Shipments logged</span>
+                      </div>
+                      <div className="bg-slate-50 border border-slate-150 rounded-2xl p-3 text-center">
+                        <span className="block text-[9px] font-sans font-bold uppercase tracking-wider text-amber-500 mb-1">Wholesale Dispatched</span>
+                        <span className="text-lg font-extrabold text-amber-600">{totalChargerSalesWholesale.toLocaleString()}</span>
+                        <span className="block text-[9px] text-slate-500 mt-0.5">Sold standalone</span>
+                      </div>
+                      <div className="bg-emerald-50/60 border border-emerald-150 rounded-2xl p-3 text-center">
+                        <span className="block text-[9px] font-sans font-bold uppercase tracking-wider text-emerald-700 mb-1">Stock Left</span>
+                        <span className="text-lg font-extrabold text-emerald-700">{looseChargersInStock.toLocaleString()}</span>
+                        <span className="block text-[9px] text-emerald-600 font-semibold mt-0.5">Loose chargers in stock</span>
+                      </div>
+                      <div className="bg-amber-50/60 border border-amber-150 rounded-2xl p-3 text-center">
+                        <span className="block text-[9px] font-sans font-bold uppercase tracking-wider text-amber-800 mb-1">Charger Types</span>
+                        <span className="text-lg font-extrabold text-amber-900">{Object.keys(chargerTypeData).length}</span>
+                        <span className="block text-[9px] text-amber-700 font-semibold mt-0.5">Variants recorded</span>
+                      </div>
+                    </div>
+
+                    {/* Stock level breakdown by Charger Type */}
+                    <div className="bg-white border border-slate-150 rounded-2xl p-4 shadow-sm">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700 mb-3 flex items-center justify-between">
+                        <span>Charger Stock per Type Variant</span>
+                        <span className="text-[10px] text-slate-400 font-normal">Calculated: Imported - Sold</span>
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                        {filteredTypes.map(([typeName, stats]) => (
+                          <div key={typeName} className="p-3.5 bg-slate-50/80 rounded-2xl border border-slate-200 flex flex-col justify-between">
+                            <div className="flex justify-between items-center mb-2">
+                              <span className="font-bold text-xs text-slate-800 font-sans">{typeName}</span>
+                              <span className="text-[10px] font-mono font-bold bg-amber-100 text-amber-900 px-2 py-0.5 rounded-md">
+                                {stats.available} Available
+                              </span>
+                            </div>
+                            <div className="space-y-1 text-[11px] text-slate-500 font-mono">
+                              <div className="flex justify-between">
+                                <span>Imported:</span>
+                                <strong className="text-slate-700">{stats.imported}</strong>
+                              </div>
+                              <div className="flex justify-between">
+                                <span>Sold:</span>
+                                <strong className="text-amber-700">-{stats.soldWholesale}</strong>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Recent Imports & Sales logs */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {/* Left: Recent Overseas Charger Imports */}
+                      <div className="bg-white border border-slate-150 rounded-2xl p-4 shadow-sm">
+                        <h5 className="text-[11px] font-extrabold uppercase text-slate-500 tracking-wider mb-3 flex items-center gap-1">
+                          <Ship className="h-3.5 w-3.5 text-blue-500" />
+                          <span>Recent Overseas Charger Imports</span>
+                        </h5>
+                        {filteredImports.length === 0 ? (
+                          <div className="text-center py-6 text-slate-400 font-sans italic text-xs">
+                            No matching charger imports found
+                          </div>
+                        ) : (
+                          <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                            {filteredImports.map(imp => (
+                              <div key={imp.id} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-[11px]">
+                                <div className="flex items-center justify-between font-bold text-slate-800">
+                                  <span>{imp.chargerType}</span>
+                                  <span className="text-emerald-600">+{imp.quantity || imp.serialNumbers?.length} Units</span>
+                                </div>
+                                <div className="flex items-center justify-between text-slate-400 mt-1 font-mono text-[10px]">
+                                  <span>Supplier: {imp.supplierName || '—'}</span>
+                                  <span>{new Date(imp.importDate).toLocaleDateString()}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right: Recent Wholesale Sales */}
+                      <div className="bg-white border border-slate-150 rounded-2xl p-4 shadow-sm">
+                        <h5 className="text-[11px] font-extrabold uppercase text-slate-500 tracking-wider mb-3 flex items-center gap-1">
+                          <ShoppingBag className="h-3.5 w-3.5 text-emerald-500" />
+                          <span>Recent Wholesale Charger Sales</span>
+                        </h5>
+                        {filteredSales.length === 0 ? (
+                          <div className="text-center py-6 text-slate-400 font-sans italic text-xs">
+                            No matching wholesale charger sales found
+                          </div>
+                        ) : (
+                          <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                            {filteredSales.map(sale => (
+                              <div key={sale.id} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-[11px]">
+                                <div className="flex items-center justify-between font-bold text-slate-800">
+                                  <span>{sale.buyerName}</span>
+                                  <span className="text-amber-600">-{sale.quantity || sale.serialNumbers?.length} Units</span>
+                                </div>
+                                <div className="flex items-center justify-between text-slate-400 mt-1 font-mono text-[10px]">
+                                  <span>Type: {sale.chargerType}</span>
+                                  <span>{new Date(sale.saleDate).toLocaleDateString()}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                  </div>
+                );
+              })()}
+
               {/* RENDER TAB: HELD STOCK */}
               {activeDetailTab === 'held' && (() => {
-                const heldList = scooterUnits.filter(u => {
+                const heldScooters = scooterUnits.filter(u => {
                   if (u.status !== 'hold') return false;
                   const searchLower = modalSearch.toLowerCase();
                   return (
@@ -1314,7 +1560,7 @@ export default function DashboardStats({
                   );
                 });
 
-                const heldBatteriesList = batterySales.filter(sale => {
+                const heldBatteries = batterySales.filter(sale => {
                   if (sale.status !== 'hold') return false;
                   const searchLower = modalSearch.toLowerCase();
                   return (
@@ -1326,188 +1572,469 @@ export default function DashboardStats({
                   );
                 });
 
-                // Group by Held For (customer name)
-                const groupings: { [customer: string]: { scootersCount: number; batteriesCount: number } } = {};
-                
-                scooterUnits.filter(u => u.status === 'hold').forEach(u => {
-                  const cust = u.heldFor || 'Unknown Customer';
-                  if (!groupings[cust]) {
-                    groupings[cust] = { scootersCount: 0, batteriesCount: 0 };
-                  }
-                  groupings[cust].scootersCount += 1;
+                const heldChargers = chargerSales.filter(sale => {
+                  if (sale.status !== 'hold') return false;
+                  const searchLower = modalSearch.toLowerCase();
+                  return (
+                    String(sale.chargerType || '').toLowerCase().includes(searchLower) ||
+                    String(sale.buyerName || '').toLowerCase().includes(searchLower) ||
+                    String(sale.notes || '').toLowerCase().includes(searchLower) ||
+                    String(sale.heldFor || '').toLowerCase().includes(searchLower) ||
+                    String(sale.heldBy || '').toLowerCase().includes(searchLower)
+                  );
                 });
 
-                batterySales.filter(s => s.status === 'hold').forEach(s => {
-                  const cust = s.heldFor || s.buyerName || 'Unknown Customer';
-                  if (!groupings[cust]) {
-                    groupings[cust] = { scootersCount: 0, batteriesCount: 0 };
+                // Group ALL held items by Customer Name (heldFor or buyerName)
+                const customerMap: {
+                  [customerName: string]: {
+                    customerName: string;
+                    contact?: string;
+                    scooters: ScooterUnit[];
+                    batteries: BatterySale[];
+                    chargers: ChargerSale[];
                   }
-                  groupings[cust].batteriesCount += s.quantity;
+                } = {};
+
+                const getOrInitCustomer = (name: string) => {
+                  const cleanName = (name || 'Unassigned Customer').trim();
+                  if (!customerMap[cleanName]) {
+                    // Try to match contact from buyers catalog
+                    const catalogMatch = buyers.find((b: any) => b.name?.toLowerCase() === cleanName.toLowerCase());
+                    customerMap[cleanName] = {
+                      customerName: cleanName,
+                      contact: catalogMatch?.phone || catalogMatch?.contactPerson || '',
+                      scooters: [],
+                      batteries: [],
+                      chargers: []
+                    };
+                  }
+                  return customerMap[cleanName];
+                };
+
+                heldScooters.forEach(scoot => {
+                  const custObj = getOrInitCustomer(scoot.heldFor || scoot.buyerName || 'Unassigned');
+                  custObj.scooters.push(scoot);
+                  if (!custObj.contact && scoot.buyerContact) custObj.contact = scoot.buyerContact;
                 });
 
-                if (heldList.length === 0 && heldBatteriesList.length === 0) {
+                heldBatteries.forEach(bat => {
+                  const custObj = getOrInitCustomer(bat.heldFor || bat.buyerName || 'Unassigned');
+                  custObj.batteries.push(bat);
+                  if (!custObj.contact && bat.buyerContact) custObj.contact = bat.buyerContact;
+                });
+
+                heldChargers.forEach(chg => {
+                  const custObj = getOrInitCustomer(chg.heldFor || chg.buyerName || 'Unassigned');
+                  custObj.chargers.push(chg);
+                  if (!custObj.contact && chg.buyerContact) custObj.contact = chg.buyerContact;
+                });
+
+                const customerPackages = Object.values(customerMap);
+
+                if (customerPackages.length === 0) {
                   return (
                     <div className="flex flex-col items-center justify-center p-12 text-center bg-white border border-slate-100 rounded-2xl">
                       <CheckCircle2 className="h-8 w-8 text-slate-300 mb-2" />
                       <p className="text-sm font-semibold text-slate-600">No Held Stock Found</p>
-                      <p className="text-xs text-slate-400 mt-1">Sellers and owners can place scooters and batteries on hold.</p>
+                      <p className="text-xs text-slate-400 mt-1">Sellers and operators can place scooters, batteries, and chargers on hold.</p>
                     </div>
                   );
                 }
 
                 return (
                   <div className="space-y-6" id="held-stock-detail-container">
-                    {/* Overview explanation banner */}
-                    <div className="bg-amber-500/5 border border-amber-500/10 p-4 rounded-2xl text-xs text-amber-800 leading-relaxed">
-                      <strong>🤝 Held Stock / Reservation Balance:</strong> Here is the list of active customer reservations. When ready, go to the <strong>Scooter Assembly Line</strong> (Stage 3 POS) or the <strong>Battery Sales</strong> tab to finalize checkout or release holds.
+                    {/* Notification banner */}
+                    {actionStatus && (
+                      <div className={`p-4 rounded-2xl text-xs font-semibold flex items-center justify-between shadow-sm ${
+                        actionStatus.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-rose-50 border border-rose-200 text-rose-800'
+                      }`}>
+                        <span>{actionStatus.text}</span>
+                        <button onClick={() => setActionStatus(null)} className="text-slate-400 hover:text-slate-600">
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Overview banner */}
+                    <div className="bg-amber-500/5 border border-amber-500/10 p-4 rounded-2xl text-xs text-amber-800 leading-relaxed flex items-center justify-between">
+                      <div>
+                        <strong>🤝 Customer Wholesale Reservations:</strong> Reserved items are grouped by Customer. You can edit quantities before dispatch, release holds, or complete wholesale sales directly.
+                      </div>
+                      <span className="text-xs font-bold bg-amber-100 text-amber-800 px-3 py-1 rounded-full whitespace-nowrap">
+                        {customerPackages.length} Customers On Hold
+                      </span>
                     </div>
 
-                    {/* Grouped counts section ("how much we have holded for whom") */}
-                    <div className="bg-white border border-slate-150 rounded-2xl p-5 shadow-sm">
-                      <h4 className="text-xs font-extrabold uppercase text-slate-600 tracking-wider mb-4 flex items-center gap-1.5">
-                        <span>🤝 Reservation Breakdown (Holdings by Customer)</span>
-                      </h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                        {Object.entries(groupings).map(([customer, info]) => (
-                          <div key={customer} className="p-4 bg-slate-50 rounded-2xl border border-slate-150 flex flex-col justify-between shadow-sm">
+                    {/* Customer Wholesale Reservation Cards Grid (2-column layout) */}
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                      {customerPackages.map((pkg) => {
+                        const totalScooters = pkg.scooters.length;
+                        const totalBatteries = pkg.batteries.reduce((sum, b) => sum + (b.quantity || 1), 0);
+                        const totalChargers = pkg.chargers.reduce((sum, c) => sum + (c.quantity || (c.serialNumbers?.length) || 1), 0);
+
+                        const packageHeldBySet = Array.from(new Set([
+                          ...pkg.scooters.map(s => (s as any).heldBy || (s as any).createdOperator),
+                          ...pkg.batteries.map(b => b.heldBy || b.operator),
+                          ...pkg.chargers.map(c => c.heldBy || c.operator)
+                        ].filter(Boolean)));
+                        const packageHeldByLabel = packageHeldBySet.length > 0 ? packageHeldBySet.join(', ') : 'Sales Staff';
+
+                        return (
+                          <div key={pkg.customerName} className="bg-white border border-slate-200 rounded-3xl p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between space-y-4">
+                            
+                            {/* Card Header */}
                             <div>
-                              <span className="text-xs font-bold text-slate-800 block mb-1">{customer}</span>
-                              <span className="text-[10px] text-slate-500 block leading-tight font-sans font-medium mb-2">
-                                Active holds:
-                              </span>
-                            </div>
-                            <div className="space-y-1.5 text-xs">
-                              {info.scootersCount > 0 && (
-                                <div className="flex justify-between items-center">
-                                  <span className="text-slate-500">Scooters 🛴:</span>
-                                  <span className="font-extrabold text-amber-600 font-mono bg-amber-50 px-2.5 py-0.5 rounded-lg">{info.scootersCount} units</span>
+                              <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2.5 bg-amber-50 text-amber-600 rounded-2xl border border-amber-150">
+                                    <User className="h-5 w-5" />
+                                  </div>
+                                  <div>
+                                    <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+                                      <span>{pkg.customerName}</span>
+                                    </h3>
+                                    <div className="flex flex-wrap items-center gap-2 mt-0.5 text-xs text-slate-500">
+                                      {pkg.contact && <span className="font-mono">📞 {pkg.contact}</span>}
+                                      <span className="inline-flex items-center gap-1 font-sans text-[11px] font-extrabold text-amber-900 bg-amber-100/80 px-2 py-0.5 rounded-md border border-amber-200">
+                                        <User className="h-3 w-3 text-amber-700" /> Held by: {packageHeldByLabel}
+                                      </span>
+                                    </div>
+                                  </div>
                                 </div>
-                              )}
-                              {info.batteriesCount > 0 && (
-                                <div className="flex justify-between items-center">
-                                  <span className="text-slate-500">Batteries 🔋:</span>
-                                  <span className="font-extrabold text-amber-600 font-mono bg-amber-50 px-2.5 py-0.5 rounded-lg">{info.batteriesCount} packs</span>
+                                <span className="text-[10px] font-extrabold uppercase px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-800 rounded-full shrink-0">
+                                  Wholesale Reservation
+                                </span>
+                              </div>
+
+                              {/* Breakdown Badges Summary */}
+                              <div className="grid grid-cols-3 gap-2 my-3">
+                                <div className={`p-2.5 rounded-2xl border text-center ${totalScooters > 0 ? 'bg-cyan-50/60 border-cyan-200 text-cyan-900' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Scooters</span>
+                                  <span className="text-sm font-black font-mono">{totalScooters} 🛴</span>
                                 </div>
-                              )}
+                                <div className={`p-2.5 rounded-2xl border text-center ${totalBatteries > 0 ? 'bg-amber-50/60 border-amber-200 text-amber-900' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Batteries</span>
+                                  <span className="text-sm font-black font-mono">{totalBatteries} 🔋</span>
+                                </div>
+                                <div className={`p-2.5 rounded-2xl border text-center ${totalChargers > 0 ? 'bg-purple-50/60 border-purple-200 text-purple-900' : 'bg-slate-50 border-slate-100 text-slate-400'}`}>
+                                  <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-500">Chargers</span>
+                                  <span className="text-sm font-black font-mono">{totalChargers} ⚡</span>
+                                </div>
+                              </div>
+
+                              {/* Itemized Lists inside Customer Package */}
+                              <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                                
+                                {/* Reserved Scooters */}
+                                {pkg.scooters.length > 0 && (
+                                  <div className="space-y-1.5">
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                                      Scooter Units ({pkg.scooters.length})
+                                    </span>
+                                    {pkg.scooters.map((s) => (
+                                      <div key={s.id} className="p-2.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between text-xs">
+                                        <div>
+                                          <div className="font-bold text-slate-900">{s.modelName} ({s.color})</div>
+                                          <div className="text-[10px] font-mono text-cyan-700">Chassis: {s.chassisNo}</div>
+                                          <div className="text-[10px] text-slate-500 font-sans flex items-center gap-1.5 mt-0.5">
+                                            <span>Held by: <strong>{(s as any).heldBy || (s as any).createdOperator || 'Staff'}</strong></span>
+                                            {s.deliveryChallanNo && <span className="text-[9px] font-mono font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded border border-amber-200">Challan: {s.deliveryChallanNo}</span>}
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <button
+                                            onClick={() => {
+                                              setCompletingScooter(s);
+                                              setCompletingBuyerName(s.heldFor || pkg.customerName);
+                                              setCompletingBuyerContact((s as any).buyerContact || pkg.contact || '');
+                                              setCompletingSalePrice((s as any).salePrice ? String((s as any).salePrice) : '');
+                                              setCompletingBillingNo(s.salesBillNo || s.billNo || '');
+                                              setCompletingDeliveryChallanNo(s.deliveryChallanNo || '');
+                                              setCompletingNotes(s.customizationNotes || (s as any).notes || '');
+                                              setDocValidationError(null);
+                                              setActionStatus(null);
+                                            }}
+                                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-colors cursor-pointer"
+                                            title="Complete Sale for this scooter"
+                                          >
+                                            Complete
+                                          </button>
+                                          <button
+                                            onClick={async () => {
+                                              if (!window.confirm(`Release hold on Scooter Chassis "${s.chassisNo}"?`)) return;
+                                              setIsSubmitting(true);
+                                              if (onReleaseScooterHold) {
+                                                const ok = await onReleaseScooterHold(s.id);
+                                                if (ok) {
+                                                  setActionStatus({ type: 'success', text: `Hold released for scooter ${s.chassisNo}` });
+                                                  if (onRefresh) onRefresh();
+                                                }
+                                              } else if (onSubmitAssembly) {
+                                                await onSubmitAssembly({ id: s.id, actionType: 'direct_update', status: 'available', heldFor: null, heldBy: null, holdDate: null });
+                                                if (onRefresh) onRefresh();
+                                              }
+                                              setIsSubmitting(false);
+                                            }}
+                                            className="p-1 bg-slate-200 hover:bg-rose-100 text-slate-600 hover:text-rose-700 rounded-lg transition-colors cursor-pointer"
+                                            title="Release hold"
+                                          >
+                                            <X className="h-3.5 w-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Reserved Batteries */}
+                                {pkg.batteries.length > 0 && (
+                                  <div className="space-y-1.5">
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                                      Battery Batches ({pkg.batteries.length})
+                                    </span>
+                                    {pkg.batteries.map((b) => (
+                                      <div key={b.id} className="p-2.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between text-xs">
+                                        <div>
+                                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                            <span>Series: {b.batterySeries}</span>
+                                            <span className="text-[10px] font-mono font-extrabold px-2 py-0.5 bg-amber-100 text-amber-800 rounded-full">
+                                              {b.quantity} Packs
+                                            </span>
+                                          </div>
+                                          <div className="text-[10px] font-mono text-slate-500">
+                                            Serials: {b.startNo} to {b.endNo}
+                                          </div>
+                                          <div className="text-[10px] text-slate-500 font-sans flex items-center gap-1.5 mt-0.5">
+                                            <span>Held by: <strong>{b.heldBy || b.operator || 'Staff'}</strong></span>
+                                            {b.deliveryChallanNo && <span className="text-[9px] font-mono font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded border border-amber-200">Challan: {b.deliveryChallanNo}</span>}
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <button
+                                            onClick={() => {
+                                              setEditingHoldItem({
+                                                id: b.id,
+                                                itemType: 'battery',
+                                                title: `Battery Hold (${b.batterySeries})`,
+                                                heldFor: b.heldFor || pkg.customerName,
+                                                buyerName: b.buyerName || pkg.customerName,
+                                                quantity: b.quantity,
+                                                notes: b.notes || ''
+                                              });
+                                            }}
+                                            className="px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold text-[10px] rounded-lg transition-colors cursor-pointer"
+                                            title="Edit hold quantity"
+                                          >
+                                            ✏️ Edit Qty
+                                          </button>
+                                          <button
+                                            onClick={async () => {
+                                              if (!onFinalizeBatteryHold) return;
+                                              setIsSubmitting(true);
+                                              const ok = await onFinalizeBatteryHold(b.id, {
+                                                buyerName: pkg.customerName,
+                                                buyerContact: pkg.contact,
+                                                billNo: b.billNo || '',
+                                                deliveryChallanNo: b.deliveryChallanNo || ''
+                                              });
+                                              if (ok) {
+                                                setActionStatus({ type: 'success', text: `Battery hold converted to sale!` });
+                                                if (onRefresh) onRefresh();
+                                              }
+                                              setIsSubmitting(false);
+                                            }}
+                                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-colors cursor-pointer"
+                                          >
+                                            Complete
+                                          </button>
+                                          <button
+                                            onClick={async () => {
+                                              if (!window.confirm(`Release battery hold for ${b.quantity} packs?`)) return;
+                                              if (!onReleaseBatteryHold) return;
+                                              setIsSubmitting(true);
+                                              const ok = await onReleaseBatteryHold(b.id);
+                                              if (ok) {
+                                                setActionStatus({ type: 'success', text: `Battery hold released!` });
+                                                if (onRefresh) onRefresh();
+                                              }
+                                              setIsSubmitting(false);
+                                            }}
+                                            className="p-1 bg-slate-200 hover:bg-rose-100 text-slate-600 hover:text-rose-700 rounded-lg transition-colors cursor-pointer"
+                                            title="Release hold"
+                                          >
+                                            <X className="h-3.5 w-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Reserved Chargers */}
+                                {pkg.chargers.length > 0 && (
+                                  <div className="space-y-1.5">
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
+                                      Charger Batches ({pkg.chargers.length})
+                                    </span>
+                                    {pkg.chargers.map((c) => (
+                                      <div key={c.id} className="p-2.5 bg-slate-50 rounded-2xl border border-slate-200/80 flex items-center justify-between text-xs">
+                                        <div>
+                                          <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                                            <span>{c.chargerType}</span>
+                                            <span className="text-[10px] font-mono font-extrabold px-2 py-0.5 bg-purple-100 text-purple-800 rounded-full">
+                                              {c.quantity || 1} Units
+                                            </span>
+                                          </div>
+                                          <div className="text-[10px] text-slate-500 font-sans flex items-center gap-1.5 mt-0.5">
+                                            <span>Held by: <strong>{c.heldBy || c.operator || 'Staff'}</strong></span>
+                                            {c.deliveryChallanNo && <span className="text-[9px] font-mono font-bold bg-amber-100 text-amber-800 px-1.5 py-0.2 rounded border border-amber-200">Challan: {c.deliveryChallanNo}</span>}
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <button
+                                            onClick={() => {
+                                              setEditingHoldItem({
+                                                id: c.id,
+                                                itemType: 'charger',
+                                                title: `Charger Hold (${c.chargerType})`,
+                                                heldFor: c.heldFor || pkg.customerName,
+                                                buyerName: c.buyerName || pkg.customerName,
+                                                quantity: c.quantity || 1,
+                                                notes: c.notes || ''
+                                              });
+                                            }}
+                                            className="px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-800 font-bold text-[10px] rounded-lg transition-colors cursor-pointer"
+                                            title="Edit hold quantity"
+                                          >
+                                            ✏️ Edit Qty
+                                          </button>
+                                          <button
+                                            onClick={async () => {
+                                              if (!onFinalizeChargerHold) return;
+                                              setIsSubmitting(true);
+                                              const ok = await onFinalizeChargerHold(c.id, {
+                                                buyerName: pkg.customerName,
+                                                buyerContact: pkg.contact,
+                                                billNo: c.billNo || '',
+                                                deliveryChallanNo: c.deliveryChallanNo || ''
+                                              });
+                                              if (ok) {
+                                                setActionStatus({ type: 'success', text: `Charger hold converted to sale!` });
+                                                if (onRefresh) onRefresh();
+                                              }
+                                              setIsSubmitting(false);
+                                            }}
+                                            className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] rounded-lg transition-colors cursor-pointer"
+                                          >
+                                            Complete
+                                          </button>
+                                          <button
+                                            onClick={async () => {
+                                              if (!window.confirm(`Release charger hold?`)) return;
+                                              if (!onReleaseChargerHold) return;
+                                              setIsSubmitting(true);
+                                              const ok = await onReleaseChargerHold(c.id);
+                                              if (ok) {
+                                                setActionStatus({ type: 'success', text: `Charger hold released!` });
+                                                if (onRefresh) onRefresh();
+                                              }
+                                              setIsSubmitting(false);
+                                            }}
+                                            className="p-1 bg-slate-200 hover:bg-rose-100 text-slate-600 hover:text-rose-700 rounded-lg transition-colors cursor-pointer"
+                                            title="Release hold"
+                                          >
+                                            <X className="h-3.5 w-3.5" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                             </div>
+
+                            {/* Wholesale Package Actions Footer */}
+                            <div className="pt-3 border-t border-slate-100 grid grid-cols-2 gap-2">
+                              <button
+                                disabled={isSubmitting}
+                                onClick={() => {
+                                  const existingChallan = pkg.scooters.find(s => s.deliveryChallanNo)?.deliveryChallanNo || pkg.batteries.find(b => b.deliveryChallanNo)?.deliveryChallanNo || pkg.chargers.find(c => c.deliveryChallanNo)?.deliveryChallanNo || '';
+                                  const existingBill = pkg.scooters.find(s => s.salesBillNo || s.billNo)?.salesBillNo || pkg.scooters.find(s => s.billNo)?.billNo || pkg.batteries.find(b => b.billNo)?.billNo || pkg.chargers.find(c => c.billNo)?.billNo || '';
+                                  const existingPrice = pkg.scooters.reduce((acc, s) => acc + ((s as any).salePrice || 0), 0) || '';
+                                  const existingNotes = pkg.scooters.find(s => s.customizationNotes || (s as any).notes)?.customizationNotes || pkg.batteries.find(b => b.notes)?.notes || pkg.chargers.find(c => c.notes)?.notes || '';
+
+                                  setCompletingCustomerPackage(pkg);
+                                  setCompletingBuyerName(pkg.customerName);
+                                  setCompletingBuyerContact(pkg.contact || '');
+                                  setCompletingSalePrice(existingPrice ? String(existingPrice) : '');
+                                  setCompletingBillingNo(existingBill);
+                                  setCompletingDeliveryChallanNo(existingChallan);
+                                  setCompletingNotes(existingNotes);
+                                  setDocValidationError(null);
+                                  setActionStatus(null);
+                                }}
+                                className="col-span-2 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-2xl flex items-center justify-center gap-2 shadow-sm transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                <ShoppingBag className="h-4 w-4" />
+                                <span>Complete Wholesale Package Sale</span>
+                              </button>
+
+                              <button
+                                disabled={isSubmitting}
+                                onClick={async () => {
+                                  if (!window.confirm(`Are you sure you want to release ALL held items (${totalScooters} scooters, ${totalBatteries} batteries, ${totalChargers} chargers) reserved for customer "${pkg.customerName}"?`)) return;
+                                  setIsSubmitting(true);
+                                  setActionStatus(null);
+
+                                  const scooterIds = pkg.scooters.map(s => s.id);
+                                  const batteryIds = pkg.batteries.map(b => b.id);
+                                  const chargerIds = pkg.chargers.map(c => c.id);
+
+                                  let success = false;
+                                  if (onReleaseWholesalePackage) {
+                                    success = await onReleaseWholesalePackage({
+                                      customerName: pkg.customerName,
+                                      scooterIds,
+                                      batteryIds,
+                                      chargerIds
+                                    });
+                                  } else {
+                                    let releasedCount = 0;
+                                    for (const s of pkg.scooters) {
+                                      if (onReleaseScooterHold) await onReleaseScooterHold(s.id);
+                                      else if (onSubmitAssembly) await onSubmitAssembly({ id: s.id, actionType: 'direct_update', status: 'available', heldFor: null, heldBy: null, holdDate: null });
+                                      releasedCount++;
+                                    }
+                                    for (const b of pkg.batteries) {
+                                      if (onReleaseBatteryHold) await onReleaseBatteryHold(b.id);
+                                      releasedCount++;
+                                    }
+                                    for (const c of pkg.chargers) {
+                                      if (onReleaseChargerHold) await onReleaseChargerHold(c.id);
+                                      releasedCount++;
+                                    }
+                                    success = true;
+                                  }
+
+                                  if (success) {
+                                    setActionStatus({ type: 'success', text: `Released entire wholesale package for ${pkg.customerName} (${totalScooters + totalBatteries + totalChargers} items returned to inventory).` });
+                                    if (onRefresh) onRefresh();
+                                  } else {
+                                    setActionStatus({ type: 'error', text: `Failed to release wholesale package for ${pkg.customerName}. Please try again.` });
+                                  }
+                                  setIsSubmitting(false);
+                                }}
+                                className="col-span-2 py-2 bg-slate-100 hover:bg-rose-50 hover:text-rose-700 text-slate-700 font-bold text-xs rounded-xl flex items-center justify-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                                <span>Release Entire Package</span>
+                              </button>
+                            </div>
+
                           </div>
-                        ))}
-                      </div>
+                        );
+                      })}
                     </div>
-
-                    {/* Individual Scooter Units List */}
-                    {heldList.length > 0 && (
-                      <div className="space-y-4">
-                        <h4 className="text-xs font-extrabold uppercase text-slate-600 tracking-wider flex items-center gap-1.5">
-                          <span>📋 Individual Reserved Scooters ({heldList.length})</span>
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {heldList.map((unit) => (
-                            <div key={unit.id} className="bg-white border border-slate-150 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-                              <div>
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="font-extrabold text-slate-900 text-sm">{unit.modelName}</span>
-                                  <span className="text-[10px] font-sans font-bold px-2 py-0.5 bg-slate-50 border border-slate-200 text-slate-600 rounded-full">
-                                    {unit.color}
-                                  </span>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2 text-[11px] font-mono mb-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                                  <div className="col-span-2 border-b border-slate-200/50 pb-1.5 mb-1 flex justify-between items-center text-xs font-sans">
-                                    <span className="text-slate-400 font-bold text-[9px] uppercase">Held For</span>
-                                    <span className="text-amber-700 font-black">{unit.heldFor || '—'}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Chassis No</span>
-                                    <span className="text-cyan-700 font-bold">{unit.chassisNo}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Motor No</span>
-                                    <span className="text-slate-800 font-semibold">{unit.motorNo}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Held By</span>
-                                    <span className="text-slate-800 font-semibold font-sans">{unit.heldBy || '—'}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Hold Date</span>
-                                    <span className="text-slate-800 font-semibold font-sans">
-                                      {unit.holdDate ? new Date(unit.holdDate).toLocaleDateString() : '—'}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                                <span className="text-slate-400">
-                                  Registered by {unit.createdOperator}
-                                </span>
-                                <span className="inline-flex items-center gap-1 font-sans font-bold px-2.5 py-0.5 rounded text-[10px] bg-amber-50 text-amber-700 border border-amber-150">
-                                  🤝 RESERVED SCOOTER
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Individual Battery Units List */}
-                    {heldBatteriesList.length > 0 && (
-                      <div className="space-y-4">
-                        <h4 className="text-xs font-extrabold uppercase text-slate-600 tracking-wider flex items-center gap-1.5">
-                          <span>🔋 Individual Reserved Battery Batches ({heldBatteriesList.length})</span>
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {heldBatteriesList.map((sale) => (
-                            <div key={sale.id} className="bg-white border border-slate-150 rounded-2xl p-4 shadow-sm flex flex-col justify-between">
-                              <div>
-                                <div className="flex items-center justify-between mb-2">
-                                  <span className="font-extrabold text-slate-900 text-sm">{sale.batterySeries}</span>
-                                  <span className="text-[10px] font-sans font-bold px-2 py-0.5 bg-amber-50 border border-amber-200 text-amber-700 rounded-full">
-                                    {sale.quantity} Packs
-                                  </span>
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-2 text-[11px] font-mono mb-3 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                                  <div className="col-span-2 border-b border-slate-200/50 pb-1.5 mb-1 flex justify-between items-center text-xs font-sans">
-                                    <span className="text-slate-400 font-bold text-[9px] uppercase">Held For</span>
-                                    <span className="text-amber-700 font-black">{sale.heldFor || sale.buyerName || '—'}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Start Serial</span>
-                                    <span className="text-cyan-700 font-bold">{sale.startNo || 'N/A'}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">End Serial</span>
-                                    <span className="text-cyan-700 font-bold">{sale.endNo || 'N/A'}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Held By</span>
-                                    <span className="text-slate-800 font-semibold font-sans">{sale.heldBy || sale.operator || '—'}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[9px] uppercase font-sans font-bold">Hold Date</span>
-                                    <span className="text-slate-800 font-semibold font-sans">
-                                      {sale.holdDate ? new Date(sale.holdDate).toLocaleDateString() : '—'}
-                                    </span>
-                                  </div>
-                                </div>
-                              </div>
-
-                              <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                                <span className="text-slate-400">
-                                  Registered by {sale.operator}
-                                </span>
-                                <span className="inline-flex items-center gap-1 font-sans font-bold px-2.5 py-0.5 rounded text-[10px] bg-amber-50 text-amber-700 border border-amber-150">
-                                  🔋 RESERVED BATTERY
-                                </span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                   </div>
                 );
               })()}
@@ -1524,6 +2051,595 @@ export default function DashboardStats({
               </button>
             </div>
           </motion.div>
+        </div>
+      )}
+
+      {/* DATALIST FOR BUYER AUTOCOMPLETE */}
+      <datalist id="buyers-datalist">
+        {buyers.map((b: any, idx: number) => (
+          <option key={b.id || idx} value={b.name}>
+            {b.name} ({b.phone || b.type || 'Buyer'})
+          </option>
+        ))}
+      </datalist>
+
+      {/* MODAL: EDIT HOLD ITEM QUANTITY & DETAILS */}
+      {editingHoldItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white border border-slate-150 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">
+                  <User className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Edit Reserved Hold</h3>
+                  <p className="text-[11px] text-slate-500 font-sans">{editingHoldItem.title}</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setEditingHoldItem(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              setIsSubmitting(true);
+              let ok = false;
+              if (editingHoldItem.itemType === 'battery' && onUpdateBatteryHold) {
+                ok = await onUpdateBatteryHold({
+                  id: editingHoldItem.id,
+                  quantity: Number(editingHoldItem.quantity) || 1,
+                  heldFor: editingHoldItem.heldFor,
+                  buyerName: editingHoldItem.heldFor,
+                  notes: editingHoldItem.notes
+                });
+              } else if (editingHoldItem.itemType === 'charger' && onUpdateChargerHold) {
+                ok = await onUpdateChargerHold({
+                  id: editingHoldItem.id,
+                  quantity: Number(editingHoldItem.quantity) || 1,
+                  heldFor: editingHoldItem.heldFor,
+                  buyerName: editingHoldItem.heldFor,
+                  notes: editingHoldItem.notes
+                });
+              }
+
+              if (ok) {
+                setActionStatus({ type: 'success', text: `Updated hold reservation quantity & details successfully!` });
+                setEditingHoldItem(null);
+                if (onRefresh) onRefresh();
+              } else {
+                alert('Failed to update hold item.');
+              }
+              setIsSubmitting(false);
+            }} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Customer / Reserved For *</label>
+                <input 
+                  type="text" 
+                  list="buyers-datalist"
+                  required
+                  value={editingHoldItem.heldFor}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setEditingHoldItem(prev => prev ? { ...prev, heldFor: val } : null);
+                  }}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Reserved Quantity (Units / Packs) *</label>
+                <input 
+                  type="number" 
+                  min="1"
+                  required
+                  value={editingHoldItem.quantity}
+                  onChange={(e) => {
+                    const qty = Number(e.target.value);
+                    setEditingHoldItem(prev => prev ? { ...prev, quantity: qty } : null);
+                  }}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-bold text-slate-900 font-mono focus:outline-none focus:border-amber-500"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Adjust quantity before final dispatch (e.g. send 4 instead of 5, or 6 instead of 5).</p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Notes / Instructions</label>
+                <textarea 
+                  value={editingHoldItem.notes}
+                  onChange={(e) => {
+                    const notes = e.target.value;
+                    setEditingHoldItem(prev => prev ? { ...prev, notes } : null);
+                  }}
+                  rows={2}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingHoldItem(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-md cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>{isSubmitting ? 'Saving...' : 'Save Changes'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: COMPLETE WHOLESALE PACKAGE SALE CHECKOUT */}
+      {completingCustomerPackage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white border border-slate-150 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
+                  <ShoppingBag className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Complete Wholesale Package Dispatch</h3>
+                  <p className="text-[11px] text-slate-500 font-sans">Convert all reserved items for {completingCustomerPackage.customerName} into completed sale</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setCompletingCustomerPackage(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Package Summary Badge */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs space-y-1.5">
+              <div className="font-extrabold text-slate-900 border-b border-slate-200 pb-1 flex justify-between">
+                <span>Customer: {completingCustomerPackage.customerName}</span>
+                <span className="text-emerald-700 font-mono">Wholesale Package</span>
+              </div>
+              <div className="flex gap-3 text-[11px] font-bold text-slate-700">
+                {completingCustomerPackage.scooters.length > 0 && <span>🛴 {completingCustomerPackage.scooters.length} Scooters</span>}
+                {completingCustomerPackage.batteries.length > 0 && <span>🔋 {completingCustomerPackage.batteries.reduce((sum, b) => sum + b.quantity, 0)} Batteries</span>}
+                {completingCustomerPackage.chargers.length > 0 && <span>⚡ {completingCustomerPackage.chargers.reduce((sum, c) => sum + (c.quantity || 1), 0)} Chargers</span>}
+              </div>
+            </div>
+
+            {/* Preserved Hold details notice banner */}
+            {(completingDeliveryChallanNo || completingBillingNo || completingNotes) && (
+              <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-2xl text-amber-900 text-xs space-y-1">
+                <div className="font-extrabold flex items-center gap-1.5 text-amber-900">
+                  <Info className="h-4 w-4 shrink-0 text-amber-600" />
+                  <span>Preserved Hold Reservation Details</span>
+                </div>
+                <p className="text-[11px] text-amber-800">
+                  You put these details when putting this item/package on hold. They are pre-filled below for easy verification.
+                </p>
+              </div>
+            )}
+
+            {/* Document validation error alert */}
+            {docValidationError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-rose-800 text-xs font-semibold flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600" />
+                <span>{docValidationError}</span>
+              </div>
+            )}
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (!completingBuyerName.trim()) {
+                alert('Please enter a customer/buyer name.');
+                return;
+              }
+
+              setIsSubmitting(true);
+              setDocValidationError(null);
+
+              const packageItemIds = [
+                ...completingCustomerPackage.scooters.map(s => s.id),
+                ...completingCustomerPackage.batteries.map(b => b.id),
+                ...completingCustomerPackage.chargers.map(c => c.id)
+              ];
+
+              // Validate document numbers uniqueness
+              if (completingBillingNo.trim() || completingDeliveryChallanNo.trim()) {
+                try {
+                  const valRes = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/validate-document-numbers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      billNo: completingBillingNo.trim(),
+                      deliveryChallanNo: completingDeliveryChallanNo.trim(),
+                      excludeIds: packageItemIds
+                    })
+                  });
+                  if (valRes.ok) {
+                    const valData = await valRes.json();
+                    if (valData.billExists) {
+                      setDocValidationError(`⚠️ Bill / Invoice Number '${completingBillingNo.trim()}' already exists in database (${valData.billFoundIn}). Please enter a unique Bill Number.`);
+                      setIsSubmitting(false);
+                      return;
+                    }
+                    if (valData.challanExists) {
+                      setDocValidationError(`⚠️ Delivery Challan Number '${completingDeliveryChallanNo.trim()}' already exists in database (${valData.challanFoundIn}). Please enter a unique Delivery Challan Number.`);
+                      setIsSubmitting(false);
+                      return;
+                    }
+                  }
+                } catch (err) {
+                  console.error('Validation error', err);
+                }
+              }
+
+              // Finalize all scooters in package
+              let successCount = 0;
+              for (const s of completingCustomerPackage.scooters) {
+                if (onSubmitAssembly) {
+                  const ok = await onSubmitAssembly({
+                    id: s.id,
+                    actionType: 'direct_update',
+                    status: 'sold',
+                    buyerName: completingBuyerName.trim(),
+                    buyerContact: completingBuyerContact.trim(),
+                    salePrice: Number(completingSalePrice) || 0,
+                    billingNo: completingBillingNo.trim(),
+                    deliveryChallanNo: completingDeliveryChallanNo.trim(),
+                    notes: completingNotes.trim(),
+                    operator: currentUser?.name || currentUser?.username || 'system'
+                  });
+                  if (ok) successCount++;
+                }
+              }
+
+              // Finalize all batteries in package
+              for (const b of completingCustomerPackage.batteries) {
+                if (onFinalizeBatteryHold) {
+                  const ok = await onFinalizeBatteryHold(b.id, {
+                    buyerName: completingBuyerName.trim(),
+                    buyerContact: completingBuyerContact.trim(),
+                    billNo: completingBillingNo.trim(),
+                    deliveryChallanNo: completingDeliveryChallanNo.trim(),
+                    notes: completingNotes.trim()
+                  });
+                  if (ok) successCount++;
+                }
+              }
+
+              // Finalize all chargers in package
+              for (const c of completingCustomerPackage.chargers) {
+                if (onFinalizeChargerHold) {
+                  const ok = await onFinalizeChargerHold(c.id, {
+                    buyerName: completingBuyerName.trim(),
+                    buyerContact: completingBuyerContact.trim(),
+                    billNo: completingBillingNo.trim(),
+                    deliveryChallanNo: completingDeliveryChallanNo.trim(),
+                    notes: completingNotes.trim()
+                  });
+                  if (ok) successCount++;
+                }
+              }
+
+              setActionStatus({
+                type: 'success',
+                text: `Successfully completed wholesale dispatch for customer ${completingBuyerName.trim()} (${successCount} records finalized)!`
+              });
+              setCompletingCustomerPackage(null);
+              if (onRefresh) onRefresh();
+              setIsSubmitting(false);
+            }} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Customer / Buyer Name *</label>
+                <input 
+                  type="text" 
+                  list="buyers-datalist"
+                  required
+                  value={completingBuyerName}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCompletingBuyerName(val);
+                    const match = buyers.find((b: any) => b.name?.toLowerCase() === val.toLowerCase());
+                    if (match) {
+                      setCompletingBuyerContact(match.phone || match.contactPerson || '');
+                    }
+                  }}
+                  placeholder="Select or enter customer name..."
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Contact / Phone</label>
+                  <input 
+                    type="text" 
+                    value={completingBuyerContact}
+                    onChange={(e) => setCompletingBuyerContact(e.target.value)}
+                    placeholder="Phone number"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Total Sale Amount ($)</label>
+                  <input 
+                    type="number" 
+                    value={completingSalePrice}
+                    onChange={(e) => setCompletingSalePrice(e.target.value)}
+                    placeholder="e.g. 15000"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Bill / Invoice No *</label>
+                  <input 
+                    type="text" 
+                    value={completingBillingNo}
+                    onChange={(e) => setCompletingBillingNo(e.target.value)}
+                    placeholder="e.g. INV-2026-001"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Delivery Challan No *</label>
+                  <input 
+                    type="text" 
+                    value={completingDeliveryChallanNo}
+                    onChange={(e) => setCompletingDeliveryChallanNo(e.target.value)}
+                    placeholder="e.g. CH-2026-001"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Dispatch Remarks / Notes</label>
+                <textarea 
+                  value={completingNotes}
+                  onChange={(e) => setCompletingNotes(e.target.value)}
+                  placeholder="Optional delivery details or notes"
+                  rows={2}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setCompletingCustomerPackage(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>{isSubmitting ? 'Finalizing...' : 'Confirm Wholesale Sale'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: COMPLETE SCOOTER SALE CHECKOUT */}
+      {completingScooter && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white border border-slate-150 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
+                  <ShoppingBag className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Finalize Scooter Sale</h3>
+                  <p className="text-[11px] text-slate-500 font-sans">Convert hold reservation into a completed dispatch</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setCompletingScooter(null)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Scooter Summary Badge */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 text-xs space-y-1 font-mono">
+              <div className="flex justify-between font-bold text-slate-800">
+                <span>{completingScooter.modelName} ({completingScooter.color})</span>
+                <span className="text-cyan-700">Chassis: {completingScooter.chassisNo}</span>
+              </div>
+              <div className="text-[10px] text-slate-500 flex justify-between">
+                <span>Motor: {completingScooter.motorNo}</span>
+                <span>Controller: {completingScooter.controllerNo}</span>
+              </div>
+            </div>
+
+            {/* Document validation error alert */}
+            {docValidationError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-rose-800 text-xs font-semibold flex items-center gap-2">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600" />
+                <span>{docValidationError}</span>
+              </div>
+            )}
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              if (!completingBuyerName.trim()) {
+                alert('Please enter a customer/buyer name.');
+                return;
+              }
+              setIsSubmitting(true);
+              setDocValidationError(null);
+
+              // Validate document numbers uniqueness
+              if (completingBillingNo.trim() || completingDeliveryChallanNo.trim()) {
+                try {
+                  const valRes = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/validate-document-numbers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      billNo: completingBillingNo.trim(),
+                      deliveryChallanNo: completingDeliveryChallanNo.trim(),
+                      excludeId: completingScooter.id
+                    })
+                  });
+                  if (valRes.ok) {
+                    const valData = await valRes.json();
+                    if (valData.billExists) {
+                      setDocValidationError(`⚠️ Bill / Invoice Number '${completingBillingNo.trim()}' already exists in database (${valData.billFoundIn}). Please enter a unique Bill Number.`);
+                      setIsSubmitting(false);
+                      return;
+                    }
+                    if (valData.challanExists) {
+                      setDocValidationError(`⚠️ Delivery Challan Number '${completingDeliveryChallanNo.trim()}' already exists in database (${valData.challanFoundIn}). Please enter a unique Delivery Challan Number.`);
+                      setIsSubmitting(false);
+                      return;
+                    }
+                  }
+                } catch (err) {
+                  console.error('Validation error', err);
+                }
+              }
+
+              if (onSubmitAssembly) {
+                const ok = await onSubmitAssembly({
+                  id: completingScooter.id,
+                  actionType: 'direct_update',
+                  status: 'sold',
+                  buyerName: completingBuyerName.trim(),
+                  buyerContact: completingBuyerContact.trim(),
+                  salePrice: Number(completingSalePrice) || 0,
+                  billingNo: completingBillingNo.trim(),
+                  deliveryChallanNo: completingDeliveryChallanNo.trim(),
+                  notes: completingNotes.trim(),
+                  operator: currentUser?.name || currentUser?.username || 'system'
+                });
+
+                if (ok) {
+                  setActionStatus({ type: 'success', text: `Sale completed for Scooter ${completingScooter.chassisNo}! Moved to Sold stock.` });
+                  setCompletingScooter(null);
+                  if (onRefresh) onRefresh();
+                } else {
+                  alert('Failed to complete sale.');
+                }
+              }
+              setIsSubmitting(false);
+            }} className="space-y-3 text-xs">
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Customer / Buyer Name *</label>
+                <input 
+                  type="text" 
+                  list="buyers-datalist"
+                  required
+                  value={completingBuyerName}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCompletingBuyerName(val);
+                    const match = buyers.find((b: any) => b.name?.toLowerCase() === val.toLowerCase());
+                    if (match) {
+                      setCompletingBuyerContact(match.phone || match.contactPerson || '');
+                    }
+                  }}
+                  placeholder="Select or enter customer name..."
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Contact / Phone</label>
+                  <input 
+                    type="text" 
+                    value={completingBuyerContact}
+                    onChange={(e) => setCompletingBuyerContact(e.target.value)}
+                    placeholder="Phone number"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Sale Price ($)</label>
+                  <input 
+                    type="number" 
+                    value={completingSalePrice}
+                    onChange={(e) => setCompletingSalePrice(e.target.value)}
+                    placeholder="e.g. 1500"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Bill / Invoice No</label>
+                  <input 
+                    type="text" 
+                    value={completingBillingNo}
+                    onChange={(e) => setCompletingBillingNo(e.target.value)}
+                    placeholder="Invoice #"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Delivery Challan No</label>
+                  <input 
+                    type="text" 
+                    value={completingDeliveryChallanNo}
+                    onChange={(e) => setCompletingDeliveryChallanNo(e.target.value)}
+                    placeholder="Challan #"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold uppercase text-slate-500 mb-1">Notes / Warranty Remarks</label>
+                <textarea 
+                  value={completingNotes}
+                  onChange={(e) => setCompletingNotes(e.target.value)}
+                  placeholder="Optional notes or customer requirements"
+                  rows={2}
+                  className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-800 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setCompletingScooter(null)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>{isSubmitting ? 'Saving...' : 'Confirm & Complete Sale'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
     </div>

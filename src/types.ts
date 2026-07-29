@@ -52,7 +52,7 @@ export interface ScooterUnit {
   controllerNo: string;
   frontTireSize?: '10-inch' | '12-inch';
   rearTireSize?: '10-inch' | '12-inch';
-  brakeType?: 'Disk' | 'Drum';
+  brakeType?: string;
   
   // Stage 2: Customization Logs
   tireSize: '10-inch' | '12-inch';
@@ -78,7 +78,7 @@ export interface ScooterUnit {
   chargerWarrantyMonths?: number;
   chargerWarrantyStatus?: 'Active' | 'None';
   
-  // Scooter frame warranty options
+  // Scooter warranty options
   scooterWarrantyMonths?: number;
   scooterWarrantyActive?: boolean;
   
@@ -92,7 +92,9 @@ export interface ScooterUnit {
   // Sales Fields
   salesBillNo?: string;
   deliveryChallanNo?: string;
-  salesPrice?: number;
+  challanStatus?: 'pending' | 'finished';
+  challanFinishedBy?: string;
+  challanFinishedTimestamp?: string;
 
   // Audit Trail Metadata
   createdOperator: string;
@@ -124,6 +126,7 @@ export interface SheetConfig {
 export interface BatterySale {
   id: string;
   buyerName: string;
+  buyerContact?: string;
   batterySeries: string;
   startNo: string;
   endNo: string;
@@ -139,6 +142,9 @@ export interface BatterySale {
   holdDate?: string;
   billNo?: string;
   deliveryChallanNo?: string;
+  challanStatus?: 'pending' | 'finished';
+  challanFinishedBy?: string;
+  challanFinishedTimestamp?: string;
   serialNumbers?: string[];
 }
 
@@ -162,6 +168,7 @@ export interface BatteryImport {
 export interface ChargerSale {
   id: string;
   buyerName: string;
+  buyerContact?: string;
   chargerType: string;
   startNo?: string;
   endNo?: string;
@@ -177,6 +184,9 @@ export interface ChargerSale {
   holdDate?: string;
   billNo?: string;
   deliveryChallanNo?: string;
+  challanStatus?: 'pending' | 'finished';
+  challanFinishedBy?: string;
+  challanFinishedTimestamp?: string;
   serialNumbers?: string[];
 }
 
@@ -214,6 +224,8 @@ export interface WarrantyClaim {
   originalSaleId: string; // Refers to scooter unit id, or battery sale id, or charger sale id
   originalSaleType: 'scooter' | 'battery' | 'charger';
   originalSerialNo: string; // chassis number or battery serial or charger serial
+  claimedComponent?: 'controller' | 'motor' | 'scooter_frame' | 'battery' | 'charger';
+  modelName?: string;
   buyerName: string;
   buyerContact?: string;
   saleDate?: string;
@@ -227,6 +239,13 @@ export interface WarrantyClaim {
   lastUpdatedTimestamp: string;
   replacementWarrantyMonths?: number;
   isBattery?: boolean;
+  collectedDate?: string;
+  specialistNotes?: string;
+  supplierName?: string;
+  containerId?: string;
+  sourceBillNo?: string;
+  stockInNo?: string;
+  supplierWarrantyStatus?: string;
 }
 
 export interface DBState {
