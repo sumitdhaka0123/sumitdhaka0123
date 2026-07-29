@@ -71,8 +71,10 @@ export default function App() {
   // Active mobile section indicator popup state
   const [mobileNotification, setMobileNotification] = useState<string | null>(null);
 
-  // Geolocation enforcement state to prevent turning off location
+  // Geolocation enforcement state to prevent turning  // Global View States
   const [locationBlocked, setLocationBlocked] = useState<boolean>(false);
+  const [checkingLocation, setCheckingLocation] = useState<boolean>(false);
+  const [locationCheckError, setLocationCheckError] = useState<string | null>(null);
 
   // Restore session on mount if any
   useEffect(() => {
@@ -153,17 +155,17 @@ export default function App() {
     fetchAllData();
   }, [currentUser]);
 
-  // Silent background location reporter (live location sync)
+  // Silent background location reporter (live location sync) with strict employee monitoring
   useEffect(() => {
     if (!currentUser) return;
+
+    const isEmployee = currentUser.role === 'manufacturer' || currentUser.role === 'salesperson' || currentUser.role === 'manager';
 
     const reportLocation = async (lat: number, lng: number) => {
       try {
         await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             username: currentUser.username,
             latitude: lat,
@@ -171,7 +173,6 @@ export default function App() {
           })
         });
       } catch (err) {
-        // Quiet telemetry warning rather than console.error to avoid raising fatal errors in preview
         console.warn('Quiet location telemetry update skipped:', err);
       }
     };
@@ -190,38 +191,60 @@ export default function App() {
       }
     };
 
-    const fetchCurrentPosition = () => {
+    const fetchCurrentPosition = (isStrictCheck = false) => {
       if ('geolocation' in navigator) {
         navigator.geolocation.getCurrentPosition(
           (pos) => {
             setLocationBlocked(false);
+            setLocationCheckError(null);
             reportLocation(pos.coords.latitude, pos.coords.longitude);
           },
           (err) => {
-            if (err.code === err.PERMISSION_DENIED) {
+            console.warn('Silent location fetch skipped/failed, trying fallback/blocking:', err);
+            if (isEmployee) {
               setLocationBlocked(true);
+              if (err.code === err.PERMISSION_DENIED) {
+                setLocationCheckError('Permission Denied: Location access has been disabled or blocked. Please allow location access in your browser settings.');
+              } else if (err.code === err.POSITION_UNAVAILABLE) {
+                setLocationCheckError('Position Unavailable: GPS signal is inactive or device location services are switched off.');
+              } else if (err.code === err.TIMEOUT) {
+                setLocationCheckError('Timeout: The request to acquire device GPS coordinates timed out. Ensure location is enabled with high accuracy.');
+              } else {
+                setLocationCheckError('Device Location Inaccessible: Please turn your physical device location services ON.');
+              }
             } else {
-              console.warn('Silent location fetch skipped, trying IP fallback:', err);
+              // Non-employees/admins fall back to IP Geolocation
               fetchIpLocation();
             }
           },
           { enableHighAccuracy: true, timeout: 8000 }
         );
       } else {
-        fetchIpLocation();
+        if (isEmployee) {
+          setLocationBlocked(true);
+          setLocationCheckError('System Error: Geolocation is not supported by this browser terminal.');
+        } else {
+          fetchIpLocation();
+        }
       }
     };
 
-    // Fetch initial position immediately
-    fetchCurrentPosition();
+    fetchCurrentPosition(true);
 
-    // Set up a setInterval to poll the user's location every 10 seconds using getCurrentPosition
-    const intervalId = setInterval(fetchCurrentPosition, 10000);
+    // Check every 10 seconds to catch location turning off instantly
+    const intervalId = setInterval(() => {
+      fetchCurrentPosition(false);
+    }, 10000);
+
+    // Scheduled strict re-verification audit every 5 minutes (300,000 ms)
+    const fiveMinIntervalId = setInterval(() => {
+      console.log('Running scheduled 5-minute strict physical location audit...');
+      fetchCurrentPosition(true);
+    }, 300000);
 
     return () => {
-      if (intervalId !== null) {
-        clearInterval(intervalId);
-      }
+      if (intervalId !== null) clearInterval(intervalId);
+      if (fiveMinIntervalId !== null) clearInterval(fiveMinIntervalId);
     };
   }, [currentUser]);
 
@@ -874,55 +897,57 @@ export default function App() {
 
   if (locationBlocked) {
     return (
-      <div 
-        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-2xl font-sans" 
-        id="location-blocked-overlay"
-      >
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-2xl font-sans" id="location-blocked-overlay">
         <motion.div 
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          className="bg-white border border-slate-200 rounded-[32px] p-8 max-w-md w-full shadow-2xl text-center space-y-6"
+          className="bg-white border border-slate-200 rounded-[32px] p-8 max-w-md w-full shadow-2xl text-center space-y-6 animate-fade-in"
           id="location-blocked-card"
         >
-          {/* Animated Map / Radar Circle */}
-          <div className="mx-auto h-20 w-20 bg-rose-50 rounded-full border border-rose-100 flex items-center justify-center relative" id="location-radar-container">
-            <span className="absolute inset-0 rounded-full bg-rose-400/20 animate-ping" id="location-radar-ping"></span>
-            <Compass className="h-10 w-10 text-rose-500 animate-spin" style={{ animationDuration: '6s' }} id="location-radar-icon" />
+          <div className="mx-auto h-20 w-20 bg-rose-50 rounded-full border border-rose-100 flex items-center justify-center relative">
+            <span className="absolute inset-0 rounded-full bg-rose-400/20 animate-ping"></span>
+            <Compass className={`h-10 w-10 text-rose-500 ${checkingLocation ? 'animate-spin' : ''}`} style={{ animationDuration: checkingLocation ? '1s' : '6s' }} />
           </div>
 
           <div className="space-y-2">
-            <span 
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-50 text-rose-600 border border-rose-100 font-mono"
-              id="location-badge"
-            >
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-50 text-rose-600 border border-rose-100 font-mono">
               ⚠️ Location Off
             </span>
-            <h2 className="text-xl font-black text-slate-900 tracking-tight" id="location-title">
-              Device Location Required
-            </h2>
-            <p className="text-xs text-slate-500 leading-relaxed font-medium" id="location-description">
+            <h2 className="text-xl font-black text-slate-900 tracking-tight">Device Location Required</h2>
+            <p className="text-xs text-slate-500 leading-relaxed font-medium">
               To secure the Senzo Warehouse dispatch flow and comply with physical auditing procedures, your terminal must have physical location services enabled.
             </p>
           </div>
 
-          {/* Prompt/Instructions */}
-          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl text-left text-[11px] text-slate-600 space-y-2" id="location-instructions">
+          {locationCheckError && (
+            <div className="p-3.5 bg-rose-50 border border-rose-100 rounded-2xl text-[11px] text-rose-700 font-bold text-left space-y-1 animate-pulse" id="location-error-msg">
+              <p className="flex items-center gap-1.5 font-extrabold uppercase text-[10px] tracking-wide text-rose-800">🚨 Location Status Check Failed</p>
+              <p className="font-medium leading-normal">{locationCheckError}</p>
+            </div>
+          )}
+
+          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl text-left text-[11px] text-slate-600 space-y-2">
             <p className="font-bold text-slate-800">Please complete the following steps:</p>
             <ol className="list-decimal pl-4 space-y-1 font-medium">
               <li>Enable location permissions for this app in your browser settings.</li>
               <li>Make sure your system/device GPS location services are turned ON.</li>
-              <li>Wait a moment for the system to auto-detect, or click verify below.</li>
             </ol>
           </div>
 
-          {/* Action Buttons */}
-          <div className="flex flex-col gap-2.5 pt-2" id="location-actions">
+          <div className="flex flex-col gap-2.5 pt-2">
             <button
               onClick={() => {
+                if (checkingLocation) return;
+                setCheckingLocation(true);
+                setLocationCheckError(null);
+
                 if ('geolocation' in navigator) {
                   navigator.geolocation.getCurrentPosition(
                     (pos) => {
+                      setCheckingLocation(false);
                       setLocationBlocked(false);
+                      setLocationCheckError(null);
+                      // Report verified coordinates
                       fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -934,23 +959,36 @@ export default function App() {
                       }).catch(() => {});
                     },
                     (err) => {
-                      console.warn('Manual location verification failed:', err);
+                      setCheckingLocation(false);
+                      setLocationBlocked(true);
+                      if (err.code === err.PERMISSION_DENIED) {
+                        setLocationCheckError('Permission Denied: Location access remains disabled. Please allow location access in your browser settings.');
+                      } else if (err.code === err.POSITION_UNAVAILABLE) {
+                        setLocationCheckError('Position Unavailable: GPS services are still switched off on this device.');
+                      } else if (err.code === err.TIMEOUT) {
+                        setLocationCheckError('Timeout: Request timed out. Ensure GPS is enabled.');
+                      } else {
+                        setLocationCheckError('Verification Failed: Physical location services are still turned off.');
+                      }
                     },
-                    { enableHighAccuracy: true, timeout: 5000 }
+                    { enableHighAccuracy: true, timeout: 6000 }
                   );
+                } else {
+                  setCheckingLocation(false);
+                  setLocationBlocked(true);
+                  setLocationCheckError('System Error: Geolocation is not supported.');
                 }
               }}
-              className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs rounded-2xl cursor-pointer shadow-md transition-all active:scale-98 flex items-center justify-center gap-2"
-              id="location-retry-btn"
+              disabled={checkingLocation}
+              className={`w-full py-3 ${checkingLocation ? 'bg-slate-400 cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800 cursor-pointer'} text-white font-black text-xs rounded-2xl shadow-md transition-all active:scale-98 flex items-center justify-center gap-2`}
             >
-              <RefreshCw className="h-4 w-4 animate-spin" style={{ animationDuration: '3s' }} />
-              <span>Retry Location Verification</span>
+              <RefreshCw className={`h-4 w-4 ${checkingLocation ? 'animate-spin' : ''}`} style={{ animationDuration: checkingLocation ? '1s' : '3s' }} />
+              <span>{checkingLocation ? 'Checking Device GPS...' : 'Check Location Status'}</span>
             </button>
 
             <button
               onClick={handleLogout}
-              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold text-xs rounded-2xl cursor-pointer transition-colors"
-              id="location-logout-btn"
+              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold text-xs rounded-2xl cursor-pointer"
             >
               Exit Terminal Session
             </button>
