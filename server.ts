@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
@@ -9,6 +10,7 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, setDoc, getDoc, getDocs, collection, writeBatch } from 'firebase/firestore';
 
 const app = express();
+app.use(cors());
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), 'warehouse_db.json');
 
