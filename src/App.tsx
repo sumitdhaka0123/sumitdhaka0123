@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
-  Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap, Search, ShieldCheck, MoreHorizontal, X, Truck
+  Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap, Search, ShieldCheck, MoreHorizontal, X, Truck, ShoppingCart, Store
 } from 'lucide-react';
 
-import { User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim } from './types';
+import { User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim, SalesOrder } from './types';
 import LoginScreen from './components/LoginScreen';
 import DashboardStats from './components/DashboardStats';
 import AssemblyPipeline from './components/AssemblyPipeline';
@@ -17,7 +17,8 @@ import SenzoLogo from './components/SenzoLogo';
 import SearchConsole from './components/SearchConsole';
 import WarrantyClaimsManager from './components/WarrantyClaimsManager';
 import { ChallanManager } from './components/ChallanManager';
-import StaffUnifiedMap from './components/StaffUnifiedMap';
+import { SalesOrderTerminal } from './components/SalesOrderTerminal';
+import { DispatchDashboard } from './components/DispatchDashboard';
 
 export default function App() {
   // Session State
@@ -37,11 +38,14 @@ export default function App() {
   const [batteryTypes, setBatteryTypes] = useState<string[]>([]);
   const [chargerTypes, setChargerTypes] = useState<string[]>([]);
   const [warrantyClaims, setWarrantyClaims] = useState<WarrantyClaim[]>([]);
+  const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
 
   // Navigation tab states
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'assembly' | 'stock' | 'catalog' | 'battery' | 'charger' | 'settings' | 'search' | 'claims' | 'challans' | 'location'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'assembly' | 'stock' | 'catalog' | 'battery' | 'charger' | 'settings' | 'search' | 'claims' | 'challans' | 'orders' | 'dispatch'>('dashboard');
   const [loading, setLoading] = useState(false);
-  const [workerTab, setWorkerTab] = useState<'workspace' | 'charger' | 'dashboard'>('workspace');
+  const [workerTab, setWorkerTab] = useState<'workspace' | 'charger' | 'dashboard' | 'challans'>('workspace');
+  const [dispatcherTab, setDispatcherTab] = useState<'dispatch' | 'sales'>('dispatch');
+  const [salespersonTab, setSalespersonTab] = useState<'b2b' | 'retail'>('b2b');
   const [showMobileMoreMenu, setShowMobileMoreMenu] = useState(false);
 
   // Salesperson add buyer form state
@@ -71,7 +75,7 @@ export default function App() {
   // Active mobile section indicator popup state
   const [mobileNotification, setMobileNotification] = useState<string | null>(null);
 
-  // Geolocation enforcement state to prevent turning  // Global View States
+  // Geolocation enforcement state to prevent turning off location
   const [locationBlocked, setLocationBlocked] = useState<boolean>(false);
   const [checkingLocation, setCheckingLocation] = useState<boolean>(false);
   const [locationCheckError, setLocationCheckError] = useState<string | null>(null);
@@ -115,7 +119,7 @@ export default function App() {
     };
 
     try {
-      const [pRes, bRes, sUnitRes, sLogRes, cRes, batRes, batImpRes, chgRes, chgImpRes, batTypeRes, chgTypeRes, claimsRes] = await Promise.all([
+      const [pRes, bRes, sUnitRes, sLogRes, cRes, batRes, batImpRes, chgRes, chgImpRes, batTypeRes, chgTypeRes, claimsRes, salesOrdersRes] = await Promise.all([
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products'),
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers'),
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units'),
@@ -127,7 +131,8 @@ export default function App() {
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-imports'),
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-types'),
         fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-types'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims')
+        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims'),
+        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/sales-orders')
       ]);
 
       await Promise.all([
@@ -142,7 +147,8 @@ export default function App() {
         parseAndSet(chgImpRes, setChargerImports),
         parseAndSet(batTypeRes, setBatteryTypes),
         parseAndSet(chgTypeRes, setChargerTypes),
-        parseAndSet(claimsRes, setWarrantyClaims)
+        parseAndSet(claimsRes, setWarrantyClaims),
+        parseAndSet(salesOrdersRes, setSalesOrders)
       ]);
     } catch (err) {
       console.error('Error loading data from warehouse server:', err);
@@ -159,13 +165,15 @@ export default function App() {
   useEffect(() => {
     if (!currentUser) return;
 
-    const isEmployee = currentUser.role === 'manufacturer' || currentUser.role === 'salesperson' || currentUser.role === 'manager';
+    const isEmployee = currentUser.role === 'manufacturer' || currentUser.role === 'salesperson' || currentUser.role === 'manager' || currentUser.role === 'dispatcher';
 
     const reportLocation = async (lat: number, lng: number) => {
       try {
         await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json'
+          },
           body: JSON.stringify({
             username: currentUser.username,
             latitude: lat,
@@ -173,13 +181,16 @@ export default function App() {
           })
         });
       } catch (err) {
-        console.warn('Quiet location telemetry update skipped:', err);
+        // Silent background telemetry update
       }
     };
 
     const fetchIpLocation = async () => {
       try {
-        const ipRes = await fetch('https://ipapi.co/json/');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const ipRes = await fetch('https://ipapi.co/json/', { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (ipRes.ok) {
           const ipData = await ipRes.json();
           if (ipData.latitude && ipData.longitude) {
@@ -187,7 +198,7 @@ export default function App() {
           }
         }
       } catch (err) {
-        console.warn('IP Geolocation fallback skipped:', err);
+        // Silently handle IP geolocation fallback
       }
     };
 
@@ -200,7 +211,7 @@ export default function App() {
             reportLocation(pos.coords.latitude, pos.coords.longitude);
           },
           (err) => {
-            console.warn('Silent location fetch skipped/failed, trying fallback/blocking:', err);
+            // If the user is an active employee, block access strictly on any GPS failures/disables
             if (isEmployee) {
               setLocationBlocked(true);
               if (err.code === err.PERMISSION_DENIED) {
@@ -229,14 +240,15 @@ export default function App() {
       }
     };
 
+    // Fetch initial position immediately
     fetchCurrentPosition(true);
 
-    // Check every 10 seconds to catch location turning off instantly
+    // Set up a setInterval to poll/check the user's location every 10 seconds (detects off-events almost instantly)
     const intervalId = setInterval(() => {
       fetchCurrentPosition(false);
     }, 10000);
 
-    // Scheduled strict re-verification audit every 5 minutes (300,000 ms)
+    // Strict high-accuracy scheduled re-check every 5 minutes (300,000 ms) as requested by the user
     const fiveMinIntervalId = setInterval(() => {
       console.log('Running scheduled 5-minute strict physical location audit...');
       fetchCurrentPosition(true);
@@ -272,13 +284,16 @@ export default function App() {
                   })
                 });
               } catch (err) {
-                console.warn('Failed to report live requested location:', err);
+                // Silently handle live location report failure
               }
             };
 
             const runIpPullFallback = async () => {
               try {
-                const ipRes = await fetch('https://ipapi.co/json/');
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3000);
+                const ipRes = await fetch('https://ipapi.co/json/', { signal: controller.signal });
+                clearTimeout(timeoutId);
                 if (ipRes.ok) {
                   const ipData = await ipRes.json();
                   if (ipData.latitude && ipData.longitude) {
@@ -286,7 +301,7 @@ export default function App() {
                   }
                 }
               } catch (err) {
-                console.warn('IP Geolocation pull fallback skipped:', err);
+                // Silently handle IP fallback
               }
             };
 
@@ -297,7 +312,6 @@ export default function App() {
                   await reportPullResult(pos.coords.latitude, pos.coords.longitude);
                 },
                 async (err) => {
-                  console.warn('Requested high-accuracy geolocation pull skipped, trying IP fallback:', err);
                   await runIpPullFallback();
                 },
                 { enableHighAccuracy: true, timeout: 10000 }
@@ -309,7 +323,7 @@ export default function App() {
           }
         }
       } catch (err) {
-        console.warn('Live location pull check skipped:', err);
+        // Silently handle background pull check error
       }
     };
 
@@ -368,7 +382,7 @@ export default function App() {
           parseAndSet(wClaimRes, setWarrantyClaims)
         ]);
       } catch (err) {
-        console.warn('Background refresh deferred:', err);
+        // Silently defer background refresh on transient server network issues
       }
     };
     
@@ -897,44 +911,59 @@ export default function App() {
 
   if (locationBlocked) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-2xl font-sans" id="location-blocked-overlay">
+      <div 
+        className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-2xl font-sans" 
+        id="location-blocked-overlay"
+      >
         <motion.div 
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           className="bg-white border border-slate-200 rounded-[32px] p-8 max-w-md w-full shadow-2xl text-center space-y-6 animate-fade-in"
           id="location-blocked-card"
         >
-          <div className="mx-auto h-20 w-20 bg-rose-50 rounded-full border border-rose-100 flex items-center justify-center relative">
-            <span className="absolute inset-0 rounded-full bg-rose-400/20 animate-ping"></span>
-            <Compass className={`h-10 w-10 text-rose-500 ${checkingLocation ? 'animate-spin' : ''}`} style={{ animationDuration: checkingLocation ? '1s' : '6s' }} />
+          {/* Animated Map / Radar Circle */}
+          <div className="mx-auto h-20 w-20 bg-rose-50 rounded-full border border-rose-100 flex items-center justify-center relative" id="location-radar-container">
+            <span className="absolute inset-0 rounded-full bg-rose-400/20 animate-ping" id="location-radar-ping"></span>
+            <Compass className={`h-10 w-10 text-rose-500 ${checkingLocation ? 'animate-spin' : ''}`} style={{ animationDuration: checkingLocation ? '1s' : '6s' }} id="location-radar-icon" />
           </div>
 
           <div className="space-y-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-50 text-rose-600 border border-rose-100 font-mono">
+            <span 
+              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-50 text-rose-600 border border-rose-100 font-mono"
+              id="location-badge"
+            >
               ⚠️ Location Off
             </span>
-            <h2 className="text-xl font-black text-slate-900 tracking-tight">Device Location Required</h2>
-            <p className="text-xs text-slate-500 leading-relaxed font-medium">
+            <h2 className="text-xl font-black text-slate-900 tracking-tight" id="location-title">
+              Device Location Required
+            </h2>
+            <p className="text-xs text-slate-500 leading-relaxed font-medium" id="location-description">
               To secure the Senzo Warehouse dispatch flow and comply with physical auditing procedures, your terminal must have physical location services enabled.
             </p>
           </div>
 
+          {/* Dynamic Error Status Message */}
           {locationCheckError && (
             <div className="p-3.5 bg-rose-50 border border-rose-100 rounded-2xl text-[11px] text-rose-700 font-bold text-left space-y-1 animate-pulse" id="location-error-msg">
-              <p className="flex items-center gap-1.5 font-extrabold uppercase text-[10px] tracking-wide text-rose-800">🚨 Location Status Check Failed</p>
+              <p className="flex items-center gap-1.5 font-extrabold uppercase text-[10px] tracking-wide text-rose-800">
+                🚨 Location Status Check Failed
+              </p>
               <p className="font-medium leading-normal">{locationCheckError}</p>
             </div>
           )}
 
-          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl text-left text-[11px] text-slate-600 space-y-2">
+          {/* Prompt/Instructions */}
+          <div className="bg-slate-50 border border-slate-150 p-4 rounded-2xl text-left text-[11px] text-slate-600 space-y-2" id="location-instructions">
             <p className="font-bold text-slate-800">Please complete the following steps:</p>
             <ol className="list-decimal pl-4 space-y-1 font-medium">
               <li>Enable location permissions for this app in your browser settings.</li>
               <li>Make sure your system/device GPS location services are turned ON.</li>
+              <li>Wait a moment for the system to auto-detect, or click verify below.</li>
             </ol>
           </div>
 
-          <div className="flex flex-col gap-2.5 pt-2">
+          {/* Action Buttons */}
+          <div className="flex flex-col gap-2.5 pt-2" id="location-actions">
             <button
               onClick={() => {
                 if (checkingLocation) return;
@@ -947,7 +976,8 @@ export default function App() {
                       setCheckingLocation(false);
                       setLocationBlocked(false);
                       setLocationCheckError(null);
-                      // Report verified coordinates
+                      
+                      // Report verified location
                       fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -966,9 +996,9 @@ export default function App() {
                       } else if (err.code === err.POSITION_UNAVAILABLE) {
                         setLocationCheckError('Position Unavailable: GPS services are still switched off on this device.');
                       } else if (err.code === err.TIMEOUT) {
-                        setLocationCheckError('Timeout: Request timed out. Ensure GPS is enabled.');
+                        setLocationCheckError('Timeout: Request timed out. Ensure you are outdoors or near a window for better GPS reception.');
                       } else {
-                        setLocationCheckError('Verification Failed: Physical location services are still turned off.');
+                        setLocationCheckError('Verification Failed: Physical location services are still turned off on your device.');
                       }
                     },
                     { enableHighAccuracy: true, timeout: 6000 }
@@ -976,11 +1006,12 @@ export default function App() {
                 } else {
                   setCheckingLocation(false);
                   setLocationBlocked(true);
-                  setLocationCheckError('System Error: Geolocation is not supported.');
+                  setLocationCheckError('System Error: Geolocation is not supported by this browser.');
                 }
               }}
               disabled={checkingLocation}
               className={`w-full py-3 ${checkingLocation ? 'bg-slate-400 cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800 cursor-pointer'} text-white font-black text-xs rounded-2xl shadow-md transition-all active:scale-98 flex items-center justify-center gap-2`}
+              id="location-retry-btn"
             >
               <RefreshCw className={`h-4 w-4 ${checkingLocation ? 'animate-spin' : ''}`} style={{ animationDuration: checkingLocation ? '1s' : '3s' }} />
               <span>{checkingLocation ? 'Checking Device GPS...' : 'Check Location Status'}</span>
@@ -988,7 +1019,8 @@ export default function App() {
 
             <button
               onClick={handleLogout}
-              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold text-xs rounded-2xl cursor-pointer"
+              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold text-xs rounded-2xl cursor-pointer transition-colors"
+              id="location-logout-btn"
             >
               Exit Terminal Session
             </button>
@@ -1799,11 +1831,134 @@ export default function App() {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="terminal-layout">
         <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
-            <div className="flex items-center gap-3">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
+            <div 
+              onClick={() => setSalespersonTab('b2b')} 
+              className="flex items-center gap-3 cursor-pointer hover:opacity-85 transition-opacity"
+              title="Go to Home Dashboard"
+              id="salesperson-logo-home"
+            >
               <SenzoLogo layout="compact" />
               <div className="h-4 w-[1px] bg-slate-200 hidden sm:block"></div>
-              <p className="text-[10px] text-slate-500 font-mono hidden sm:block">Sales Desk</p>
+              <p className="text-[10px] text-slate-500 font-mono hidden sm:block">Salesman Terminal</p>
+            </div>
+
+            {/* Salesperson Switcher Tabs: B2B Dispatch Orders vs Direct Store Retail Sales */}
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
+              <button
+                onClick={() => setSalespersonTab('b2b')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  salespersonTab === 'b2b'
+                    ? 'bg-cyan-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                id="salesperson-b2b-tab"
+              >
+                <ShoppingCart className="h-3.5 w-3.5" />
+                <span>🛒 B2B / Dispatch Orders</span>
+              </button>
+              <button
+                onClick={() => setSalespersonTab('retail')}
+                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+                  salespersonTab === 'retail'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                id="salesperson-retail-tab"
+              >
+                <Store className="h-3.5 w-3.5" />
+                <span>🏪 Direct Store Retail Sales</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="flex flex-col items-end hidden sm:flex">
+                <span className="text-xs font-bold text-slate-800">{currentUser.name}</span>
+                <span className={`text-[9px] font-sans font-semibold px-2.5 py-0.5 rounded-full mt-0.5 ${roleDetails.color}`}>
+                  {roleDetails.text}
+                </span>
+              </div>
+              
+              <button
+                onClick={fetchAllData}
+                disabled={loading}
+                title="Refresh warehouse data"
+                className="p-2 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer transition-colors"
+                id="refresh-btn"
+              >
+                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin text-cyan-600' : ''}`} />
+              </button>
+
+              <button
+                onClick={handleLogout}
+                title="Deauthenticate terminal session"
+                className="p-2 text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-xl cursor-pointer transition-colors"
+                id="logout-btn"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        </header>
+
+        <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+          {salespersonTab === 'b2b' ? (
+            <SalesOrderTerminal 
+              products={products}
+              buyers={buyers}
+              batteryTypes={batteryTypes}
+              chargerTypes={chargerTypes}
+              currentUser={currentUser}
+              salesOrders={salesOrders}
+              onRefresh={fetchAllData}
+            />
+          ) : (
+            <AssemblyPipeline
+              products={products}
+              buyers={buyers}
+              scooterUnits={scooterUnits}
+              stockLogs={stockLogs}
+              currentUser={currentUser}
+              onRefresh={fetchAllData}
+              onSubmitAssembly={handleSubmitScooterUnit}
+              onAddBuyer={handleAddBuyer}
+              batterySales={batterySales}
+              batteryImports={batteryImports}
+              onSubmitBatterySale={handleDirectBatterySale}
+              onSubmitBatteryImport={handleDirectBatteryImport}
+              batterySeriesList={batteryTypes}
+              chargerSales={chargerSales}
+              chargerImports={chargerImports}
+              onSubmitChargerSale={handleDirectChargerSale}
+              onSubmitChargerImport={handleDirectChargerImport}
+              chargerTypeList={chargerTypes}
+              onReleaseChargerHold={handleReleaseChargerHold}
+              onFinalizeChargerHold={handleFinalizeChargerHold}
+            />
+          )}
+        </main>
+
+        <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">
+          ✨ Senzo Warehouse Manager — Salesman Terminal — {new Date().getFullYear()}
+        </footer>
+      </div>
+    );
+  }
+
+  if (currentUser.role === 'dispatcher') {
+    return (
+      <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="dispatcher-layout">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
+            <div 
+              onClick={() => setActiveTab('dashboard')} 
+              className="flex items-center gap-3 cursor-pointer hover:opacity-85 transition-opacity"
+              title="Go to Home / Dispatch Dashboard"
+              id="dispatcher-logo-home"
+            >
+              <SenzoLogo layout="compact" />
+              <div className="h-4 w-[1px] bg-slate-200 hidden sm:block"></div>
+              <p className="text-[10px] text-slate-500 font-mono hidden sm:block">Dispatch Control Terminal</p>
             </div>
 
             <div className="flex items-center gap-3">
@@ -1836,85 +1991,23 @@ export default function App() {
           </div>
         </header>
 
-        {/* Worker Switchable Tabs - Desktop and Phone Optimized */}
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-4 w-full">
-          <div className="grid grid-cols-2 gap-1 bg-slate-200/50 p-1.5 rounded-2xl border border-slate-200" id="worker-tab-navigation-sales">
-            <button
-              onClick={() => setWorkerTab('workspace')}
-              className={`py-3 text-xs font-extrabold tracking-wide rounded-xl font-sans uppercase flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                workerTab === 'workspace'
-                  ? 'bg-slate-900 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Shuffle className="h-4 w-4 text-emerald-500 shrink-0" />
-              <span>🛠️ Log stages</span>
-            </button>
-            <button
-              onClick={() => setWorkerTab('dashboard')}
-              className={`py-3 text-xs font-extrabold tracking-wide rounded-xl font-sans uppercase flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                workerTab === 'dashboard'
-                  ? 'bg-slate-900 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <LayoutDashboard className="h-4 w-4 text-cyan-500 shrink-0" />
-              <span>📊 Stats & History</span>
-            </button>
-          </div>
-        </div>
-
         <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
-          <AnimatePresence mode="wait">
-            {workerTab === 'workspace' ? (
-              <motion.div
-                key="workspace-sales"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.15 }}
-                className="space-y-8"
-              >
-                <AssemblyPipeline 
-                  products={products} 
-                  buyers={buyers}
-                  scooterUnits={scooterUnits} 
-                  stockLogs={stockLogs}
-                  currentUser={currentUser} 
-                  onRefresh={fetchAllData}
-                  onSubmitAssembly={handleSubmitScooterUnit}
-                  onAddBuyer={handleAddBuyer}
-                  batterySales={batterySales}
-                  batteryImports={batteryImports}
-                  onSubmitBatterySale={handleDirectBatterySale}
-                  onSubmitBatteryImport={handleDirectBatteryImport}
-                  batterySeriesList={batteryTypes}
-                  chargerSales={chargerSales}
-                  chargerImports={chargerImports}
-                  onSubmitChargerSale={handleDirectChargerSale}
-                  onSubmitChargerImport={handleDirectChargerImport}
-                  chargerTypeList={chargerTypes}
-                  onReleaseChargerHold={handleReleaseChargerHold}
-                  onFinalizeChargerHold={handleFinalizeChargerHold}
-                  onSelectDetailScooter={setSelectedDetailScooter}
-                />
-              </motion.div>
-            ) : (
-              <motion.div
-                key="dashboard-sales"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.15 }}
-              >
-                {renderSalespersonDashboard()}
-              </motion.div>
-            )}
-          </AnimatePresence>
+          <DispatchDashboard
+            salesOrders={salesOrders}
+            scooterUnits={scooterUnits}
+            batteryImports={batteryImports}
+            batterySales={batterySales}
+            chargerImports={chargerImports}
+            chargerSales={chargerSales}
+            products={products}
+            stockLogs={stockLogs}
+            currentUser={currentUser}
+            onRefresh={fetchAllData}
+          />
         </main>
 
         <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">
-          ✨ Senzo Warehouse Manager — Sales Terminal — {new Date().getFullYear()}
+          ✨ Senzo Warehouse Manager — Dispatch & Sales Terminal — {new Date().getFullYear()}
         </footer>
       </div>
     );
@@ -1924,206 +2017,69 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="terminal-layout">
       {/* 1. Header / Navigation bar */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm w-full max-w-full overflow-hidden">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-2 sm:gap-3 min-w-0 w-full">
           
-          {/* Brand Logo / Info */}
-          <div className="flex items-center gap-3">
+          {/* Brand Logo / Info as Home Button */}
+          <div 
+            onClick={() => setActiveTab('dashboard')} 
+            className="flex items-center gap-2 sm:gap-3 shrink-0 cursor-pointer hover:opacity-85 transition-opacity"
+            title="Go to Home Dashboard"
+            id="header-logo-home-btn"
+          >
             <SenzoLogo layout="compact" />
             <div className="h-4 w-[1px] bg-slate-200 hidden sm:block"></div>
             <p className="text-[10px] text-slate-500 font-mono hidden sm:block">Warehouse Manager v3.0</p>
           </div>
 
-          {/* Navigation Items */}
-          <nav className="hidden md:flex items-center gap-1">
-            <button
-              onClick={() => setActiveTab('dashboard')}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                activeTab === 'dashboard'
-                  ? 'bg-slate-900 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-              id="nav-overview-btn"
-            >
-              <LayoutDashboard className="h-4 w-4 text-cyan-600" />
-              <span>📊 Dashboard</span>
-            </button>
+          {/* Clean Single Search Option */}
+          <div className="flex-1 min-w-0 max-w-md mx-1 sm:mx-2">
             <button
               onClick={() => setActiveTab('search')}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                activeTab === 'search'
-                  ? 'bg-slate-900 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-              id="nav-search-btn"
+              className="w-full bg-slate-100 hover:bg-slate-150 border border-slate-200 hover:border-slate-300 transition-all rounded-2xl px-2.5 sm:px-3.5 py-2 flex items-center justify-between text-slate-500 text-xs font-medium cursor-pointer shadow-inner group min-w-0"
+              id="header-search-single-btn"
             >
-              <Search className="h-4 w-4 text-pink-500" />
-              <span>🔍 Search</span>
+              <div className="flex items-center gap-1.5 sm:gap-2 overflow-hidden min-w-0">
+                <Search className="h-4 w-4 text-pink-500 shrink-0 group-hover:scale-110 transition-transform" />
+                <span className="truncate text-slate-600 font-sans text-[11px] sm:text-xs font-semibold">
+                  Search chassis, buyer, model...
+                </span>
+              </div>
+              <span className="hidden sm:inline-block text-[10px] bg-white border border-slate-200 text-slate-400 font-mono px-2 py-0.5 rounded-lg shrink-0 ml-1">
+                ⌘K
+              </span>
             </button>
-            <button
-              onClick={() => setActiveTab('assembly')}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                activeTab === 'assembly'
-                  ? 'bg-slate-900 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-              id="nav-registry-btn"
-            >
-              <Shuffle className="h-4 w-4 text-emerald-600" />
-              <span>🛠️ Assemble & Sell</span>
-            </button>
-            {(currentUser.role === 'admin' || currentUser.role === 'manager') && (
-              <button
-                onClick={() => setActiveTab('stock')}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                  activeTab === 'stock'
-                    ? 'bg-slate-900 text-white shadow-md'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                }`}
-                id="nav-ledger-btn"
-              >
-                <ClipboardList className="h-4 w-4 text-blue-600" />
-                <span>📦 Purchase</span>
-              </button>
-            )}
-            <button
-              onClick={() => setActiveTab('catalog')}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                activeTab === 'catalog'
-                  ? 'bg-slate-900 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-              id="nav-blueprints-btn"
-            >
-              <BookOpen className="h-4 w-4 text-amber-600" />
-              <span>🎨 Models & Buyers</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('battery')}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                activeTab === 'battery'
-                  ? 'bg-slate-900 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-              id="nav-battery-btn"
-            >
-              <Battery className="h-4 w-4 text-emerald-500 fill-emerald-500" />
-              <span>🔋 Battery Sales</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('claims')}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                activeTab === 'claims'
-                  ? 'bg-slate-900 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-              id="nav-claims-btn"
-            >
-              <ShieldCheck className="h-4 w-4 text-cyan-600" />
-              <span>🛡️ Claims</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('challans')}
-              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                activeTab === 'challans'
-                  ? 'bg-slate-900 text-white shadow-md'
-                  : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-              }`}
-              id="nav-challans-btn"
-            >
-              <Truck className="h-4 w-4 text-cyan-400" />
-              <span>🚚 Challans</span>
-            </button>
-            {currentUser.role === 'admin' && (
-              <button
-                onClick={() => setActiveTab('settings')}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold tracking-wide transition-all cursor-pointer ${
-                  activeTab === 'settings'
-                    ? 'bg-slate-900 text-white shadow-md'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                }`}
-                id="nav-settings-btn"
-              >
-                <Settings className="h-4 w-4 text-purple-600" />
-                <span>⚙️ Settings</span>
-              </button>
-            )}
-          </nav>
+          </div>
 
-          {/* User Profile & Actions */}
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex flex-col items-end">
+          {/* User Profile & Three-Dots Menu */}
+          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+            <div className="hidden md:flex flex-col items-end">
               <span className="text-xs font-bold text-slate-800">{currentUser.name}</span>
               <span className={`text-[9px] font-sans font-semibold px-2.5 py-0.5 rounded-full mt-0.5 ${roleDetails.color}`}>
                 {roleDetails.text}
               </span>
             </div>
-            
-            <button
-              onClick={fetchAllData}
-              disabled={loading}
-              title="Refresh warehouse data"
-              className="p-2 text-slate-500 hover:text-slate-800 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer transition-colors"
-              id="refresh-btn"
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin text-cyan-600' : ''}`} />
-            </button>
 
+            {/* Three-Dot Options Button (⋮) - Single clean menu for Web & Phone */}
             <button
-              onClick={handleLogout}
-              title="Deauthenticate terminal session"
-              className="p-2 text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 rounded-xl cursor-pointer transition-colors"
-              id="logout-btn"
+              onClick={() => setShowMobileMoreMenu(!showMobileMoreMenu)}
+              title="Open Options & Navigation Menu"
+              className={`p-2 sm:p-2.5 rounded-2xl border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                showMobileMoreMenu 
+                  ? 'bg-slate-900 text-white border-slate-900 shadow-md ring-2 ring-slate-900/20' 
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700 border-slate-200 hover:border-slate-300'
+              }`}
+              id="three-dots-menu-btn"
             >
-              <LogOut className="h-4 w-4" />
+              <MoreHorizontal className="h-5 w-5 text-indigo-600" />
+              <span className="hidden sm:inline text-xs font-extrabold pr-0.5">Menu</span>
             </button>
           </div>
 
         </div>
       </header>
 
-      {/* 2. Mobile Tab Bar */}
-      <div className="md:hidden bg-white border-b border-slate-200 flex items-center justify-around py-2.5 px-3 relative z-40">
-        <button
-          onClick={() => { setActiveTab('dashboard'); setShowMobileMoreMenu(false); }}
-          className={`flex flex-col items-center gap-1 p-1 cursor-pointer transition-all active:scale-95 ${activeTab === 'dashboard' ? 'text-slate-900 font-bold scale-105' : 'text-slate-400'}`}
-        >
-          <LayoutDashboard className="h-4.5 w-4.5 text-cyan-600" />
-          <span className="text-[10px] font-sans font-bold">Dashboard</span>
-        </button>
-        <button
-          onClick={() => { setActiveTab('search'); setShowMobileMoreMenu(false); }}
-          className={`flex flex-col items-center gap-1 p-1 cursor-pointer transition-all active:scale-95 ${activeTab === 'search' ? 'text-slate-900 font-bold scale-105' : 'text-slate-400'}`}
-        >
-          <Search className="h-4.5 w-4.5 text-pink-500" />
-          <span className="text-[10px] font-sans font-bold">Search</span>
-        </button>
-        <button
-          onClick={() => { setActiveTab('assembly'); setShowMobileMoreMenu(false); }}
-          className={`flex flex-col items-center gap-1 p-1 cursor-pointer transition-all active:scale-95 ${activeTab === 'assembly' ? 'text-slate-900 font-bold scale-105' : 'text-slate-400'}`}
-        >
-          <Shuffle className="h-4.5 w-4.5 text-emerald-600" />
-          <span className="text-[10px] font-sans font-bold">Assemble</span>
-        </button>
-        {(currentUser.role === 'admin' || currentUser.role === 'manager') && (
-          <button
-            onClick={() => { setActiveTab('stock'); setShowMobileMoreMenu(false); }}
-            className={`flex flex-col items-center gap-1 p-1 cursor-pointer transition-all active:scale-95 ${activeTab === 'stock' ? 'text-slate-900 font-bold scale-105' : 'text-slate-400'}`}
-          >
-            <ClipboardList className="h-4.5 w-4.5 text-blue-600" />
-            <span className="text-[10px] font-sans font-bold">Purchase</span>
-          </button>
-        )}
-        <button
-          onClick={() => setShowMobileMoreMenu(!showMobileMoreMenu)}
-          className={`flex flex-col items-center gap-1 p-1 cursor-pointer transition-all active:scale-95 ${showMobileMoreMenu ? 'text-slate-900 font-bold' : 'text-slate-400'}`}
-        >
-          <MoreHorizontal className={`h-4.5 w-4.5 text-indigo-500 transition-transform ${showMobileMoreMenu ? 'rotate-90' : ''}`} />
-          <span className="text-[10px] font-sans font-bold">More</span>
-        </button>
-      </div>
-
-      {/* Elegant Mobile More Menu Overlay Drawer */}
+      {/* Clean Unified Three-Dots Popover / Menu Drawer (Web & Mobile) */}
       <AnimatePresence>
         {showMobileMoreMenu && (
           <>
@@ -2133,104 +2089,198 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setShowMobileMoreMenu(false)}
-              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 md:hidden"
+              className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50"
             />
-            {/* Slide-up bottom card */}
+
+            {/* Floating Navigation Card Menu */}
             <motion.div
-              initial={{ y: "100%", opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: "100%", opacity: 0 }}
-              transition={{ type: "spring", damping: 25, stiffness: 220 }}
-              className="fixed bottom-0 left-0 right-0 bg-white rounded-t-[32px] shadow-2xl z-50 border-t border-slate-100 p-6 md:hidden pb-10"
+              initial={{ opacity: 0, scale: 0.95, y: -20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: -20 }}
+              transition={{ type: "spring", damping: 25, stiffness: 280 }}
+              className="fixed top-16 right-4 sm:right-8 max-w-lg w-[calc(100vw-32px)] bg-white rounded-3xl shadow-2xl z-50 border border-slate-200 p-5 overflow-hidden"
             >
-              <div className="flex items-center justify-between mb-5 border-b border-slate-100 pb-3">
-                <div className="space-y-0.5">
-                  <h3 className="text-sm font-black text-slate-900">More Operations</h3>
-                  <p className="text-[11px] text-slate-500">Secondary management workflows</p>
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3 mb-4">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-indigo-50 rounded-xl text-indigo-600">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-slate-900">Operations & Workspace Options</h3>
+                    <p className="text-[10px] text-slate-400 font-medium">Select a module to manage</p>
+                  </div>
                 </div>
                 <button
                   onClick={() => setShowMobileMoreMenu(false)}
-                  className="p-2 bg-slate-100 rounded-full hover:bg-slate-200 text-slate-500 active:scale-90 transition-all cursor-pointer"
+                  className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-500 rounded-full transition-all cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3.5">
+              {/* Grid of Navigation Options */}
+              <div className="grid grid-cols-2 gap-2.5 max-h-[70vh] overflow-y-auto pr-1">
                 <button
-                  onClick={() => { setActiveTab('catalog'); setShowMobileMoreMenu(false); }}
-                  className={`flex flex-col items-start gap-2 p-4 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.97] ${
-                    activeTab === 'catalog' ? 'bg-amber-50/50 border-amber-300 text-amber-950' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50'
+                  onClick={() => { setActiveTab('dashboard'); setShowMobileMoreMenu(false); }}
+                  className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                    activeTab === 'dashboard' ? 'bg-cyan-50 border-cyan-300 text-cyan-950 font-bold shadow-sm' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-800'
                   }`}
                 >
-                  <BookOpen className="h-5 w-5 text-amber-600" />
+                  <LayoutDashboard className="h-4 w-4 text-cyan-600 shrink-0" />
                   <div>
-                    <p className="text-xs font-bold">🎨 Models</p>
-                    <p className="text-[9px] text-slate-500 mt-0.5">Scooters & buyers catalog</p>
+                    <p className="text-xs font-bold">📊 Dashboard</p>
+                    <p className="text-[9px] text-slate-400 font-medium">Stock overview & status</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('search'); setShowMobileMoreMenu(false); }}
+                  className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                    activeTab === 'search' ? 'bg-pink-50 border-pink-300 text-pink-950 font-bold shadow-sm' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-800'
+                  }`}
+                >
+                  <Search className="h-4 w-4 text-pink-500 shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold">🔍 Search Console</p>
+                    <p className="text-[9px] text-slate-400 font-medium">Look up chassis & buyers</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('assembly'); setShowMobileMoreMenu(false); }}
+                  className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                    activeTab === 'assembly' ? 'bg-emerald-50 border-emerald-300 text-emerald-950 font-bold shadow-sm' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-800'
+                  }`}
+                >
+                  <Shuffle className="h-4 w-4 text-emerald-600 shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold">🛠️ Assemble & Sell</p>
+                    <p className="text-[9px] text-slate-400 font-medium">Chassis assembly & sale</p>
+                  </div>
+                </button>
+
+                {(currentUser.role === 'admin' || currentUser.role === 'manager') && (
+                  <button
+                    onClick={() => { setActiveTab('stock'); setShowMobileMoreMenu(false); }}
+                    className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                      activeTab === 'stock' ? 'bg-blue-50 border-blue-300 text-blue-950 font-bold shadow-sm' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-800'
+                    }`}
+                  >
+                    <ClipboardList className="h-4 w-4 text-blue-600 shrink-0" />
+                    <div>
+                      <p className="text-xs font-bold">📦 Purchase & Import</p>
+                      <p className="text-[9px] text-slate-400 font-medium">Container logs & stock</p>
+                    </div>
+                  </button>
+                )}
+
+                <button
+                  onClick={() => { setActiveTab('catalog'); setShowMobileMoreMenu(false); }}
+                  className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                    activeTab === 'catalog' ? 'bg-amber-50 border-amber-300 text-amber-950 font-bold shadow-sm' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-800'
+                  }`}
+                >
+                  <BookOpen className="h-4 w-4 text-amber-600 shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold">🎨 Models & Buyers</p>
+                    <p className="text-[9px] text-slate-400 font-medium">Model colors & buyers</p>
                   </div>
                 </button>
 
                 <button
                   onClick={() => { setActiveTab('battery'); setShowMobileMoreMenu(false); }}
-                  className={`flex flex-col items-start gap-2 p-4 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.97] ${
-                    activeTab === 'battery' ? 'bg-emerald-50/50 border-emerald-300 text-emerald-950' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50'
+                  className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                    activeTab === 'battery' ? 'bg-emerald-50 border-emerald-300 text-emerald-950 font-bold shadow-sm' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-800'
                   }`}
                 >
-                  <Battery className="h-5 w-5 text-emerald-600" />
+                  <Battery className="h-4 w-4 text-emerald-500 fill-emerald-100 shrink-0" />
                   <div>
-                    <p className="text-xs font-bold">🔋 Batteries</p>
-                    <p className="text-[9px] text-slate-500 mt-0.5">Battery wholesale & logs</p>
+                    <p className="text-xs font-bold">🔋 Battery Sales</p>
+                    <p className="text-[9px] text-slate-400 font-medium">Wholesale & loose batteries</p>
                   </div>
                 </button>
 
                 <button
                   onClick={() => { setActiveTab('claims'); setShowMobileMoreMenu(false); }}
-                  className={`flex flex-col items-start gap-2 p-4 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.97] ${
-                    activeTab === 'claims' ? 'bg-cyan-50/50 border-cyan-300 text-cyan-950' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50'
+                  className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                    activeTab === 'claims' ? 'bg-cyan-50 border-cyan-300 text-cyan-950 font-bold shadow-sm' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-800'
                   }`}
                 >
-                  <ShieldCheck className="h-5 w-5 text-cyan-600" />
+                  <ShieldCheck className="h-4 w-4 text-cyan-600 shrink-0" />
                   <div>
                     <p className="text-xs font-bold">🛡️ Claims</p>
-                    <p className="text-[9px] text-slate-500 mt-0.5">Modular warranty claims</p>
+                    <p className="text-[9px] text-slate-400 font-medium">Warranty replacements</p>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => { setActiveTab('dispatch'); setShowMobileMoreMenu(false); }}
+                  className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                    activeTab === 'dispatch' ? 'bg-indigo-50 border-indigo-300 text-indigo-950 font-bold shadow-sm' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-800'
+                  }`}
+                >
+                  <Truck className="h-4 w-4 text-indigo-500 shrink-0" />
+                  <div>
+                    <p className="text-xs font-bold">🚚 Dispatch</p>
+                    <p className="text-[9px] text-slate-400 font-medium">Fulfillment & deliveries</p>
                   </div>
                 </button>
 
                 <button
                   onClick={() => { setActiveTab('challans'); setShowMobileMoreMenu(false); }}
-                  className={`flex flex-col items-start gap-2 p-4 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.97] ${
-                    activeTab === 'challans' ? 'bg-cyan-50/50 border-cyan-300 text-cyan-950' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50'
+                  className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                    activeTab === 'challans' ? 'bg-cyan-50 border-cyan-300 text-cyan-950 font-bold shadow-sm' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-800'
                   }`}
                 >
-                  <Truck className="h-5 w-5 text-cyan-400" />
+                  <ClipboardList className="h-4 w-4 text-cyan-500 shrink-0" />
                   <div>
-                    <p className="text-xs font-bold">🚚 Challans</p>
-                    <p className="text-[9px] text-slate-500 mt-0.5">Delivery Challans & Dispatch</p>
+                    <p className="text-xs font-bold">📄 Delivery Challans</p>
+                    <p className="text-[9px] text-slate-400 font-medium">Challan logs & tracking</p>
                   </div>
                 </button>
 
                 {currentUser.role === 'admin' && (
                   <button
                     onClick={() => { setActiveTab('settings'); setShowMobileMoreMenu(false); }}
-                    className={`flex flex-col items-start gap-2 p-4 rounded-2xl border text-left cursor-pointer transition-all active:scale-[0.97] ${
-                      activeTab === 'settings' ? 'bg-purple-50/50 border-purple-300 text-purple-950' : 'bg-slate-50/50 border-slate-200 hover:bg-slate-50'
+                    className={`p-3 rounded-2xl border text-left cursor-pointer transition-all flex items-center gap-3 ${
+                      activeTab === 'settings' ? 'bg-purple-50 border-purple-300 text-purple-950 font-bold shadow-sm' : 'bg-slate-50 hover:bg-slate-100 border-slate-200/80 text-slate-800'
                     }`}
                   >
-                    <Settings className="h-5 w-5 text-purple-600" />
+                    <Settings className="h-4 w-4 text-purple-600 shrink-0" />
                     <div>
                       <p className="text-xs font-bold">⚙️ Settings</p>
-                      <p className="text-[9px] text-slate-500 mt-0.5">System configurations</p>
+                      <p className="text-[9px] text-slate-400 font-medium">System configuration</p>
                     </div>
                   </button>
                 )}
+              </div>
+
+              {/* Utility actions inside three-dots menu */}
+              <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                <button
+                  onClick={() => { fetchAllData(); setShowMobileMoreMenu(false); }}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin text-cyan-600' : ''}`} />
+                  <span>Refresh Sync</span>
+                </button>
+
+                <button
+                  onClick={handleLogout}
+                  className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-xl flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span>Logout</span>
+                </button>
               </div>
             </motion.div>
           </>
         )}
       </AnimatePresence>
 
+
       {/* 3. Main Workspace Area */}
-      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
+      <main className="flex-1 max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 py-4 sm:py-6 pb-28 sm:pb-12 w-full">
         <AnimatePresence mode="wait">
           <motion.div
             key={activeTab}
@@ -2279,6 +2329,8 @@ export default function App() {
                 chargerImports={chargerImports}
                 batterySales={batterySales}
                 chargerSales={chargerSales}
+                salesOrders={salesOrders}
+                warrantyClaims={warrantyClaims}
                 currentUser={currentUser}
                 onRefresh={fetchAllData}
               />
@@ -2291,6 +2343,7 @@ export default function App() {
                 scooterUnits={scooterUnits} 
                 stockLogs={stockLogs}
                 currentUser={currentUser} 
+                salesOrders={salesOrders}
                 onRefresh={fetchAllData}
                 onSubmitAssembly={handleSubmitScooterUnit}
                 onAddBuyer={handleAddBuyer}
@@ -2403,10 +2456,37 @@ export default function App() {
 
             {activeTab === 'challans' && (
               <ChallanManager
+                products={products}
                 scooterUnits={scooterUnits}
                 batterySales={batterySales}
                 chargerSales={chargerSales}
                 buyers={buyers}
+                currentUser={currentUser}
+                salesOrders={salesOrders}
+                onRefresh={fetchAllData}
+              />
+            )}
+
+            {activeTab === 'dispatch' && (
+              <DispatchDashboard
+                salesOrders={salesOrders}
+                scooterUnits={scooterUnits}
+                batteryImports={batteryImports}
+                batterySales={batterySales}
+                chargerImports={chargerImports}
+                chargerSales={chargerSales}
+                products={products}
+                currentUser={currentUser}
+                onRefresh={fetchAllData}
+              />
+            )}
+
+            {activeTab === 'orders' && (
+              <SalesOrderTerminal
+                products={products}
+                buyers={buyers}
+                batteryTypes={batteryTypes}
+                chargerTypes={chargerTypes}
                 currentUser={currentUser}
                 onRefresh={fetchAllData}
               />
@@ -2430,9 +2510,67 @@ export default function App() {
       </main>
 
       {/* 4. Footer */}
-      <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">
+      <footer className="py-5 border-t border-slate-200 bg-white mt-8 mb-16 sm:mb-0 text-center text-slate-400 text-xs font-semibold">
         ✨ Senzo Warehouse Manager — Simple & Powerful — {new Date().getFullYear()}
       </footer>
+
+      {/* Smartphone Bottom Navigation Bar (Native Android Design) */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-xl border-t border-slate-200/90 shadow-[0_-4px_20px_rgba(0,0,0,0.08)] px-2 py-1.5 flex items-center justify-around sm:hidden">
+        <button
+          type="button"
+          onClick={() => { setActiveTab('dashboard'); setShowMobileMoreMenu(false); }}
+          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
+            activeTab === 'dashboard' && !showMobileMoreMenu ? 'text-cyan-600 bg-cyan-50/90 font-bold' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <LayoutDashboard className="h-5 w-5" />
+          <span className="text-[10px] mt-0.5 font-sans font-bold">Stats</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setActiveTab('search'); setShowMobileMoreMenu(false); }}
+          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
+            activeTab === 'search' && !showMobileMoreMenu ? 'text-pink-600 bg-pink-50/90 font-bold' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Search className="h-5 w-5" />
+          <span className="text-[10px] mt-0.5 font-sans font-bold">Search</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setActiveTab('assembly'); setShowMobileMoreMenu(false); }}
+          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
+            activeTab === 'assembly' && !showMobileMoreMenu ? 'text-emerald-600 bg-emerald-50/90 font-bold' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Shuffle className="h-5 w-5" />
+          <span className="text-[10px] mt-0.5 font-sans font-bold">Sell</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => { setActiveTab('dispatch'); setShowMobileMoreMenu(false); }}
+          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
+            activeTab === 'dispatch' && !showMobileMoreMenu ? 'text-indigo-600 bg-indigo-50/90 font-bold' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <Truck className="h-5 w-5" />
+          <span className="text-[10px] mt-0.5 font-sans font-bold">Dispatch</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowMobileMoreMenu(!showMobileMoreMenu)}
+          className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
+            showMobileMoreMenu ? 'text-slate-900 bg-slate-100 font-bold' : 'text-slate-500 hover:text-slate-800'
+          }`}
+        >
+          <MoreHorizontal className="h-5 w-5 text-indigo-600" />
+          <span className="text-[10px] mt-0.5 font-sans font-bold">Menu</span>
+        </button>
+      </nav>
 
       {/* Mobile Active Section Notification Alert popup */}
       <AnimatePresence>

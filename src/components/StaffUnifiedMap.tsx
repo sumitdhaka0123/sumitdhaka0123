@@ -27,7 +27,10 @@ export default function StaffUnifiedMap({ employees, focusedEmployeeId, onSelect
   useEffect(() => {
     const fetchIpCentering = async () => {
       try {
-        const ipRes = await fetch('https://ipapi.co/json/');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3000);
+        const ipRes = await fetch('https://ipapi.co/json/', { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (ipRes.ok) {
           const ipData = await ipRes.json();
           if (ipData.latitude && ipData.longitude) {
@@ -35,7 +38,7 @@ export default function StaffUnifiedMap({ employees, focusedEmployeeId, onSelect
           }
         }
       } catch (err) {
-        console.log('IP Map Centering fallback failed:', err);
+        // Silently skip IP centering fallback
       }
     };
 

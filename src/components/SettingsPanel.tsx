@@ -4,7 +4,7 @@ import {
   Users, UserPlus, Shield, ClipboardList, RefreshCw, Key, Trash2, Edit2, 
   Check, AlertCircle, Cloud, Activity, Search, Sparkles, User, Briefcase,
   Lock, Unlock, Printer, FileSpreadsheet, Calendar, ArrowDown, Filter, Clock,
-  Plus, X, Eye, EyeOff, MapPin, Compass, Navigation, Map
+  Plus, X, Eye, EyeOff, MapPin, Compass, Navigation, Map, Database
 } from 'lucide-react';
 import { SheetConfig, ScooterUnit, StockLog, BatterySale, BatteryImport, User as SessionUser } from '../types';
 import { formatUserMessage } from '../utils/errorHelper';
@@ -28,7 +28,7 @@ interface SettingsPanelProps {
 interface DBUser {
   id: string;
   username: string;
-  role: 'admin' | 'manufacturer' | 'salesperson' | 'manager';
+  role: 'admin' | 'manufacturer' | 'salesperson' | 'manager' | 'dispatcher';
   name: string;
   locked?: boolean;
   failedAttempts?: number;
@@ -140,7 +140,7 @@ export default function SettingsPanel({
   const [formName, setFormName] = useState('');
   const [formUsername, setFormUsername] = useState('');
   const [formPassword, setFormPassword] = useState('');
-  const [formRole, setFormRole] = useState<'admin' | 'manufacturer' | 'salesperson' | 'manager'>('manufacturer');
+  const [formRole, setFormRole] = useState<'admin' | 'manufacturer' | 'salesperson' | 'manager' | 'dispatcher'>('manufacturer');
   const [submittingForm, setSubmittingForm] = useState(false);
 
   // Delete User Confirmation Modal States
@@ -782,12 +782,12 @@ export default function SettingsPanel({
       </AnimatePresence>
 
       {/* Top Level Sub-Tab Control */}
-      <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-2xl border border-slate-200 w-full overflow-x-auto whitespace-nowrap hide-scrollbar mb-4 no-print animate-fade-in" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }} id="settings-subtabs">
+      <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200 w-full overflow-x-auto whitespace-nowrap hide-scrollbar mb-4 no-print animate-fade-in" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }} id="settings-subtabs">
         <button
           type="button"
           onClick={() => setSubTab('employees')}
-          className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-            subTab === 'employees' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+          className={`flex-shrink-0 min-h-[44px] px-4 py-2.5 text-xs font-extrabold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] ${
+            subTab === 'employees' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           <Users className="h-4 w-4" />
@@ -796,8 +796,8 @@ export default function SettingsPanel({
         <button
           type="button"
           onClick={() => setSubTab('audit')}
-          className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-            subTab === 'audit' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+          className={`flex-shrink-0 min-h-[44px] px-4 py-2.5 text-xs font-extrabold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] ${
+            subTab === 'audit' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           <ClipboardList className="h-4 w-4" />
@@ -806,8 +806,8 @@ export default function SettingsPanel({
         <button
           type="button"
           onClick={() => setSubTab('tracking')}
-          className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-            subTab === 'tracking' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+          className={`flex-shrink-0 min-h-[44px] px-4 py-2.5 text-xs font-extrabold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] ${
+            subTab === 'tracking' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           <Compass className="h-4.5 w-4.5" />
@@ -816,8 +816,8 @@ export default function SettingsPanel({
         <button
           type="button"
           onClick={() => setSubTab('trails')}
-          className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-            subTab === 'trails' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+          className={`flex-shrink-0 min-h-[44px] px-4 py-2.5 text-xs font-extrabold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] ${
+            subTab === 'trails' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           <MapPin className="h-4 w-4" />
@@ -826,8 +826,8 @@ export default function SettingsPanel({
         <button
           type="button"
           onClick={() => setSubTab('sheets')}
-          className={`flex-shrink-0 px-4 py-2 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-            subTab === 'sheets' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-500 hover:text-slate-800'
+          className={`flex-shrink-0 min-h-[44px] px-4 py-2.5 text-xs font-extrabold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] ${
+            subTab === 'sheets' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
           }`}
         >
           <Cloud className="h-4 w-4" />
@@ -1083,7 +1083,7 @@ export default function SettingsPanel({
                     </div>
 
                     {/* Live Geolocation Tracker Block */}
-                    {(selectedEmployee.role === 'manufacturer' || selectedEmployee.role === 'salesperson' || selectedEmployee.role === 'manager') && (
+                    {(selectedEmployee.role === 'manufacturer' || selectedEmployee.role === 'salesperson' || selectedEmployee.role === 'manager' || selectedEmployee.role === 'dispatcher') && (
                       <div className="border-t border-slate-200 pt-4 mt-4 space-y-3" id="employee-location-monitoring">
                         <div className="flex justify-between items-center">
                           <h4 className="text-[10px] font-extrabold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
@@ -1265,7 +1265,8 @@ export default function SettingsPanel({
                       className="w-full px-3 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 disabled:opacity-50"
                     >
                       <option value="manufacturer">Production (Assembly Logs, Standalone Units)</option>
-                      <option value="salesperson">Sales Team (Register Sales & Dispatches)</option>
+                      <option value="salesperson">Salesperson (Order Creation Terminal)</option>
+                      <option value="dispatcher">Dispatch Person (Order Fulfillment & Loading)</option>
                       <option value="manager">Manager (Full Operations except Settings)</option>
                       <option value="admin">Owner / Administrator (Full Clearance)</option>
                     </select>
@@ -2065,7 +2066,7 @@ export default function SettingsPanel({
           </div>
 
         </div>
-      ) : (
+      ) : subTab === 'employees' ? (
         /* STANDARD EMPLOYEES DIRECTORY SUBTAB */
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 animate-fade-in" id="employees-view">
           
@@ -2597,7 +2598,7 @@ export default function SettingsPanel({
           </div>
 
         </div>
-      )}
+      ) : null}
 
       {/* Delete Employee Custom Confirmation Modal */}
       <AnimatePresence>

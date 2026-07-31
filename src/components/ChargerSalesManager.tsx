@@ -226,39 +226,61 @@ export default function ChargerSalesManager({
 
   // Calculation of stock per charger type
   const typeStockMap = useMemo(() => {
-    const map: Record<string, { imported: number; soldStandalone: number; available: number }> = {};
+    const map: Record<string, { imported: number; soldStandalone: number; assignedToScooters: number; available: number }> = {};
+
+    // Helper to resolve key for any charger type string
+    const resolveTypeKey = (input: string) => {
+      if (!input) return null;
+      const clean = input.trim().toLowerCase();
+      for (const k of Object.keys(map)) {
+        const kClean = k.trim().toLowerCase();
+        if (kClean === clean || kClean.replace(/\s+/g, '') === clean.replace(/\s+/g, '')) return k;
+      }
+      return input.trim();
+    };
 
     // Initialize map with all customizable charger types
     chargerTypesList.forEach(t => {
-      map[t] = { imported: 0, soldStandalone: 0, available: 0 };
+      map[t] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
     });
 
     // 1. Process Imports
-    chargerImports.forEach(imp => {
-      const type = imp.chargerType;
+    (chargerImports || []).forEach(imp => {
+      const type = resolveTypeKey(imp.chargerType) || imp.chargerType || 'Standard Charger';
       if (!map[type]) {
-        map[type] = { imported: 0, soldStandalone: 0, available: 0 };
+        map[type] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
       }
-      map[type].imported += imp.quantity;
+      map[type].imported += (Number(imp.quantity) || (imp.serialNumbers ? imp.serialNumbers.length : 0) || 0);
     });
 
     // 2. Process Sales/Holds
-    chargerSales.forEach(sale => {
-      const type = sale.chargerType;
+    (chargerSales || []).forEach(sale => {
+      const type = resolveTypeKey(sale.chargerType) || sale.chargerType || 'Standard Charger';
       if (!map[type]) {
-        map[type] = { imported: 0, soldStandalone: 0, available: 0 };
+        map[type] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
       }
-      map[type].soldStandalone += sale.quantity;
+      map[type].soldStandalone += (Number(sale.quantity) || (sale.serialNumbers ? sale.serialNumbers.length : 0) || 0);
     });
 
-    // 3. Calculate Available Stock
+    // 3. Process Scooter Assignments
+    (scooterUnits || []).forEach(u => {
+      if (u.chargerIncluded || u.chargerType || u.chargerSerial) {
+        const type = resolveTypeKey(u.chargerType || 'Standard Charger') || (u.chargerType || 'Standard Charger');
+        if (!map[type]) {
+          map[type] = { imported: 0, soldStandalone: 0, assignedToScooters: 0, available: 0 };
+        }
+        map[type].assignedToScooters += 1;
+      }
+    });
+
+    // 4. Calculate Available Stock
     Object.keys(map).forEach(key => {
       const entry = map[key];
-      entry.available = Math.max(0, entry.imported - entry.soldStandalone);
+      entry.available = Math.max(0, entry.imported - entry.soldStandalone - entry.assignedToScooters);
     });
 
     return map;
-  }, [chargerImports, chargerSales, chargerTypesList]);
+  }, [chargerImports, chargerSales, chargerTypesList, scooterUnits]);
 
   // Auto-calculate quantity helper when start/end numbers are updated
   // Helper to calculate end serial from start serial and quantity

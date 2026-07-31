@@ -1,6 +1,10 @@
 {
-  "name": "Electric Scooty Warehouse Stock Manager",
+  "name": "Remix: Senzo Electric India ",
   "description": "A full-stack warehouse and assembly tracker for electric scooties, supporting dual-operator production lines, stock-in/out logging, and real-time Google Sheets integration.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "requestFramePermissions": [
+    "geolocation"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

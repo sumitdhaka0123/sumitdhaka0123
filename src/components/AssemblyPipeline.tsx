@@ -3,12 +3,13 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Layers, Settings, ShoppingBag, Battery, ShieldCheck, Search, Calendar, 
   ChevronRight, Plus, Trash, Trash2, PlusCircle, CheckCircle2, Sparkles, Filter, Info, AlertTriangle, Hammer, AlertCircle, User,
-  LayoutGrid, Kanban, ClipboardList, RefreshCw
+  LayoutGrid, Kanban, ClipboardList, RefreshCw, Store
 } from 'lucide-react';
-import { ScooterUnit, Product, Buyer, User as SessionUser, StockLog, BatterySale, BatteryImport, ChargerSale, ChargerImport } from '../types';
+import { ScooterUnit, Product, Buyer, User as SessionUser, StockLog, BatterySale, BatteryImport, ChargerSale, ChargerImport, SalesOrder } from '../types';
 import { formatUserMessage } from '../utils/errorHelper';
 import BatterySalesManager from './BatterySalesManager';
 import ChargerSalesManager from './ChargerSalesManager';
+import { SalesOrderTerminal } from './SalesOrderTerminal';
 import { SearchableDropdown } from './SearchableDropdown';
 import { inspectChallanNumber } from '../utils/challanUtils';
 import { ChallanStatusCard } from './ChallanStatusCard';
@@ -73,6 +74,7 @@ interface AssemblyPipelineProps {
     notes?: string;
   }) => Promise<boolean>;
   chargerTypeList?: string[];
+  salesOrders?: SalesOrder[];
   onReleaseChargerHold?: (id: string) => Promise<boolean>;
   onFinalizeChargerHold?: (id: string) => Promise<boolean>;
   onSelectDetailScooter?: (scooter: ScooterUnit) => void;
@@ -85,6 +87,7 @@ export default function AssemblyPipeline({
   scooterUnits, 
   stockLogs = [],
   currentUser, 
+  salesOrders = [],
   onRefresh, 
   onSubmitAssembly,
   onAddBuyer,
@@ -135,6 +138,9 @@ export default function AssemblyPipeline({
   const [activeStepTab, setActiveStepTab] = useState<'stage1' | 'stage3' | 'stage2'>(
     currentUser.role === 'salesperson' ? 'stage3' : 'stage1'
   );
+
+  // Sub-navigation inside Stage 3 (Sell) tab: B2B Sales Orders (Salesman Terminal) vs Retail POS
+  const [sellTabMode, setSellTabMode] = useState<'b2b' | 'retail'>('b2b');
 
 
   
@@ -319,48 +325,76 @@ export default function AssemblyPipeline({
   }, [scooterUnits, chargerSales, chargerImports]);
   
   const posBatteryStockMap = useMemo(() => {
-    const map: Record<string, { imported: number; sold: number; available: number }> = {};
+    const map: Record<string, { imported: number; sold: number; assignedToScooters: number; available: number }> = {};
     if (batteryImports && Array.isArray(batteryImports)) {
       batteryImports.forEach(imp => {
         const series = (imp.batterySeries || 'Standard Series').trim();
-        if (!map[series]) map[series] = { imported: 0, sold: 0, available: 0 };
+        if (!map[series]) map[series] = { imported: 0, sold: 0, assignedToScooters: 0, available: 0 };
         map[series].imported += (imp.quantity || (imp.serialNumbers ? imp.serialNumbers.length : 0) || 0);
       });
     }
     if (batterySales && Array.isArray(batterySales)) {
       batterySales.forEach(sale => {
         const series = (sale.batterySeries || 'Standard Series').trim();
-        if (!map[series]) map[series] = { imported: 0, sold: 0, available: 0 };
+        if (!map[series]) map[series] = { imported: 0, sold: 0, assignedToScooters: 0, available: 0 };
         map[series].sold += (sale.quantity || (sale.serialNumbers ? sale.serialNumbers.length : 0) || 0);
       });
     }
+    if (scooterUnits && Array.isArray(scooterUnits)) {
+      scooterUnits.forEach(u => {
+        if (u.batterySerials && u.batterySerials.length > 0) {
+          u.batterySerials.forEach(s => {
+            if (!s) return;
+            const sLower = s.toLowerCase();
+            let matchedKey: string | null = null;
+            for (const key of Object.keys(map)) {
+              if (sLower.includes(key.toLowerCase()) || key.toLowerCase().includes(sLower.substring(0, 3))) {
+                matchedKey = key;
+                break;
+              }
+            }
+            if (matchedKey && map[matchedKey]) {
+              map[matchedKey].assignedToScooters += 1;
+            }
+          });
+        }
+      });
+    }
     Object.keys(map).forEach(k => {
-      map[k].available = Math.max(0, map[k].imported - map[k].sold);
+      map[k].available = Math.max(0, map[k].imported - map[k].sold - map[k].assignedToScooters);
     });
     return map;
-  }, [batteryImports, batterySales]);
+  }, [batteryImports, batterySales, scooterUnits]);
 
   const posChargerStockMap = useMemo(() => {
-    const map: Record<string, { imported: number; sold: number; available: number }> = {};
+    const map: Record<string, { imported: number; sold: number; assignedToScooters: number; available: number }> = {};
     if (chargerImports && Array.isArray(chargerImports)) {
       chargerImports.forEach(imp => {
         const type = (imp.chargerType || 'Standard Charger').trim();
-        if (!map[type]) map[type] = { imported: 0, sold: 0, available: 0 };
+        if (!map[type]) map[type] = { imported: 0, sold: 0, assignedToScooters: 0, available: 0 };
         map[type].imported += (imp.quantity || (imp.serialNumbers ? imp.serialNumbers.length : 0) || 0);
       });
     }
     if (chargerSales && Array.isArray(chargerSales)) {
       chargerSales.forEach(sale => {
         const type = (sale.chargerType || 'Standard Charger').trim();
-        if (!map[type]) map[type] = { imported: 0, sold: 0, available: 0 };
+        if (!map[type]) map[type] = { imported: 0, sold: 0, assignedToScooters: 0, available: 0 };
         map[type].sold += (sale.quantity || (sale.serialNumbers ? sale.serialNumbers.length : 0) || 0);
       });
     }
+    if (scooterUnits && Array.isArray(scooterUnits)) {
+      scooterUnits.forEach(u => {
+        if (u.chargerIncluded || u.chargerType || u.chargerSerial) {
+          const type = (u.chargerType || 'Standard Charger').trim();
+          if (map[type]) map[type].assignedToScooters += 1;
+        }
+      });
+    }
     Object.keys(map).forEach(k => {
-      map[k].available = Math.max(0, map[k].imported - map[k].sold);
+      map[k].available = Math.max(0, map[k].imported - map[k].sold - map[k].assignedToScooters);
     });
     return map;
-  }, [chargerImports, chargerSales]);
+  }, [chargerImports, chargerSales, scooterUnits]);
 
   const [posHasPreassignedBatteries, setPosHasPreassignedBatteries] = useState(false);
   const [posEditPreassignedBatteries, setPosEditPreassignedBatteries] = useState(false);
@@ -2106,45 +2140,61 @@ export default function AssemblyPipeline({
                 exit={{ opacity: 0, x: 10 }}
                 className="space-y-4"
               >
-                {currentUser.role === 'manufacturer' ? (
-                  <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-xs text-emerald-800">
-                    <p><strong>Battery Allocation:</strong> Prep and record battery cells for physical scooter inventory located in the warehouse.</p>
+                {/* Sub-tab mode switcher: B2B Sales Orders (Salesman Terminal) vs Direct Retail Checkout */}
+                <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200" id="sell-stage-mode-switcher">
+                  <button
+                    type="button"
+                    onClick={() => setSellTabMode('b2b')}
+                    className={`py-2.5 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                      sellTabMode === 'b2b'
+                        ? 'bg-cyan-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                    }`}
+                    id="sell-b2b-tab-btn"
+                  >
+                    <ShoppingBag className="h-4 w-4" />
+                    <span>🛒 B2B / Wholesale Sales Orders</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSellTabMode('retail')}
+                    className={`py-2.5 px-3 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                      sellTabMode === 'retail'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                    }`}
+                    id="sell-retail-tab-btn"
+                  >
+                    <Store className="h-4 w-4" />
+                    <span>🏪 Instant Direct Retail Store Sale</span>
+                  </button>
+                </div>
+
+                {sellTabMode === 'b2b' ? (
+                  <div className="p-2 sm:p-4 bg-white border border-slate-200 rounded-3xl shadow-xs">
+                    <SalesOrderTerminal 
+                      products={products}
+                      buyers={buyers}
+                      batteryTypes={batterySeriesList}
+                      chargerTypes={chargerTypeList}
+                      currentUser={currentUser}
+                      salesOrders={salesOrders}
+                      onRefresh={onRefresh}
+                    />
                   </div>
                 ) : (
-                  <div className="p-4 bg-cyan-50 border border-cyan-100 rounded-2xl text-xs text-cyan-800">
-                    <p><strong>Stage 3 Checkout:</strong> Complete sales dispatch. Checks if selected chassis has pre-allocated batteries in warehouse. Displays for confirmation or allows dynamic editing.</p>
-                  </div>
-                )}
+                  <>
+                    {currentUser.role === 'manufacturer' ? (
+                      <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl text-xs text-emerald-800">
+                        <p><strong>Battery Allocation:</strong> Prep and record battery cells for physical scooter inventory located in the warehouse.</p>
+                      </div>
+                    ) : (
+                      <div className="p-4 bg-cyan-50 border border-cyan-100 rounded-2xl text-xs text-cyan-800">
+                        <p><strong>Stage 3 Checkout:</strong> Complete sales dispatch. Checks if selected chassis has pre-allocated batteries in warehouse. Displays for confirmation or allows dynamic editing.</p>
+                      </div>
+                    )}
 
                 <div>
-                  {/* Toggle between Retail POS and Wholesale Challan POS */}
-                  {currentUser.role !== 'manufacturer' && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-100 p-1.5 rounded-2xl mb-4" id="stage3-mode-selector">
-                      <button
-                        type="button"
-                        onClick={() => { setS3IsBulk(false); setS3Mode('single'); setPosIncludeScooter(true); }}
-                        className={`py-3 px-3 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center flex items-center justify-center gap-2 ${
-                          s3Mode === 'single' 
-                            ? 'bg-white text-slate-900 shadow-sm font-extrabold ring-1 ring-slate-200' 
-                            : 'text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        <span>🛍️ Retail POS</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setS3IsBulk(true); setS3Mode('bulk'); }}
-                        className={`py-3 px-3 text-xs font-bold rounded-xl font-sans uppercase transition-all cursor-pointer text-center flex items-center justify-center gap-2 ${
-                          s3Mode === 'bulk' 
-                            ? 'bg-slate-900 text-white shadow-sm font-extrabold' 
-                            : 'text-slate-500 hover:text-slate-800'
-                        }`}
-                      >
-                        <span>🚚 Challan POS (Wholesale Truck Dispatch)</span>
-                      </button>
-                    </div>
-                  )}
-
                   {s3Mode === 'single' && (
                     <form onSubmit={handleStage3Submit} className="space-y-4">
                       {/* 1. MODEL & CHASSIS SELECTION */}
@@ -3709,6 +3759,8 @@ export default function AssemblyPipeline({
                     </div>
                   )}
                 </div>
+                </>
+                )}
               </motion.div>
             )}
 

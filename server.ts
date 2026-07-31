@@ -3,11 +3,19 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
-import { DBState, User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim, AuditLog } from './src/types';
-import { MOCK_BUYERS, MOCK_STOCK_LOGS, MOCK_SCOOTER_UNITS, MOCK_BATTERY_IMPORTS, MOCK_BATTERY_SALES, MOCK_CHARGER_IMPORTS, MOCK_CHARGER_SALES, MOCK_WARRANTY_CLAIMS } from './src/utils/mockData';
+import { DBState, User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim, AuditLog, SalesOrder, SalesOrderItem } from './src/types';
 import { z } from 'zod';
+import * as crypto from 'crypto';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDoc, getDocs, collection, writeBatch } from 'firebase/firestore';
+import { getFirestore, doc, setDoc, getDoc, getDocs, collection, writeBatch } from 'firebase/firestore/lite';
+
+
+function hashPassword(password: string): string {
+  if (!password) return '';
+  // If it's already a 64-char hex string (sha256 hash), don't double hash it (for migration)
+  if (/^[a-f0-9]{64}$/.test(password)) return password;
+  return crypto.createHash('sha256').update(password).digest('hex');
+}
 
 const app = express();
 app.use(cors());
@@ -507,7 +515,7 @@ const DEFAULT_USERS: { [username: string]: User & { passwordHash: string } } = {
   admin: {
     id: 'u-admin',
     username: 'admin',
-    passwordHash: 'admin123', // Demo credentials
+    passwordHash: hashPassword('admin123'), // Demo credentials
     role: 'admin',
     name: 'Warehouse Owner / Admin',
     approved: true
@@ -515,7 +523,7 @@ const DEFAULT_USERS: { [username: string]: User & { passwordHash: string } } = {
   manager: {
     id: 'u-manager',
     username: 'manager',
-    passwordHash: 'manager123',
+    passwordHash: hashPassword('manager123'),
     role: 'manager',
     name: 'Warehouse Manager',
     approved: true
@@ -523,7 +531,7 @@ const DEFAULT_USERS: { [username: string]: User & { passwordHash: string } } = {
   manufacturer: {
     id: 'u-manu',
     username: 'manufacturer',
-    passwordHash: 'manu123',
+    passwordHash: hashPassword('manu123'),
     role: 'manufacturer',
     name: 'Production Specialist (MFR)',
     approved: true
@@ -531,9 +539,17 @@ const DEFAULT_USERS: { [username: string]: User & { passwordHash: string } } = {
   sales: {
     id: 'u-sales',
     username: 'sales',
-    passwordHash: 'sales123',
+    passwordHash: hashPassword('sales123'),
     role: 'salesperson',
     name: 'Sales Representative (POS)',
+    approved: true
+  },
+  dispatcher: {
+    id: 'u-dispatcher',
+    username: 'dispatcher',
+    passwordHash: hashPassword('dispatch123'),
+    role: 'dispatcher',
+    name: 'Dispatch Person',
     approved: true
   }
 };
@@ -595,7 +611,7 @@ function readDBFromFile(): DBState {
       return {
         users: mergedUsers,
         products: finalProducts,
-        buyers: parsed.buyers || DEFAULT_BUYERS,
+        buyers: parsed.buyers || [],
         scooterUnits: parsed.scooterUnits || legacyUnits || [],
         stockLogs: parsed.stockLogs || [],
         sheetConfig: { webhookUrl: sheetUrl, enabled: sheetEnabled },
@@ -606,7 +622,9 @@ function readDBFromFile(): DBState {
         batterySeriesList: parsed.batterySeriesList || ['Lithium 60V, 24AH', 'Lithium 60V, 30AH', 'Lithium 60V, 10AH', 'Lithium 48V, 30AH', 'Lithium 48V, 24AH', 'Lithium 60V, 28AH', 'Lithium 72V, 42AH', 'Lead Acid 12V'],
         chargerTypeList: parsed.chargerTypeList || ['Lithium Charger 54.6V/6A', 'Lithium Charger 69.4V/6A', 'Lithium Charger 67.2V/6A', 'Lead Acid Charger 48V', 'Lead Acid Charger 60V', 'Lead Acid Charger 72V'],
         auditLogs: parsed.auditLogs || [],
-        warrantyClaims: parsed.warrantyClaims || []
+        warrantyClaims: parsed.warrantyClaims || [],
+        salesOrders: parsed.salesOrders || [],
+        unassembledBoxedStock: parsed.unassembledBoxedStock !== undefined ? parsed.unassembledBoxedStock : 0
       };
     }
   } catch (err) {
@@ -619,7 +637,7 @@ function readDBFromFile(): DBState {
   return {
     users: DEFAULT_USERS,
     products: DEFAULT_PRODUCTS,
-    buyers: DEFAULT_BUYERS,
+    buyers: [],
     scooterUnits: [],
     stockLogs: [],
     sheetConfig: { webhookUrl: sheetUrl, enabled: sheetEnabled },
@@ -630,7 +648,9 @@ function readDBFromFile(): DBState {
     batterySeriesList: ['Lithium 60V, 24AH', 'Lithium 60V, 30AH', 'Lithium 60V, 10AH', 'Lithium 48V, 30AH', 'Lithium 48V, 24AH', 'Lithium 60V, 28AH', 'Lithium 72V, 42AH', 'Lead Acid 12V'],
     chargerTypeList: ['Lithium Charger 54.6V/6A', 'Lithium Charger 69.4V/6A', 'Lithium Charger 67.2V/6A', 'Lead Acid Charger 48V', 'Lead Acid Charger 60V', 'Lead Acid Charger 72V'],
     auditLogs: [],
-    warrantyClaims: []
+    warrantyClaims: [],
+    salesOrders: [],
+    unassembledBoxedStock: 0
   };
 }
 
@@ -807,6 +827,7 @@ async function syncToFirestore(state: DBState, oldState: DBState | null) {
       scooterUnits: [],
       stockLogs: [],
       sheetConfig: { webhookUrl: '', enabled: false },
+      driveConfig: { clientId: '', clientSecret: '', refreshToken: '', connectedEmail: '', autoSync: false, folderId: '' },
       batterySales: [],
       batteryImports: [],
       chargerSales: [],
@@ -914,6 +935,7 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
       scooterUnits: state.scooterUnits || [],
       stockLogs: state.stockLogs || [],
       sheetConfig: state.sheetConfig || { webhookUrl: '', enabled: false },
+      driveConfig: state.driveConfig || { clientId: '', clientSecret: '', refreshToken: '', connectedEmail: '', autoSync: false, folderId: '' },
       batterySales: state.batterySales || [],
       batteryImports: state.batteryImports || [],
       chargerSales: state.chargerSales || [],
@@ -931,6 +953,84 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
   }
 }
 
+// --- AUTOMATED 14-DAY ROLLING BACKUP SYSTEM ---
+const BACKUP_DIR = path.join(process.cwd(), 'backups');
+if (!fs.existsSync(BACKUP_DIR)) {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+}
+
+const RETENTION_DAYS = 14;
+const RETENTION_MS = RETENTION_DAYS * 24 * 60 * 60 * 1000;
+
+function cleanupOldBackups() {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) return;
+    const files = fs.readdirSync(BACKUP_DIR);
+    const now = Date.now();
+    let deletedCount = 0;
+    files.forEach(file => {
+      if (file.endsWith('.json')) {
+        const filePath = path.join(BACKUP_DIR, file);
+        const stats = fs.statSync(filePath);
+        if (now - stats.mtimeMs > RETENTION_MS) {
+          console.log(`[Backup Retention] Auto-purging backup snapshot older than 14 days: ${file}`);
+          fs.unlinkSync(filePath);
+          deletedCount++;
+        }
+      }
+    });
+    if (deletedCount > 0) {
+      console.log(`[Backup Retention] Successfully purged ${deletedCount} backup snapshot(s) older than 14 days.`);
+    }
+  } catch (err) {
+    console.error('Error during 14-day backup retention cleanup:', err);
+  }
+}
+
+function createBackupSnapshot(db: DBState, isAuto = false, customLabel = ''): { filename: string; filePath: string } {
+  try {
+    if (!fs.existsSync(BACKUP_DIR)) {
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    }
+    const now = new Date();
+    const dateStr = now.toISOString().replace(/[:.]/g, '-');
+    const labelTag = customLabel ? `-${customLabel.replace(/[^a-zA-Z0-9]/g, '_')}` : '';
+    const filename = `backup-${isAuto ? 'auto' : 'manual'}${labelTag}-${dateStr}.json`;
+    const filePath = path.join(BACKUP_DIR, filename);
+
+    const snapshotPayload = {
+      _backupMetadata: {
+        createdTimestamp: now.toISOString(),
+        isAuto,
+        customLabel: customLabel || (isAuto ? 'Automated Rolling Snapshot' : 'Manual User Snapshot'),
+        retentionDays: 14,
+        appVersion: '1.0.0'
+      },
+      ...db
+    };
+
+    fs.writeFileSync(filePath, JSON.stringify(snapshotPayload, null, 2), 'utf8');
+    cleanupOldBackups();
+    console.log(`[Backup System] Created snapshot: ${filename}`);
+
+    return { filename, filePath };
+  } catch (err) {
+    console.error('Error creating backup snapshot:', err);
+    return { filename: '', filePath: '' };
+  }
+}
+
+let lastAutoBackupTime = 0;
+
+function checkAutoBackupTrigger(db: DBState) {
+  const now = Date.now();
+  // Trigger auto snapshot at most once every 4 hours, or when no snapshot exists
+  if (now - lastAutoBackupTime > 4 * 60 * 60 * 1000) {
+    lastAutoBackupTime = now;
+    createBackupSnapshot(db, true, 'Auto-Daily-Snapshot');
+  }
+}
+
 function writeDB(state: DBState) {
   const oldState = globalDBState ? JSON.parse(JSON.stringify(globalDBState)) : null;
   globalDBState = state;
@@ -938,6 +1038,8 @@ function writeDB(state: DBState) {
     fs.writeFile(DB_FILE, JSON.stringify(state, null, 2), 'utf8', (err) => {
       if (err) console.error('Error writing backup database file:', err);
     });
+    // Trigger automated rolling 14-day backup check
+    checkAutoBackupTrigger(state);
   } catch (err) {
     console.error('Error starting backup database file write:', err);
   }
@@ -949,14 +1051,6 @@ function writeDB(state: DBState) {
 }
 
 function seedMockDataToDB(db: DBState) {
-  db.buyers = [...MOCK_BUYERS];
-  db.stockLogs = [...MOCK_STOCK_LOGS];
-  db.scooterUnits = [...MOCK_SCOOTER_UNITS];
-  db.batteryImports = [...MOCK_BATTERY_IMPORTS];
-  db.batterySales = [...MOCK_BATTERY_SALES];
-  db.chargerImports = [...MOCK_CHARGER_IMPORTS];
-  db.chargerSales = [...MOCK_CHARGER_SALES];
-  db.warrantyClaims = [...MOCK_WARRANTY_CLAIMS];
   writeDB(db);
 }
 
@@ -969,6 +1063,9 @@ function clearMockDataFromDB(db: DBState) {
   db.chargerImports = [];
   db.chargerSales = [];
   db.warrantyClaims = [];
+  db.salesOrders = [];
+  db.auditLogs = [];
+  db.unassembledBoxedStock = 0;
   writeDB(db);
 }
 
@@ -1199,7 +1296,7 @@ const loginSchema = z.object({
 const registerSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(100, "Username is too long").toLowerCase().trim().regex(ALPHANUMERIC_REGEX, "Username can only contain alphanumeric characters, underscores, and hyphens"),
   password: z.string().min(4, "Password must be at least 4 characters").max(100, "Password is too long"),
-  role: z.enum(['admin', 'manufacturer', 'salesperson', 'manager']),
+  role: z.enum(['admin', 'manufacturer', 'salesperson', 'manager', 'dispatcher']),
   name: z.string().min(1, "Name is required").max(150, "Name is too long").trim(),
   approved: z.boolean().optional(),
 });
@@ -1208,7 +1305,7 @@ const userUpdateSchema = z.object({
   id: z.string().min(1, "ID is required").max(100),
   username: z.string().min(3, "Username must be at least 3 characters").max(100, "Username is too long").toLowerCase().trim().regex(ALPHANUMERIC_REGEX, "Username can only contain alphanumeric characters, underscores, and hyphens"),
   password: z.string().min(4, "Password must be at least 4 characters").max(100, "Password is too long").optional().or(z.literal('')),
-  role: z.enum(['admin', 'manufacturer', 'salesperson', 'manager']),
+  role: z.enum(['admin', 'manufacturer', 'salesperson', 'manager', 'dispatcher']),
   name: z.string().min(1, "Name is required").max(150, "Name is too long").trim(),
   locked: z.boolean().optional(),
   operator: z.string().max(150).optional(),
@@ -1595,7 +1692,7 @@ const warrantyClaimSchema = z.object({
   saleDate: z.string().max(50).optional(),
   warrantyDurationMonths: z.coerce.number().int().nonnegative().optional(),
   issueDescription: z.string().min(1, "Issue description is required").max(2000),
-  status: z.enum(['pending_mfr', 'pending_parts', 'resolved', 'rejected', 'investigating']),
+  status: z.enum(['under_repair', 'repaired', 'exchanged', 'rejected', 'pending_mfr', 'pending_parts', 'resolved', 'investigating']),
   actionTaken: z.string().max(2000).optional(),
   newSerialNo: z.string().max(100).optional(),
   notes: z.string().max(2000).optional(),
@@ -1604,6 +1701,17 @@ const warrantyClaimSchema = z.object({
   replacementWarrantyMonths: z.coerce.number().int().nonnegative().optional(),
   isBattery: z.boolean().optional(),
   claimDate: z.string().max(50).optional(),
+  
+  // Extra fields sent by frontend
+  claimedComponent: z.string().max(200).optional(),
+  modelName: z.string().max(200).optional(),
+  collectedDate: z.string().max(100).optional(),
+  supplierName: z.string().max(200).optional(),
+  containerId: z.string().max(100).optional(),
+  sourceBillNo: z.string().max(100).optional(),
+  stockInNo: z.string().max(100).optional(),
+  supplierWarrantyStatus: z.string().max(200).optional(),
+  specialistNotes: z.string().max(2000).optional()
 });
 
 const bulkSeedSchema = z.object({
@@ -1764,7 +1872,7 @@ app.post('/api/auth/register', authIpRateLimiter, validateBody(registerSchema), 
     const newUser = {
       id: `u-${Date.now()}`,
       username: normalizedUsername,
-      passwordHash: password,
+      passwordHash: hashPassword(password),
       role: role as 'admin' | 'manufacturer' | 'salesperson' | 'manager',
       name,
       locked: false,
@@ -1814,8 +1922,12 @@ app.post('/api/users/update', validateBody(userUpdateSchema), (req, res) => {
     failedAttempts: locked === false ? 0 : oldUser.failedAttempts
   };
 
+  if (locked === false) {
+    recordAuthSuccess(newNormalizedUsername);
+  }
+
   if (password && password.trim() !== '') {
-    updatedUser.passwordHash = password;
+    updatedUser.passwordHash = hashPassword(password);
   }
 
   delete db.users[oldKey];
@@ -3290,6 +3402,109 @@ app.post('/api/scooter-units/release-hold', validateBody(scooterReleaseHoldSchem
   res.json({ success: true, scooterUnit: unit });
 });
 
+// Unassembled Boxed Stock (Kits) - Get & Update
+app.get('/api/unassembled-boxed-stock', (req, res) => {
+  const db = readDB();
+  res.json({ count: db.unassembledBoxedStock !== undefined ? db.unassembledBoxedStock : 0 });
+});
+
+app.post('/api/unassembled-boxed-stock', (req, res) => {
+  const { count, operator } = req.body;
+  if (count === undefined || typeof count !== 'number' || count < 0) {
+    return res.status(400).json({ error: 'Valid positive boxed stock count is required' });
+  }
+  const db = readDB();
+  db.unassembledBoxedStock = count;
+  addAuditLog(db, operator || 'Manager', operator || 'Manager', 'update_boxed_stock', `Updated Unassembled Boxed Stock count to ${count} units.`);
+  writeDB(db);
+  res.json({ success: true, count: db.unassembledBoxedStock });
+});
+
+// Scooter Units: Mark Incomplete / Unprepared (Manager Role)
+app.post('/api/scooter-units/mark-incomplete', (req, res) => {
+  const { chassisNo, missingParts, modelName, color, operator } = req.body;
+
+  if (!chassisNo || !chassisNo.trim()) {
+    return res.status(400).json({ error: 'Chassis Number is required.' });
+  }
+  if (!missingParts || !missingParts.trim()) {
+    return res.status(400).json({ error: 'Please specify exactly what part or thing is missing to complete the unit.' });
+  }
+
+  const db = readDB();
+  const cleanChassis = chassisNo.trim().toUpperCase();
+  const timestamp = new Date().toISOString();
+
+  let unit = db.scooterUnits.find(u => String(u.chassisNo || '').toUpperCase() === cleanChassis);
+
+  if (unit) {
+    unit.status = 'incomplete';
+    unit.missingParts = missingParts.trim();
+    unit.flaggedIncompleteBy = operator || 'Manager';
+    unit.flaggedIncompleteTimestamp = timestamp;
+    unit.lastUpdatedBy = operator || 'Manager';
+    unit.lastUpdatedTimestamp = timestamp;
+  } else {
+    // Create new incomplete unit entry if chassis not registered yet
+    unit = {
+      id: `scoot-${Date.now()}`,
+      modelName: modelName || 'SENZO ESSENATIAL DISC 12"/10"',
+      color: color || 'Black',
+      chassisNo: cleanChassis,
+      motorNo: `MT-${cleanChassis.replace(/[^0-9]/g, '') || Math.floor(10000 + Math.random() * 90000)}`,
+      controllerNo: `CT-${cleanChassis.replace(/[^0-9]/g, '') || Math.floor(10000 + Math.random() * 90000)}`,
+      tireSize: '12-inch',
+      batterySerials: [],
+      status: 'incomplete',
+      missingParts: missingParts.trim(),
+      flaggedIncompleteBy: operator || 'Manager',
+      flaggedIncompleteTimestamp: timestamp,
+      scooterWarrantyStatus: 'None',
+      batteryWarrantyStatus: 'None',
+      createdOperator: operator || 'Manager',
+      createdTimestamp: timestamp,
+      lastUpdatedTimestamp: timestamp
+    };
+    db.scooterUnits.push(unit);
+  }
+
+  addAuditLog(db, operator || 'Manager', operator || 'Manager', 'mark_unit_incomplete', `Moved Chassis ${cleanChassis} to Unprepared/Incomplete list. Missing parts specified: "${missingParts.trim()}".`);
+  writeDB(db);
+
+  res.json({ success: true, scooterUnit: unit });
+});
+
+// Scooter Units: Prepare It (Restock into "Built and Ready" stock)
+app.post('/api/scooter-units/prepare-incomplete', (req, res) => {
+  const { id, chassisNo, operator } = req.body;
+  const db = readDB();
+  
+  let unit: ScooterUnit | undefined;
+  if (id) {
+    unit = db.scooterUnits.find(u => u.id === id);
+  } else if (chassisNo) {
+    unit = db.scooterUnits.find(u => String(u.chassisNo || '').toUpperCase() === String(chassisNo).trim().toUpperCase());
+  }
+
+  if (!unit) {
+    return res.status(404).json({ error: 'Scooter unit not found.' });
+  }
+
+  const timestamp = new Date().toISOString();
+  const oldMissingParts = unit.missingParts || 'Unspecified parts';
+
+  unit.status = 'available'; // RESTOCKED into Built and Ready stock!
+  unit.preparedBy = operator || 'Manager';
+  unit.preparedTimestamp = timestamp;
+  unit.lastUpdatedBy = operator || 'Manager';
+  unit.lastUpdatedTimestamp = timestamp;
+
+  addAuditLog(db, operator || 'Manager', operator || 'Manager', 'prepare_incomplete_unit', `Confirmed missing parts added for Chassis ${unit.chassisNo} (Parts: "${oldMissingParts}"). Unit restocked into Built and Ready stock.`);
+  writeDB(db);
+
+  res.json({ success: true, scooterUnit: unit, message: `Chassis ${unit.chassisNo} has been completed and restocked into Built and Ready stock!` });
+});
+
 // Wholesale Package: Release Entire Package
 app.post('/api/wholesale-package/release', validateBody(wholesalePackageReleaseSchema), (req, res) => {
   const { customerName, scooterIds = [], batteryIds = [], chargerIds = [], operator } = req.body;
@@ -4215,7 +4430,16 @@ app.post('/api/warranty-claims', validateBody(warrantyClaimSchema), (req, res) =
     operatorName,
     operatorUsername,
     replacementWarrantyMonths,
-    isBattery
+    isBattery,
+    claimedComponent,
+    modelName,
+    collectedDate,
+    supplierName,
+    containerId,
+    sourceBillNo,
+    stockInNo,
+    supplierWarrantyStatus,
+    specialistNotes
   } = req.body;
 
   if (!originalSaleId || !originalSaleType || !originalSerialNo || !buyerName || !issueDescription || !status) {
@@ -4243,7 +4467,17 @@ app.post('/api/warranty-claims', validateBody(warrantyClaimSchema), (req, res) =
       operatorName,
       lastUpdatedTimestamp,
       replacementWarrantyMonths: replacementWarrantyMonths !== undefined ? Number(replacementWarrantyMonths) : oldClaim.replacementWarrantyMonths,
-      isBattery: isBattery !== undefined ? Boolean(isBattery) : oldClaim.isBattery
+      isBattery: isBattery !== undefined ? Boolean(isBattery) : oldClaim.isBattery,
+      specialistNotes: specialistNotes !== undefined ? specialistNotes : oldClaim.specialistNotes,
+      // preserve or update other extra fields if passed
+      claimedComponent: claimedComponent !== undefined ? claimedComponent : oldClaim.claimedComponent,
+      modelName: modelName !== undefined ? modelName : oldClaim.modelName,
+      collectedDate: collectedDate !== undefined ? collectedDate : oldClaim.collectedDate,
+      supplierName: supplierName !== undefined ? supplierName : oldClaim.supplierName,
+      containerId: containerId !== undefined ? containerId : oldClaim.containerId,
+      sourceBillNo: sourceBillNo !== undefined ? sourceBillNo : oldClaim.sourceBillNo,
+      stockInNo: stockInNo !== undefined ? stockInNo : oldClaim.stockInNo,
+      supplierWarrantyStatus: supplierWarrantyStatus !== undefined ? supplierWarrantyStatus : oldClaim.supplierWarrantyStatus
     };
 
     db.warrantyClaims[idx] = updatedClaim;
@@ -4291,7 +4525,16 @@ app.post('/api/warranty-claims', validateBody(warrantyClaimSchema), (req, res) =
       notes,
       lastUpdatedTimestamp,
       replacementWarrantyMonths: replacementWarrantyMonths !== undefined ? Number(replacementWarrantyMonths) : undefined,
-      isBattery: isBattery !== undefined ? Boolean(isBattery) : undefined
+      isBattery: isBattery !== undefined ? Boolean(isBattery) : undefined,
+      claimedComponent,
+      modelName,
+      collectedDate,
+      supplierName,
+      containerId,
+      sourceBillNo,
+      stockInNo,
+      supplierWarrantyStatus,
+      specialistNotes
     };
 
     db.warrantyClaims.push(newClaim);
@@ -4417,49 +4660,763 @@ app.post('/api/sheet-config/pull-all', validateBody(emptySchema), async (req, re
   }
 });
 
-// Vite Middleware & Static Serving setup
-async function startServer() {
-  // First, hydrate from cloud Firestore
-  const firestoreState = await hydrateFromFirestore();
-  if (firestoreState) {
-    globalDBState = firestoreState;
-    console.log('Successfully loaded single source of truth from Firestore database!');
-  } else {
-    globalDBState = readDBFromFile();
-    console.log('Firebase offline or uninitialized, loaded local database from file.');
+// --- Sales Orders Management Endpoints ---
+
+function syncSalesOrderBatteryAndChargerSales(db: DBState, order: SalesOrder, operator: string) {
+  if (!order || !order.items) return;
+  db.batterySales = db.batterySales || [];
+  db.chargerSales = db.chargerSales || [];
+
+  if (order.status === 'cancelled') {
+    db.batterySales = db.batterySales.filter(s => !s.id.startsWith(`batsale-so-${order.id}-`));
+    db.chargerSales = db.chargerSales.filter(s => !s.id.startsWith(`chgsale-so-${order.id}-`));
+    return;
   }
 
-  const dbOnBoot = readDB();
-  // Auto seed mock dataset if database lacks data
-  // Auto seed mock dataset disabled per user request to eliminate mock data
-  /*
-  if (!dbOnBoot.scooterUnits || dbOnBoot.scooterUnits.length === 0) {
-    console.log('Populating test mock dataset on boot...');
-    seedMockDataToDB(dbOnBoot);
-  }
-  */
-  const startupSheetUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL || dbOnBoot.sheetConfig.webhookUrl;
-  if (startupSheetUrl && (process.env.GOOGLE_SHEET_WEBHOOK_URL || dbOnBoot.sheetConfig.enabled)) {
-    console.log('Detected Google Sheets URL on startup. Hydrating database from Sheets...');
-    pullFromGoogleSheets(startupSheetUrl).then(data => {
-      if (data) {
-        const db = readDB();
-        if (data.products && Array.isArray(data.products) && data.products.length > 0) db.products = data.products;
-        if (data.buyers && Array.isArray(data.buyers) && data.buyers.length > 0) db.buyers = data.buyers;
-        if (data.scooterUnits && Array.isArray(data.scooterUnits) && data.scooterUnits.length > 0) db.scooterUnits = data.scooterUnits;
-        if (data.stockLogs && Array.isArray(data.stockLogs) && data.stockLogs.length > 0) db.stockLogs = data.stockLogs;
-        
-        db.sheetConfig.webhookUrl = startupSheetUrl;
-        db.sheetConfig.enabled = true;
-        writeDB(db);
-        console.log('Database successfully hydrated from Google Sheet on application restart.');
+  order.items.forEach(it => {
+    if (it.itemType === 'battery') {
+      const saleId = `batsale-so-${order.id}-${it.id}`;
+      const qty = Math.max(1, Number(it.quantity) || (it.serialNumbers?.length) || 1);
+      const series = (it.batteryType || it.productName || 'Standard Series').trim();
+      const startN = it.startNo || (it.serialNumbers?.[0]) || 'N/A';
+      const endN = it.endNo || (it.serialNumbers?.[it.serialNumbers.length - 1]) || 'N/A';
+
+      const existingIdx = db.batterySales.findIndex(s => s.id === saleId || (s.deliveryChallanNo && order.challanNo && s.deliveryChallanNo === order.challanNo && s.batterySeries === series));
+
+      if (existingIdx !== -1) {
+        db.batterySales[existingIdx].buyerName = order.buyerName;
+        db.batterySales[existingIdx].buyerContact = order.buyerContact;
+        db.batterySales[existingIdx].batterySeries = series;
+        db.batterySales[existingIdx].quantity = qty;
+        db.batterySales[existingIdx].startNo = startN;
+        db.batterySales[existingIdx].endNo = endN;
+        db.batterySales[existingIdx].billNo = order.salesBillNo || db.batterySales[existingIdx].billNo;
+        db.batterySales[existingIdx].deliveryChallanNo = order.challanNo || db.batterySales[existingIdx].deliveryChallanNo;
+        db.batterySales[existingIdx].status = order.status === 'pending' ? 'hold' : 'sold';
+        if (it.serialNumbers && it.serialNumbers.length > 0) {
+          db.batterySales[existingIdx].serialNumbers = it.serialNumbers;
+        }
       } else {
-        console.warn('Could not hydrate database on startup from Google Sheet.');
+        db.batterySales.push({
+          id: saleId,
+          buyerName: order.buyerName,
+          buyerContact: order.buyerContact,
+          batterySeries: series,
+          startNo: startN,
+          endNo: endN,
+          quantity: qty,
+          saleDate: order.dispatchedTimestamp || order.createdTimestamp || new Date().toISOString(),
+          operator: operator || order.salespersonName || 'system',
+          notes: `Sales Order #${order.orderNo} (${order.status})`,
+          isUnderWarranty: Boolean(it.isUnderWarranty),
+          warrantyDurationMonths: Number(it.warrantyMonths) || 12,
+          status: order.status === 'pending' ? 'hold' : 'sold',
+          billNo: order.salesBillNo,
+          deliveryChallanNo: order.challanNo,
+          serialNumbers: it.serialNumbers && it.serialNumbers.length > 0 ? it.serialNumbers : undefined
+        });
       }
-    }).catch(err => {
-      console.error('Error hydrating database from Sheets on boot:', err);
-    });
+    } else if (it.itemType === 'charger') {
+      const saleId = `chgsale-so-${order.id}-${it.id}`;
+      const qty = Math.max(1, Number(it.quantity) || (it.serialNumbers?.length) || 1);
+      const cType = (it.chargerType || it.productName || 'Standard Charger').trim();
+      const startN = it.startNo || (it.serialNumbers?.[0]) || 'N/A';
+      const endN = it.endNo || (it.serialNumbers?.[it.serialNumbers.length - 1]) || 'N/A';
+
+      const existingIdx = db.chargerSales.findIndex(s => s.id === saleId || (s.deliveryChallanNo && order.challanNo && s.chargerType === cType));
+
+      if (existingIdx !== -1) {
+        db.chargerSales[existingIdx].buyerName = order.buyerName;
+        db.chargerSales[existingIdx].buyerContact = order.buyerContact;
+        db.chargerSales[existingIdx].chargerType = cType;
+        db.chargerSales[existingIdx].quantity = qty;
+        db.chargerSales[existingIdx].startNo = startN;
+        db.chargerSales[existingIdx].endNo = endN;
+        db.chargerSales[existingIdx].billNo = order.salesBillNo || db.chargerSales[existingIdx].billNo;
+        db.chargerSales[existingIdx].deliveryChallanNo = order.challanNo || db.chargerSales[existingIdx].deliveryChallanNo;
+        db.chargerSales[existingIdx].status = order.status === 'pending' ? 'hold' : 'sold';
+        if (it.serialNumbers && it.serialNumbers.length > 0) {
+          db.chargerSales[existingIdx].serialNumbers = it.serialNumbers;
+        }
+      } else {
+        db.chargerSales.push({
+          id: saleId,
+          buyerName: order.buyerName,
+          buyerContact: order.buyerContact,
+          chargerType: cType,
+          startNo: startN,
+          endNo: endN,
+          quantity: qty,
+          saleDate: order.dispatchedTimestamp || order.createdTimestamp || new Date().toISOString(),
+          operator: operator || order.salespersonName || 'system',
+          notes: `Sales Order #${order.orderNo} (${order.status})`,
+          isUnderWarranty: Boolean(it.isUnderWarranty),
+          warrantyDurationMonths: Number(it.warrantyMonths) || 6,
+          status: order.status === 'pending' ? 'hold' : 'sold',
+          billNo: order.salesBillNo,
+          deliveryChallanNo: order.challanNo,
+          serialNumbers: it.serialNumbers && it.serialNumbers.length > 0 ? it.serialNumbers : undefined
+        });
+      }
+    }
+  });
+}
+
+// 1. Get all sales orders
+app.get('/api/sales-orders', (req, res) => {
+  const db = readDB();
+  res.json(db.salesOrders || []);
+});
+
+// 2. Create a new sales order (Salesman Place Order)
+app.post('/api/sales-orders', (req, res) => {
+  try {
+    const { buyerName, buyerContact, deliveryLocation, salespersonName, salespersonUsername, items, notes } = req.body;
+
+    if (!buyerName || !buyerName.trim()) {
+      return res.status(400).json({ error: 'Customer / Buyer Name is required to place an order.' });
+    }
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Order must contain at least one item.' });
+    }
+
+    const db = readDB();
+    db.salesOrders = db.salesOrders || [];
+
+    const orderNo = `ORD-${Date.now().toString().slice(-6)}`;
+    const newOrder: SalesOrder = {
+      id: `so-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+      orderNo,
+      buyerName: buyerName.trim(),
+      buyerContact: buyerContact ? buyerContact.trim() : '',
+      deliveryLocation: deliveryLocation ? deliveryLocation.trim() : '',
+      salespersonName: salespersonName || 'Sales Representative',
+      salespersonUsername: salespersonUsername || 'sales',
+      createdTimestamp: new Date().toISOString(),
+      items: items.map((it: any) => ({
+        id: `soi-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        itemType: it.itemType || 'scooter',
+        productName: it.productName,
+        color: it.color,
+        batteryType: it.batteryType,
+        chargerType: it.chargerType,
+        quantity: Math.max(1, Number(it.quantity) || 1),
+        chassisNumbers: it.chassisNumbers || [],
+        serialNumbers: it.serialNumbers || [],
+        startNo: it.startNo || '',
+        endNo: it.endNo || '',
+        isUnderWarranty: Boolean(it.isUnderWarranty),
+        warrantyMonths: Number(it.warrantyMonths) || 0
+      })),
+      status: 'pending',
+      notes: notes || ''
+    };
+
+    db.salesOrders.unshift(newOrder);
+
+    // Save buyer if not exists
+    db.buyers = db.buyers || [];
+    if (!db.buyers.some(b => b.name.toLowerCase() === newOrder.buyerName.toLowerCase())) {
+      db.buyers.push({
+        id: `buyer-${Date.now()}`,
+        name: newOrder.buyerName,
+        contact: newOrder.buyerContact,
+        address: newOrder.deliveryLocation
+      });
+    }
+
+    syncSalesOrderBatteryAndChargerSales(db, newOrder, salespersonUsername || 'sales');
+    addAuditLog(db, salespersonUsername || 'sales', salespersonName || 'Sales Representative', 'order_created', `Placed customer order #${orderNo} for ${newOrder.buyerName} (Delivery: ${newOrder.deliveryLocation || 'N/A'}).`);
+    writeDB(db);
+
+    res.status(201).json({ success: true, message: `Order #${orderNo} placed successfully! Forwarded to Dispatch Person.`, order: newOrder });
+  } catch (err: any) {
+    console.error('Error creating sales order:', err);
+    res.status(500).json({ error: 'Failed to create sales order.' });
   }
+});
+
+// 2b. Cancel Sales Order (Salesperson who created it or Owner/Admin)
+app.put('/api/sales-orders/:id/cancel', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { operator, operatorUsername, operatorRole } = req.body;
+
+    const db = readDB();
+    db.salesOrders = db.salesOrders || [];
+    const idx = db.salesOrders.findIndex(o => o.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Sales order not found.' });
+    }
+
+    const order = db.salesOrders[idx];
+
+    // Authorization check: Must be the salesperson who placed the order OR owner/admin
+    const isOwner = operatorRole === 'admin' || operatorRole === 'Admin';
+    const isCreator = order.salespersonUsername && operatorUsername && order.salespersonUsername.toLowerCase() === operatorUsername.toLowerCase();
+
+    if (!isOwner && !isCreator) {
+      return res.status(403).json({ error: 'Access Denied: Only the Salesperson who created this order or the Owner can cancel it.' });
+    }
+
+    if (order.status === 'cancelled') {
+      return res.status(400).json({ error: 'Order is already cancelled.' });
+    }
+
+    // Revert scooter stock if previously marked sold during dispatch
+    if (order.status === 'dispatched' || order.status === 'prepared' || order.status === 'challan_generated') {
+      order.items.forEach(it => {
+        if (it.itemType === 'scooter' && it.chassisNumbers) {
+          it.chassisNumbers.forEach(chassis => {
+            const uIdx = db.scooterUnits.findIndex(u => u.chassisNo === chassis);
+            if (uIdx !== -1) {
+              db.scooterUnits[uIdx].status = 'available';
+              db.scooterUnits[uIdx].buyerName = undefined;
+              db.scooterUnits[uIdx].buyerContact = undefined;
+              db.scooterUnits[uIdx].deliveryChallanNo = undefined;
+              db.scooterUnits[uIdx].salesBillNo = undefined;
+            }
+          });
+        }
+      });
+    }
+
+    order.status = 'cancelled';
+    order.cancelledBy = operator || operatorUsername || 'User';
+    order.cancelledTimestamp = new Date().toISOString();
+
+    syncSalesOrderBatteryAndChargerSales(db, order, operator || operatorUsername || 'User');
+    addAuditLog(db, operatorUsername || 'user', operator || 'User', 'order_cancelled', `Cancelled Sales Order #${order.orderNo} for ${order.buyerName}.`);
+    writeDB(db);
+
+    res.json({ success: true, message: `Order #${order.orderNo} has been cancelled successfully.`, order });
+  } catch (err: any) {
+    console.error('Error cancelling sales order:', err);
+    res.status(500).json({ error: 'Failed to cancel sales order.' });
+  }
+});
+
+// 3. Mark order as prepared (Dispatch Button 1)
+app.put('/api/sales-orders/:id/prepare', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { operator, operatorRole } = req.body;
+
+    const db = readDB();
+    db.salesOrders = db.salesOrders || [];
+    const idx = db.salesOrders.findIndex(o => o.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Sales order not found.' });
+    }
+
+    const order = db.salesOrders[idx];
+    order.status = 'prepared';
+    order.preparedBy = operator || 'dispatcher';
+    order.preparedTimestamp = new Date().toISOString();
+    
+    syncSalesOrderBatteryAndChargerSales(db, order, operator || 'dispatcher');
+
+    addAuditLog(db, operator || 'dispatcher', operator || 'Dispatch Person', 'order_prepared', `Marked order #${order.orderNo} as Prepared.`);
+    writeDB(db);
+
+    res.json({ success: true, message: `Order #${order.orderNo} marked as Prepared!`, order });
+  } catch (err: any) {
+    console.error('Error preparing sales order:', err);
+    res.status(500).json({ error: 'Failed to mark order as prepared.' });
+  }
+});
+
+// 4. Dispatch Order / Loading Complete (Dispatch Button 2)
+app.put('/api/sales-orders/:id/dispatch', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { operator, operatorRole, items } = req.body;
+
+    const db = readDB();
+    db.salesOrders = db.salesOrders || [];
+    const idx = db.salesOrders.findIndex(o => o.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Sales order not found.' });
+    }
+
+    const order = db.salesOrders[idx];
+
+    if (items && Array.isArray(items)) {
+      order.items = items;
+    }
+
+    // Process real-time stock deduction and assignment
+    order.items.forEach(it => {
+      if (it.itemType === 'scooter' && it.chassisNumbers && it.chassisNumbers.length > 0) {
+        it.chassisNumbers.forEach(chassis => {
+          const uIdx = db.scooterUnits.findIndex(u => u.chassisNo === chassis);
+          if (uIdx !== -1) {
+            db.scooterUnits[uIdx].status = 'sold';
+            db.scooterUnits[uIdx].buyerName = order.buyerName;
+            db.scooterUnits[uIdx].buyerContact = order.buyerContact;
+            db.scooterUnits[uIdx].saleDate = new Date().toISOString().split('T')[0];
+            db.scooterUnits[uIdx].lastUpdatedBy = operator;
+            db.scooterUnits[uIdx].lastUpdatedTimestamp = new Date().toISOString();
+          }
+        });
+      }
+    });
+
+    order.status = 'dispatched';
+    order.dispatchedBy = operator || 'dispatcher';
+    order.dispatchedTimestamp = new Date().toISOString();
+
+    syncSalesOrderBatteryAndChargerSales(db, order, operator || 'dispatcher');
+    addAuditLog(db, operator || 'dispatcher', operator || 'Dispatch Person', 'order_dispatched', `Completed loading & dispatched order #${order.orderNo} for ${order.buyerName}.`);
+    writeDB(db);
+
+    res.json({ success: true, message: `Order #${order.orderNo} successfully loaded & dispatched! Moved to Manager Challan section.`, order });
+  } catch (err: any) {
+    console.error('Error dispatching sales order:', err);
+    res.status(500).json({ error: 'Failed to dispatch sales order.' });
+  }
+});
+
+// 5. Manager Challan Verification & Finalize
+app.put('/api/sales-orders/:id/verify-challan', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { challanNo, salesBillNo, items, operator, operatorRole } = req.body;
+
+    // MANDATORY CHECK: Never sell without a Challan Number!
+    if (!challanNo || !challanNo.trim()) {
+      return res.status(400).json({ error: 'Challan Number is required. Never sell without a Challan Number!' });
+    }
+
+    const db = readDB();
+    db.salesOrders = db.salesOrders || [];
+    const idx = db.salesOrders.findIndex(o => o.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Sales order not found.' });
+    }
+
+    const order = db.salesOrders[idx];
+
+    // Check if locked and caller is NOT admin (Owner)
+    if (order.challanLocked && (operatorRole !== 'admin' && operatorRole !== 'Admin')) {
+      return res.status(403).json({ error: 'This document is locked by Manager verification. Only the Owner profile can unlock and edit this order.' });
+    }
+
+    // Verify Chassis Numbers against available stock
+    const updatedItems = items || order.items;
+    for (const it of updatedItems) {
+      if (it.itemType === 'scooter' && it.chassisNumbers && Array.isArray(it.chassisNumbers)) {
+        for (const chassis of it.chassisNumbers) {
+          if (!chassis) continue;
+          const u = db.scooterUnits.find(unit => unit.chassisNo === chassis);
+          if (!u) {
+            return res.status(400).json({ error: `Chassis Number "${chassis}" was not found in system stock!` });
+          }
+          // Must be available OR already assigned to this buyer / order
+          const isBelongsToThisOrder = u.deliveryChallanNo === challanNo.trim().toUpperCase() || u.buyerName === order.buyerName;
+          if (u.status !== 'available' && !isBelongsToThisOrder) {
+            return res.status(400).json({ error: `Chassis Number "${chassis}" is not available in current stock (Status: ${u.status})!` });
+          }
+        }
+      }
+    }
+
+    const cleanChallanNo = challanNo.trim().toUpperCase();
+    const cleanBillNo = salesBillNo ? salesBillNo.trim().toUpperCase() : '';
+
+    order.challanNo = cleanChallanNo;
+    order.salesBillNo = cleanBillNo;
+    order.items = updatedItems;
+    order.status = 'challan_generated';
+    order.challanFinishedBy = operator || 'manager';
+    order.challanFinishedTimestamp = new Date().toISOString();
+    order.challanLocked = true; // Lock document for Manager
+
+    // Assign deliveryChallanNo and salesBillNo to matching scooter units
+    updatedItems.forEach((it: SalesOrderItem) => {
+      if (it.itemType === 'scooter' && it.chassisNumbers) {
+        it.chassisNumbers.forEach(chassis => {
+          const uIdx = db.scooterUnits.findIndex(u => u.chassisNo === chassis);
+          if (uIdx !== -1) {
+            db.scooterUnits[uIdx].deliveryChallanNo = cleanChallanNo;
+            if (cleanBillNo) db.scooterUnits[uIdx].salesBillNo = cleanBillNo;
+            db.scooterUnits[uIdx].challanStatus = 'finished';
+            db.scooterUnits[uIdx].challanFinishedBy = operator;
+            db.scooterUnits[uIdx].challanFinishedTimestamp = new Date().toISOString();
+            db.scooterUnits[uIdx].status = 'sold';
+            db.scooterUnits[uIdx].buyerName = order.buyerName;
+            db.scooterUnits[uIdx].buyerContact = order.buyerContact;
+          }
+        });
+      }
+    });
+
+    syncSalesOrderBatteryAndChargerSales(db, order, operator || 'manager');
+    addAuditLog(db, operator || 'manager', operator || 'Manager', 'challan_verified', `Verified and finalized Challan #${cleanChallanNo} for Order #${order.orderNo}. Document is locked.`);
+    writeDB(db);
+
+    res.json({ success: true, message: `Challan #${cleanChallanNo} verified and saved successfully! Document is now locked.`, order });
+  } catch (err: any) {
+    console.error('Error verifying challan:', err);
+    res.status(500).json({ error: 'Failed to verify and save challan.' });
+  }
+});
+
+// 5b. Manager Full Edit & Save Endpoint (Allow editing quantities, items, chassis/serials, challanNo, billNo)
+app.put('/api/sales-orders/:id/manager-update', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { 
+      buyerName, 
+      buyerContact, 
+      deliveryLocation, 
+      notes, 
+      challanNo, 
+      salesBillNo, 
+      items, 
+      finalizeSale, 
+      operator, 
+      operatorRole 
+    } = req.body;
+
+    const db = readDB();
+    db.salesOrders = db.salesOrders || [];
+    const idx = db.salesOrders.findIndex(o => o.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Sales order not found.' });
+    }
+
+    const order = db.salesOrders[idx];
+
+    // Check lock
+    if (order.challanLocked && (operatorRole !== 'admin' && operatorRole !== 'Admin')) {
+      return res.status(403).json({ error: 'This order is locked after finalization. Only Owner profile can unlock and edit.' });
+    }
+
+    // Update details
+    if (buyerName !== undefined) order.buyerName = buyerName.trim();
+    if (buyerContact !== undefined) order.buyerContact = buyerContact.trim();
+    if (deliveryLocation !== undefined) order.deliveryLocation = deliveryLocation.trim();
+    if (notes !== undefined) order.notes = notes;
+
+    const cleanChallan = challanNo ? challanNo.trim().toUpperCase() : (order.challanNo || '');
+    const cleanBill = salesBillNo ? salesBillNo.trim().toUpperCase() : (order.salesBillNo || '');
+
+    if (cleanChallan) order.challanNo = cleanChallan;
+    if (cleanBill) order.salesBillNo = cleanBill;
+
+    // Find old chassis numbers to revert if they are removed
+    const oldChassis = [];
+    if (order.items) {
+      order.items.forEach(it => {
+        if (it.itemType === 'scooter' && it.chassisNumbers) {
+          oldChassis.push(...it.chassisNumbers.filter(Boolean));
+        }
+      });
+    }
+
+    // Update items if provided
+    if (items && Array.isArray(items)) {
+      order.items = items.map((it: any) => ({
+        id: it.id || `soi-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        itemType: it.itemType || 'scooter',
+        productName: it.productName,
+        color: it.color,
+        batteryType: it.batteryType,
+        chargerType: it.chargerType,
+        quantity: Math.max(1, Number(it.quantity) || 1),
+        chassisNumbers: Array.isArray(it.chassisNumbers) ? it.chassisNumbers.filter(Boolean) : [],
+        serialNumbers: Array.isArray(it.serialNumbers) ? it.serialNumbers.filter(Boolean) : [],
+        startNo: it.startNo || '',
+        endNo: it.endNo || '',
+        isUnderWarranty: Boolean(it.isUnderWarranty),
+        warrantyMonths: Number(it.warrantyMonths) || 0
+      }));
+    }
+
+    const newChassis = [];
+    if (order.items) {
+      order.items.forEach(it => {
+        if (it.itemType === 'scooter' && it.chassisNumbers) {
+          newChassis.push(...it.chassisNumbers.filter(Boolean));
+        }
+      });
+    }
+
+    // Revert chassis that are no longer in the order
+    const removedChassis = oldChassis.filter(c => !newChassis.includes(c));
+    removedChassis.forEach(chassis => {
+      const uIdx = db.scooterUnits.findIndex(u => u.chassisNo === chassis);
+      if (uIdx !== -1) {
+        db.scooterUnits[uIdx].status = 'available';
+        db.scooterUnits[uIdx].buyerName = '';
+        db.scooterUnits[uIdx].buyerContact = '';
+        db.scooterUnits[uIdx].deliveryChallanNo = undefined;
+        db.scooterUnits[uIdx].salesBillNo = undefined;
+        db.scooterUnits[uIdx].challanStatus = undefined;
+        db.scooterUnits[uIdx].saleDate = undefined;
+      }
+    });
+
+    // If finalization requested or both challan and bill numbers are being set
+    if (finalizeSale) {
+      if (!cleanChallan || !cleanChallan.trim()) {
+        return res.status(400).json({ error: 'Challan Number is required to finalize sale. Never sell without a Challan Number!' });
+      }
+      if (!cleanBill || !cleanBill.trim()) {
+        return res.status(400).json({ error: 'Bill / Invoice Number is required to finalize sale.' });
+      }
+
+      order.status = 'challan_generated';
+      order.challanFinishedBy = operator || 'manager';
+      order.challanFinishedTimestamp = new Date().toISOString();
+      order.challanLocked = true; // Lock document for Manager
+    }
+
+    // Sync underlying Scooter Units
+    order.items.forEach((it: SalesOrderItem) => {
+      if (it.itemType === 'scooter' && it.chassisNumbers) {
+        it.chassisNumbers.forEach(chassis => {
+          if (!chassis) return;
+          let uIdx = db.scooterUnits.findIndex(u => u.chassisNo === chassis);
+          if (uIdx !== -1) {
+            if (cleanChallan) db.scooterUnits[uIdx].deliveryChallanNo = cleanChallan;
+            if (cleanBill) db.scooterUnits[uIdx].salesBillNo = cleanBill;
+            db.scooterUnits[uIdx].buyerName = order.buyerName;
+            db.scooterUnits[uIdx].buyerContact = order.buyerContact;
+            if (order.status === 'challan_generated') {
+              db.scooterUnits[uIdx].status = 'sold';
+              db.scooterUnits[uIdx].challanStatus = 'finished';
+              db.scooterUnits[uIdx].challanFinishedBy = operator;
+              db.scooterUnits[uIdx].challanFinishedTimestamp = new Date().toISOString();
+            }
+          }
+        });
+      }
+    });
+
+    syncSalesOrderBatteryAndChargerSales(db, order, operator || 'manager');
+    addAuditLog(db, operator || 'manager', operator || 'Manager', 'order_manager_updated', `Manager updated Order #${order.orderNo} for ${order.buyerName} (Challan: ${cleanChallan || 'Pending'}, Bill: ${cleanBill || 'Pending'}, Status: ${order.status}).`);
+    writeDB(db);
+
+    res.json({ success: true, message: `Order #${order.orderNo} updated successfully!`, order });
+  } catch (err: any) {
+    console.error('Error updating sales order:', err);
+    res.status(500).json({ error: 'Failed to update sales order.' });
+  }
+});
+
+// 6. Owner Final Override Unlock
+app.put('/api/sales-orders/:id/unlock', (req, res) => {
+  try {
+    const { id } = req.params;
+    const { operator, operatorRole } = req.body;
+
+    if (operatorRole !== 'admin' && operatorRole !== 'Admin') {
+      return res.status(403).json({ error: 'Access Denied: Only the Owner profile has authority to unlock a finished Challan!' });
+    }
+
+    const db = readDB();
+    db.salesOrders = db.salesOrders || [];
+    const idx = db.salesOrders.findIndex(o => o.id === id);
+    if (idx === -1) {
+      return res.status(404).json({ error: 'Sales order not found.' });
+    }
+
+    const order = db.salesOrders[idx];
+    order.challanLocked = false;
+
+    addAuditLog(db, operator || 'admin', operator || 'Owner / Admin', 'challan_unlocked', `Owner unlocked finished Challan #${order.challanNo || order.orderNo} for editing.`);
+    writeDB(db);
+
+    res.json({ success: true, message: `Challan / Order #${order.orderNo} unlocked for editing by Owner.`, order });
+  } catch (err: any) {
+    console.error('Error unlocking sales order:', err);
+    res.status(500).json({ error: 'Failed to unlock sales order.' });
+  }
+});
+
+// --- 14-DAY AUTOMATED ROLLING BACKUP API ENDPOINTS ---
+
+// 1. GET /api/backups - List all available backups from the last 14 days
+app.get('/api/backups', (req, res) => {
+  try {
+    cleanupOldBackups();
+    if (!fs.existsSync(BACKUP_DIR)) {
+      return res.json([]);
+    }
+    const files = fs.readdirSync(BACKUP_DIR).filter(f => f.endsWith('.json'));
+    const list = files.map(file => {
+      const filePath = path.join(BACKUP_DIR, file);
+      const stats = fs.statSync(filePath);
+      let meta: any = {};
+      let counts: any = {};
+      try {
+        const content = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+        meta = content._backupMetadata || {};
+        counts = {
+          scooterUnits: content.scooterUnits?.length || 0,
+          salesOrders: content.salesOrders?.length || 0,
+          buyers: content.buyers?.length || 0,
+          products: content.products?.length || 0,
+          warrantyClaims: content.warrantyClaims?.length || 0,
+          batterySales: content.batterySales?.length || 0,
+          chargerSales: content.chargerSales?.length || 0,
+          stockLogs: content.stockLogs?.length || 0
+        };
+      } catch (e) {
+        console.warn(`Could not parse metadata for backup file ${file}`);
+      }
+
+      const createdTime = meta.createdTimestamp || stats.mtime.toISOString();
+      const ageDays = (Date.now() - new Date(createdTime).getTime()) / (1000 * 60 * 60 * 24);
+      const expiresDays = Math.max(0, 14 - ageDays);
+
+      return {
+        filename: file,
+        createdTimestamp: createdTime,
+        sizeBytes: stats.size,
+        isAuto: file.includes('-auto-') || meta.isAuto === true,
+        label: meta.customLabel || (file.includes('-auto-') ? 'Automated Daily Snapshot' : 'Manual User Snapshot'),
+        ageDays: Number(ageDays.toFixed(2)),
+        expiresDays: Number(expiresDays.toFixed(1)),
+        counts
+      };
+    });
+
+    // Sort newest first
+    list.sort((a, b) => new Date(b.createdTimestamp).getTime() - new Date(a.createdTimestamp).getTime());
+
+    res.json(list);
+  } catch (err: any) {
+    console.error('Error fetching backups list:', err);
+    res.status(500).json({ error: 'Failed to retrieve backups list.' });
+  }
+});
+
+
+// 2. POST /api/backups/create - Create an instant manual snapshot right now
+app.post('/api/backups/create', (req, res) => {
+  try {
+    const { operator, label } = req.body || {};
+    const db = readDB();
+    const result = createBackupSnapshot(db, false, label || 'Manual User Snapshot');
+    addAuditLog(db, operator || 'user', operator || 'User', 'backup_created', `Created manual system backup snapshot: ${result.filename}`);
+    writeDB(db);
+    
+    // Auto-sync to Drive if configured
+    if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
+      const backupPath = path.join(process.cwd(), 'backups', result.filename);
+    }
+    
+    res.json({ success: true, message: 'Backup snapshot created successfully!', filename: result.filename });
+  } catch (err: any) {
+
+    console.error('Error creating backup:', err);
+    res.status(500).json({ error: 'Failed to create backup snapshot.' });
+  }
+});
+
+// 3. POST /api/backups/restore - Restore data from a specific snapshot file on the server
+app.post('/api/backups/restore', (req, res) => {
+  try {
+    const { filename, operator } = req.body;
+    if (!filename) {
+      return res.status(400).json({ error: 'Filename is required for restore.' });
+    }
+
+    const safeFilename = path.basename(filename);
+    const filePath = path.join(BACKUP_DIR, safeFilename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Backup snapshot file not found on server.' });
+    }
+
+    const currentDb = readDB();
+    // Safety copy of current state before overwrite
+    createBackupSnapshot(currentDb, false, 'Pre-Restore-Safety-Copy');
+
+    const fileContent = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    delete fileContent._backupMetadata;
+
+    if (!fileContent.users || !fileContent.products) {
+      return res.status(400).json({ error: 'Invalid backup file structure.' });
+    }
+
+    globalDBState = fileContent as DBState;
+    addAuditLog(globalDBState, operator || 'admin', operator || 'Owner / Admin', 'backup_restored', `Restored entire system database from snapshot: ${safeFilename}`);
+    writeDB(globalDBState);
+
+    if (firebaseDb) {
+      seedFirestore(globalDBState).catch(e => console.error('Error re-seeding Firestore after restore:', e));
+    }
+
+    res.json({ success: true, message: `Database successfully restored from ${safeFilename}!` });
+  } catch (err: any) {
+    console.error('Error restoring backup:', err);
+    res.status(500).json({ error: 'Failed to restore database from backup.' });
+  }
+});
+
+// 4. GET /api/backups/download/:filename - Download offline backup file to local machine
+app.get('/api/backups/download/:filename', (req, res) => {
+  try {
+    const { filename } = req.params;
+    const safeFilename = path.basename(filename);
+    const filePath = path.join(BACKUP_DIR, safeFilename);
+
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send('Backup file not found.');
+    }
+
+    res.download(filePath, safeFilename);
+  } catch (err: any) {
+    console.error('Error downloading backup file:', err);
+    res.status(500).send('Error downloading backup file.');
+  }
+});
+
+// 5. POST /api/backups/upload-restore - Restore database from an uploaded JSON file payload
+app.post('/api/backups/upload-restore', (req, res) => {
+  try {
+    const { backupData, operator } = req.body;
+    if (!backupData || typeof backupData !== 'object') {
+      return res.status(400).json({ error: 'Invalid or missing backup JSON payload.' });
+    }
+
+    const cleanData = { ...backupData };
+    delete cleanData._backupMetadata;
+
+    if (!cleanData.users || !cleanData.products) {
+      return res.status(400).json({ error: 'Invalid backup file structure. Missing required collections.' });
+    }
+
+    const currentDb = readDB();
+    createBackupSnapshot(currentDb, false, 'Pre-Offline-Import-Safety');
+
+    globalDBState = cleanData as DBState;
+    addAuditLog(globalDBState, operator || 'admin', operator || 'Owner / Admin', 'backup_offline_imported', `Imported offline JSON file backup.`);
+    writeDB(globalDBState);
+
+    if (firebaseDb) {
+      seedFirestore(globalDBState).catch(e => console.error('Error re-seeding Firestore after offline import:', e));
+    }
+
+    res.json({ success: true, message: 'Offline JSON backup file successfully imported & database recovered!' });
+  } catch (err: any) {
+    console.error('Error uploading/restoring backup:', err);
+    res.status(500).json({ error: 'Failed to restore from offline backup payload.' });
+  }
+});
+
+// --- LOCAL BACKUP & DISASTER RECOVERY SYSTEM ---
+app.get('/api/gdrive/status', (req, res) => {
+  res.json({ connected: false, disabled: true });
+});
+
+// Vite Middleware & Static Serving setup
+async function startServer() {
+  // Initialize local DB cache synchronously first so server is instantly ready
+  globalDBState = readDBFromFile();
 
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -4486,6 +5443,45 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Warehouse Registry Server running on http://0.0.0.0:${PORT}`);
   });
+
+  // Hydrate from cloud Firestore asynchronously with 2-second timeout so it never delays server start
+  if (firebaseDb) {
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000));
+    Promise.race([hydrateFromFirestore(), timeoutPromise])
+      .then((firestoreState) => {
+        if (firestoreState) {
+          globalDBState = firestoreState;
+          console.log('Successfully loaded single source of truth from Firestore database!');
+        }
+      })
+      .catch((err) => {
+        console.warn('Firestore hydration failed or timed out, continuing with local cache:', err?.message || err);
+      });
+  }
+
+  const dbOnBoot = readDB();
+  const startupSheetUrl = process.env.GOOGLE_SHEET_WEBHOOK_URL || dbOnBoot.sheetConfig.webhookUrl;
+  if (startupSheetUrl && (process.env.GOOGLE_SHEET_WEBHOOK_URL || dbOnBoot.sheetConfig.enabled)) {
+    console.log('Detected Google Sheets URL on startup. Hydrating database from Sheets...');
+    pullFromGoogleSheets(startupSheetUrl).then(data => {
+      if (data) {
+        const db = readDB();
+        if (data.products && Array.isArray(data.products) && data.products.length > 0) db.products = data.products;
+        if (data.buyers && Array.isArray(data.buyers) && data.buyers.length > 0) db.buyers = data.buyers;
+        if (data.scooterUnits && Array.isArray(data.scooterUnits) && data.scooterUnits.length > 0) db.scooterUnits = data.scooterUnits;
+        if (data.stockLogs && Array.isArray(data.stockLogs) && data.stockLogs.length > 0) db.stockLogs = data.stockLogs;
+        
+        db.sheetConfig.webhookUrl = startupSheetUrl;
+        db.sheetConfig.enabled = true;
+        writeDB(db);
+        console.log('Database successfully hydrated from Google Sheet on application restart.');
+      } else {
+        console.warn('Could not hydrate database on startup from Google Sheet.');
+      }
+    }).catch(err => {
+      console.error('Error hydrating database from Sheets on boot:', err);
+    });
+  }
 }
 
 startServer();

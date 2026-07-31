@@ -50,6 +50,7 @@
         "controllerNo": { "type": "string" },
         "frontTireSize": { "type": "string", "enum": ["10-inch", "12-inch"] },
         "rearTireSize": { "type": "string", "enum": ["10-inch", "12-inch"] },
+        "brakeType": { "type": "string", "enum": ["Disk", "Drum"] },
         "tireSize": { "type": "string", "enum": ["10-inch", "12-inch"] },
         "customizationNotes": { "type": "string" },
         "buyerName": { "type": "string" },

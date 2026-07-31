@@ -6,7 +6,10 @@ import {
   ChargerSale, 
   Buyer, 
   User,
-  AuditLog 
+  AuditLog,
+  SalesOrder,
+  SalesOrderItem,
+  Product
 } from '../types';
 import { 
   Truck, 
@@ -37,15 +40,21 @@ import {
   PackagePlus,
   PackageMinus,
   CheckCheck,
-  Tag
+  Tag,
+  MapPin,
+  Minus,
+  Save,
+  Check
 } from 'lucide-react';
 
 interface ChallanManagerProps {
+  products: Product[];
   scooterUnits: ScooterUnit[];
   batterySales: BatterySale[];
   chargerSales: ChargerSale[];
   buyers: Buyer[];
   currentUser: User;
+  salesOrders?: SalesOrder[];
   onRefresh: () => void;
 }
 
@@ -64,29 +73,148 @@ export interface GroupedChallan {
   totalItemsCount: number;
 }
 
+export interface DisplayOrderChallan {
+  id: string;
+  isSalesOrder: boolean;
+  originalOrder?: SalesOrder;
+  orderNo?: string;
+  challanNo: string;
+  salesBillNo: string;
+  buyerName: string;
+  buyerContact: string;
+  deliveryLocation: string;
+  salespersonName: string;
+  date: string;
+  status: 'pending' | 'prepared' | 'dispatched' | 'challan_generated' | 'cancelled';
+  isFinished: boolean;
+  items: SalesOrderItem[];
+  groupedRepresentation: GroupedChallan;
+}
+
+function salesOrderToGroupedChallan(order: SalesOrder, allScooters: ScooterUnit[] = []): GroupedChallan {
+  const scooters: ScooterUnit[] = [];
+  const batteries: BatterySale[] = [];
+  const chargers: ChargerSale[] = [];
+  let totalItemsCount = 0;
+
+  (order.items || []).forEach(it => {
+    totalItemsCount += (it.quantity || 1);
+    if (it.itemType === 'scooter') {
+      const count = it.quantity || (it.chassisNumbers ? it.chassisNumbers.length : 1);
+      for (let i = 0; i < count; i++) {
+        const chassis = (it.chassisNumbers && it.chassisNumbers[i]) || `SLOT-${i+1}`;
+        const realScooter = allScooters.find(u => u.chassisNo === chassis);
+        scooters.push({
+          id: `${order.id}-scoot-${i}`,
+          modelName: it.productName || 'Scooter',
+          color: it.color || 'Standard',
+          chassisNo: chassis,
+          motorNo: realScooter?.motorNo || 'N/A',
+          controllerNo: realScooter?.controllerNo || 'N/A',
+          tireSize: realScooter?.tireSize || '10-inch',
+          batterySerials: realScooter?.batterySerials?.length ? realScooter.batterySerials : (it.serialNumbers || []),
+          status: order.status === 'challan_generated' ? 'sold' : 'hold',
+          scooterWarrantyStatus: realScooter?.scooterWarrantyStatus || 'None',
+          batteryWarrantyStatus: realScooter?.batteryWarrantyStatus || 'None',
+          buyerName: order.buyerName,
+          buyerContact: order.buyerContact,
+          deliveryChallanNo: order.challanNo,
+          salesBillNo: order.salesBillNo,
+          createdOperator: order.salespersonName || 'sales',
+          createdTimestamp: order.createdTimestamp,
+          lastUpdatedTimestamp: order.createdTimestamp
+        });
+      }
+    } else if (it.itemType === 'battery') {
+      batteries.push({
+        id: `${order.id}-bat`,
+        buyerName: order.buyerName,
+        buyerContact: order.buyerContact,
+        batterySeries: it.batteryType || it.productName || 'Battery',
+        startNo: it.startNo || '',
+        endNo: it.endNo || '',
+        quantity: it.quantity || 1,
+        saleDate: order.createdTimestamp.split('T')[0],
+        operator: order.salespersonName || 'sales',
+        deliveryChallanNo: order.challanNo,
+        billNo: order.salesBillNo,
+        serialNumbers: it.serialNumbers || [],
+        isUnderWarranty: it.isUnderWarranty,
+        warrantyDurationMonths: it.warrantyMonths
+      });
+    } else if (it.itemType === 'charger') {
+      chargers.push({
+        id: `${order.id}-chg`,
+        buyerName: order.buyerName,
+        buyerContact: order.buyerContact,
+        chargerType: it.chargerType || it.productName || 'Charger',
+        startNo: it.startNo || '',
+        endNo: it.endNo || '',
+        quantity: it.quantity || 1,
+        saleDate: order.createdTimestamp.split('T')[0],
+        operator: order.salespersonName || 'sales',
+        deliveryChallanNo: order.challanNo,
+        billNo: order.salesBillNo,
+        serialNumbers: it.serialNumbers || [],
+        isUnderWarranty: it.isUnderWarranty,
+        warrantyDurationMonths: it.warrantyMonths
+      });
+    }
+  });
+
+  return {
+    challanNo: order.challanNo || order.orderNo,
+    buyerName: order.buyerName,
+    buyerContact: order.buyerContact || '',
+    salesBillNo: order.salesBillNo || '',
+    status: order.status === 'challan_generated' ? 'finished' : 'pending',
+    finishedBy: order.challanFinishedBy,
+    finishedTimestamp: order.challanFinishedTimestamp,
+    date: order.createdTimestamp,
+    scooters,
+    batteries,
+    chargers,
+    totalItemsCount
+  };
+}
+
 export const ChallanManager: React.FC<ChallanManagerProps> = ({
   scooterUnits,
   batterySales,
   chargerSales,
   buyers,
   currentUser,
+  salesOrders = [],
+  products = [],
   onRefresh
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'finished'>('all');
   const [expandedChallans, setExpandedChallans] = useState<Record<string, boolean>>({});
 
-  // Editing modal state
-  const [editingChallan, setEditingChallan] = useState<GroupedChallan | null>(null);
-  const [editBuyerName, setEditBuyerName] = useState('');
-  const [editBuyerContact, setEditBuyerContact] = useState('');
-  const [editBillNo, setEditBillNo] = useState('');
-  const [editChallanNo, setEditChallanNo] = useState('');
+  // Submitting & status message
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   // Print modal state
   const [printChallan, setPrintChallan] = useState<GroupedChallan | null>(null);
+
+  // Manager Sales Order / Challan Editor Modal State
+  const [editingOrder, setEditingOrder] = useState<SalesOrder | null>(null);
+  const [soBuyerName, setSoBuyerName] = useState('');
+  const [soBuyerContact, setSoBuyerContact] = useState('');
+  const [soDeliveryLocation, setSoDeliveryLocation] = useState('');
+  const [soChallanNo, setSoChallanNo] = useState('');
+  const [soSalesBillNo, setSoSalesBillNo] = useState('');
+  const [soNotes, setSoNotes] = useState('');
+  const [soItems, setSoItems] = useState<SalesOrderItem[]>([]);
+
+  // Legacy Challan Edit Modal State
+  const [editingChallan, setEditingChallan] = useState<GroupedChallan | null>(null);
+  const [editBuyerName, setEditBuyerName] = useState('');
+  const [editBuyerContact, setEditBuyerContact] = useState('');
+  const [editBillNo, setEditBillNo] = useState('');
+  const [editChallanNo, setEditChallanNo] = useState('');
 
   // Delete confirmation modal state
   const [deleteConfirmationTarget, setDeleteConfirmationTarget] = useState<{
@@ -96,14 +224,6 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
     itemId?: string;
     itemLabel?: string;
   } | null>(null);
-
-  // Finish confirmation modal state
-  const [finishConfirmationTarget, setFinishConfirmationTarget] = useState<GroupedChallan | null>(null);
-
-  // Add Item Modal state
-  const [addItemModalTarget, setAddItemModalTarget] = useState<GroupedChallan | null>(null);
-  const [addItemType, setAddItemType] = useState<'scooter' | 'battery' | 'charger'>('scooter');
-  const [selectedItemId, setSelectedItemId] = useState<string>('');
 
   // Sub-tab Navigation state ('challans' or 'audit_trail')
   const [activeTab, setActiveTab] = useState<'challans' | 'audit_trail'>('challans');
@@ -138,14 +258,14 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
     return auditLogs.filter(log => {
       const action = (log.action || '').toLowerCase();
       const details = (log.details || '').toLowerCase();
-      const isChallanRelated = action.includes('challan') || details.includes('challan') || details.includes('delivery');
+      const isChallanRelated = action.includes('challan') || details.includes('challan') || details.includes('delivery') || details.includes('order');
       if (!isChallanRelated) return false;
 
       // Action type filter
       if (auditActionFilter === 'attach' && !action.includes('attach') && !details.includes('attached')) return false;
       if (auditActionFilter === 'remove' && !action.includes('remove') && !details.includes('removed')) return false;
       if (auditActionFilter === 'update' && !action.includes('update') && !details.includes('updated')) return false;
-      if (auditActionFilter === 'finish' && !action.includes('finish') && !details.includes('finished')) return false;
+      if (auditActionFilter === 'finish' && !action.includes('finish') && !details.includes('finished') && !details.includes('verified')) return false;
       if (auditActionFilter === 'delete' && !action.includes('delete') && !details.includes('deleted')) return false;
 
       // Search term
@@ -175,59 +295,10 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
     }).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   };
 
-  const availableScooterOptions = useMemo(() => {
-    return scooterUnits.filter(u => u.status === 'available' || !u.deliveryChallanNo || u.deliveryChallanNo.trim() === '');
-  }, [scooterUnits]);
-
-  const availableBatteryOptions = useMemo(() => {
-    return batterySales.filter(b => !b.deliveryChallanNo || b.deliveryChallanNo.trim() === '');
-  }, [batterySales]);
-
-  const availableChargerOptions = useMemo(() => {
-    return chargerSales.filter(c => !c.deliveryChallanNo || c.deliveryChallanNo.trim() === '');
-  }, [chargerSales]);
-
-  const handleAttachItem = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!addItemModalTarget || !selectedItemId) {
-      setStatusMessage({ type: 'error', text: 'Please select an item to attach.' });
-      return;
-    }
-    setIsSubmitting(true);
-    try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/challans/attach-item', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deliveryChallanNo: addItemModalTarget.challanNo,
-          itemType: addItemType,
-          itemId: selectedItemId,
-          operator: currentUser.name || currentUser.username || 'system',
-          userRole: currentUser.role,
-          buyerName: addItemModalTarget.buyerName,
-          buyerContact: addItemModalTarget.buyerContact,
-          salesBillNo: addItemModalTarget.salesBillNo
-        })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to attach item');
-      setStatusMessage({ type: 'success', text: data.message || `Item attached to Challan #${addItemModalTarget.challanNo} successfully!` });
-      setAddItemModalTarget(null);
-      setSelectedItemId('');
-      onRefresh();
-      fetchAuditLogs();
-    } catch (err: any) {
-      setStatusMessage({ type: 'error', text: err.message || 'Error attaching item to challan.' });
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Group items by Delivery Challan Number
-  const groupedChallans = useMemo(() => {
+  // Group standalone items by Delivery Challan Number
+  const legacyGroupedChallans = useMemo(() => {
     const map = new Map<string, GroupedChallan>();
 
-    // Helper to format/get or create challan group
     const getOrCreateGroup = (challanNo: string, defaultBuyer: string, defaultContact: string, defaultBillNo: string, defaultDate: string) => {
       const cleanNo = challanNo.trim().toUpperCase();
       if (!map.has(cleanNo)) {
@@ -247,7 +318,6 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
       return map.get(cleanNo)!;
     };
 
-    // 1. Scooter Units
     scooterUnits.forEach(u => {
       if (u.status === 'hold' || (u as any).saleStatus === 'hold') return;
       if (u.deliveryChallanNo && u.deliveryChallanNo.trim()) {
@@ -265,7 +335,6 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
       }
     });
 
-    // 2. Standalone Battery Sales
     (batterySales || []).forEach(b => {
       if ((b as any).status === 'hold' || (b as any).saleStatus === 'hold') return;
       if (b.deliveryChallanNo && b.deliveryChallanNo.trim()) {
@@ -283,7 +352,6 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
       }
     });
 
-    // 3. Standalone Charger Sales
     (chargerSales || []).forEach(c => {
       if ((c as any).status === 'hold' || (c as any).saleStatus === 'hold') return;
       if (c.deliveryChallanNo && c.deliveryChallanNo.trim()) {
@@ -301,205 +369,267 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
       }
     });
 
-    // Convert map to array sorted by date descending
-    return Array.from(map.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    return Array.from(map.values());
   }, [scooterUnits, batterySales, chargerSales]);
 
-  // Filtered list
-  const filteredChallans = useMemo(() => {
-    return groupedChallans.filter(g => {
-      // Status check
-      if (statusFilter === 'pending' && g.status !== 'pending') return false;
-      if (statusFilter === 'finished' && g.status !== 'finished') return false;
+  // Unified List of Dispatches & Challans
+  const displayOrdersAndChallans = useMemo<DisplayOrderChallan[]>(() => {
+    const list: DisplayOrderChallan[] = [];
 
-      // Search check
+    // 1. Convert Sales Orders
+    (salesOrders || []).forEach(order => {
+      if (order.status === 'cancelled') return;
+      const isFinished = order.status === 'challan_generated' || (!!order.challanNo && !!order.salesBillNo);
+      list.push({
+        id: order.id,
+        isSalesOrder: true,
+        originalOrder: order,
+        orderNo: order.orderNo,
+        challanNo: order.challanNo || order.orderNo,
+        salesBillNo: order.salesBillNo || '',
+        buyerName: order.buyerName,
+        buyerContact: order.buyerContact || '',
+        deliveryLocation: order.deliveryLocation || '',
+        salespersonName: order.salespersonName || '',
+        date: order.createdTimestamp,
+        status: order.status,
+        isFinished,
+        items: order.items || [],
+        groupedRepresentation: salesOrderToGroupedChallan(order, scooterUnits)
+      });
+    });
+
+    // 2. Add legacy grouped challans if not matching a sales order
+    legacyGroupedChallans.forEach(g => {
+      if (!list.some(item => item.challanNo.toUpperCase() === g.challanNo.toUpperCase())) {
+        list.push({
+          id: `legacy-${g.challanNo}`,
+          isSalesOrder: false,
+          challanNo: g.challanNo,
+          salesBillNo: g.salesBillNo,
+          buyerName: g.buyerName,
+          buyerContact: g.buyerContact,
+          deliveryLocation: '',
+          salespersonName: '',
+          date: g.date,
+          status: g.status === 'finished' ? 'challan_generated' : 'dispatched',
+          isFinished: g.status === 'finished',
+          items: [],
+          groupedRepresentation: g
+        });
+      }
+    });
+
+    return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [salesOrders, legacyGroupedChallans]);
+
+  // Filtered List
+  const filteredDisplayList = useMemo(() => {
+    return displayOrdersAndChallans.filter(item => {
+      if (statusFilter === 'pending' && item.isFinished) return false;
+      if (statusFilter === 'finished' && !item.isFinished) return false;
+
       if (!searchTerm.trim()) return true;
       const q = searchTerm.toLowerCase().trim();
       return (
-        g.challanNo.toLowerCase().includes(q) ||
-        g.buyerName.toLowerCase().includes(q) ||
-        g.salesBillNo.toLowerCase().includes(q) ||
-        g.scooters.some(s => s.chassisNo.toLowerCase().includes(q) || s.motorNo.toLowerCase().includes(q) || s.controllerNo.toLowerCase().includes(q)) ||
-        g.batteries.some(b => (b.serialNumbers || []).some(sn => sn.toLowerCase().includes(q)) || b.batterySeries.toLowerCase().includes(q)) ||
-        g.chargers.some(c => (c.serialNumbers || []).some(sn => sn.toLowerCase().includes(q)) || c.chargerType.toLowerCase().includes(q))
+        item.challanNo.toLowerCase().includes(q) ||
+        (item.orderNo || '').toLowerCase().includes(q) ||
+        item.buyerName.toLowerCase().includes(q) ||
+        item.salesBillNo.toLowerCase().includes(q) ||
+        (item.deliveryLocation || '').toLowerCase().includes(q) ||
+        item.items.some(it => (it.productName || '').toLowerCase().includes(q) || (it.chassisNumbers || []).some(c => c.toLowerCase().includes(q)))
       );
     });
-  }, [groupedChallans, statusFilter, searchTerm]);
+  }, [displayOrdersAndChallans, statusFilter, searchTerm]);
 
   // Metrics
   const metrics = useMemo(() => {
-    const totalCount = groupedChallans.length;
-    const pendingCount = groupedChallans.filter(g => g.status === 'pending').length;
-    const finishedCount = groupedChallans.filter(g => g.status === 'finished').length;
-    let totalScootersDispatched = 0;
-    let totalBatteriesDispatched = 0;
-    let totalChargersDispatched = 0;
-
-    groupedChallans.forEach(g => {
-      totalScootersDispatched += g.scooters.length;
-      totalBatteriesDispatched += g.batteries.reduce((acc, b) => acc + b.quantity, 0);
-      totalChargersDispatched += g.chargers.reduce((acc, c) => acc + c.quantity, 0);
+    const totalCount = displayOrdersAndChallans.length;
+    const pendingCount = displayOrdersAndChallans.filter(d => !d.isFinished).length;
+    const finishedCount = displayOrdersAndChallans.filter(d => d.isFinished).length;
+    
+    let totalItems = 0;
+    displayOrdersAndChallans.forEach(d => {
+      totalItems += d.groupedRepresentation.totalItemsCount;
     });
 
-    return {
-      totalCount,
-      pendingCount,
-      finishedCount,
-      totalScootersDispatched,
-      totalBatteriesDispatched,
-      totalChargersDispatched
-    };
-  }, [groupedChallans]);
+    return { totalCount, pendingCount, finishedCount, totalItems };
+  }, [displayOrdersAndChallans]);
 
-  const toggleExpand = (challanNo: string) => {
-    setExpandedChallans(prev => ({ ...prev, [challanNo]: !prev[challanNo] }));
+  // Helper to close and reset editor modal states
+  const closeAndResetEditModal = () => {
+    setEditingOrder(null);
+    setSoBuyerName('');
+    setSoBuyerContact('');
+    setSoDeliveryLocation('');
+    setSoChallanNo('');
+    setSoSalesBillNo('');
+    setSoNotes('');
+    setSoItems([]);
   };
 
-  const handleFinishChallan = async (challan: GroupedChallan) => {
-    setIsSubmitting(true);
-    setStatusMessage(null);
+  // Open Sales Order Manager Editor
+  const handleOpenSalesOrderEdit = (order: SalesOrder) => {
+    setEditingOrder(order);
+    setSoBuyerName(order.buyerName || '');
+    setSoBuyerContact(order.buyerContact || '');
+    setSoDeliveryLocation(order.deliveryLocation || '');
+    setSoChallanNo(order.challanNo || '');
+    setSoSalesBillNo(order.salesBillNo || '');
+    setSoNotes(order.notes || '');
+    setSoItems(JSON.parse(JSON.stringify(order.items || [])));
+  };
 
-    try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/challans/finish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          deliveryChallanNo: challan.challanNo,
-          operator: currentUser.name || currentUser.username
-        })
-      });
+  // Save Sales Order
+  const handleSaveSalesOrder = async (finalizeSale: boolean) => {
+    if (!editingOrder) return;
 
-      const data = await res.json();
-      if (res.ok) {
-        setStatusMessage({ type: 'success', text: `Challan #${challan.challanNo} marked as Finished & Verified!` });
-        setFinishConfirmationTarget(null);
-        onRefresh();
-        fetchAuditLogs();
-      } else {
-        setStatusMessage({ type: 'error', text: data.error || 'Failed to verify challan.' });
+    if (finalizeSale) {
+      if (!soChallanNo || !soChallanNo.trim()) {
+        setStatusMessage({
+          type: 'error',
+          text: 'Delivery Challan Number is required to finalize sale. Never sell without a Challan Number!'
+        });
+        return;
       }
-    } catch (err: any) {
-      setStatusMessage({ type: 'error', text: err.message || 'Network error verifying challan.' });
-    } finally {
-      setIsSubmitting(false);
+      if (!soSalesBillNo || !soSalesBillNo.trim()) {
+        setStatusMessage({
+          type: 'error',
+          text: 'Bill / Invoice Number is required to finalize sale.'
+        });
+        return;
+      }
     }
-  };
-
-  const handleOpenEdit = (challan: GroupedChallan) => {
-    setEditingChallan(challan);
-    setEditBuyerName(challan.buyerName);
-    setEditBuyerContact(challan.buyerContact);
-    setEditBillNo(challan.salesBillNo);
-    setEditChallanNo(challan.challanNo);
-  };
-
-  const handleSaveEdit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingChallan) return;
 
     setIsSubmitting(true);
     setStatusMessage(null);
 
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/challans/update', {
-        method: 'POST',
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + `/api/sales-orders/${editingOrder.id}/manager-update`, {
+        method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          deliveryChallanNo: editingChallan.challanNo,
-          newChallanNo: editChallanNo.trim().toUpperCase(),
-          buyerName: editBuyerName.trim(),
-          buyerContact: editBuyerContact.trim(),
-          billNo: editBillNo.trim().toUpperCase(),
+          buyerName: soBuyerName.trim(),
+          buyerContact: soBuyerContact.trim(),
+          deliveryLocation: soDeliveryLocation.trim(),
+          notes: soNotes,
+          challanNo: soChallanNo.trim().toUpperCase(),
+          salesBillNo: soSalesBillNo.trim().toUpperCase(),
+          items: soItems,
+          finalizeSale,
           operator: currentUser.name || currentUser.username,
-          userRole: currentUser.role
+          operatorRole: currentUser.role
         })
       });
 
       const data = await res.json();
       if (res.ok) {
-        setStatusMessage({ type: 'success', text: `Challan details updated successfully!` });
-        setEditingChallan(null);
+        setStatusMessage({
+          type: 'success',
+          text: finalizeSale 
+            ? `Sale finalized & Delivery Challan #${soChallanNo.trim().toUpperCase()} issued successfully!`
+            : `Order #${editingOrder.orderNo} progress saved successfully!`
+        });
+        closeAndResetEditModal();
         onRefresh();
         fetchAuditLogs();
       } else {
-        setStatusMessage({ type: 'error', text: data.error || 'Failed to update challan details.' });
+        setStatusMessage({ type: 'error', text: data.error || 'Failed to update order.' });
       }
     } catch (err: any) {
-      setStatusMessage({ type: 'error', text: err.message || 'Network error updating challan.' });
+      setStatusMessage({ type: 'error', text: err.message || 'Network error updating order.' });
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleRemoveItem = (challanNo: string, itemType: 'scooter' | 'battery' | 'charger', itemId: string, itemLabel?: string) => {
-    setDeleteConfirmationTarget({
-      type: 'item',
-      challanNo,
-      itemType,
-      itemId,
-      itemLabel
-    });
-  };
-
-  const handleDeleteEntireChallan = (challanNo: string) => {
-    setDeleteConfirmationTarget({
-      type: 'entire',
-      challanNo
-    });
-  };
-
-  const executeDeleteAction = async () => {
-    if (!deleteConfirmationTarget) return;
-    setIsSubmitting(true);
-    setStatusMessage(null);
-
-    const { type, challanNo, itemType, itemId } = deleteConfirmationTarget;
-    try {
-      if (type === 'item' && itemType && itemId) {
-        const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/challans/remove-item', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            deliveryChallanNo: challanNo,
-            itemType,
-            itemId,
-            operator: currentUser.name || currentUser.username || 'system',
-            userRole: currentUser.role
-          })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          setStatusMessage({ type: 'success', text: data.message || 'Item removed from challan.' });
-          onRefresh();
-          fetchAuditLogs();
-        } else {
-          setStatusMessage({ type: 'error', text: data.error || 'Failed to remove item.' });
+  // Helper functions for updating soItems in editor
+  const updateItemQuantity = (index: number, newQty: number) => {
+    const qty = Math.max(1, newQty);
+    setSoItems(prev => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], quantity: qty };
+      if (copy[index].itemType === 'scooter') {
+        const chassisArr = [...(copy[index].chassisNumbers || [])];
+        if (chassisArr.length < qty) {
+          while (chassisArr.length < qty) chassisArr.push('');
         }
-      } else if (type === 'entire') {
-        const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/challans/delete-entire', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            deliveryChallanNo: challanNo,
-            operator: currentUser.name || currentUser.username || 'system',
-            userRole: currentUser.role
-          })
-        });
-        const data = await res.json();
-        if (res.ok) {
-          setStatusMessage({ type: 'success', text: data.message || `Delivery Challan #${challanNo} deleted successfully.` });
-          onRefresh();
-          fetchAuditLogs();
-        } else {
-          setStatusMessage({ type: 'error', text: data.error || 'Failed to delete entire challan.' });
-        }
+        copy[index].chassisNumbers = chassisArr;
       }
-    } catch (err: any) {
-      setStatusMessage({ type: 'error', text: 'Network error processing deletion request.' });
-    } finally {
-      setIsSubmitting(false);
-      setDeleteConfirmationTarget(null);
-    }
+      return copy;
+    });
+  };
+
+  const updateItemField = (index: number, field: keyof SalesOrderItem, value: any) => {
+    setSoItems(prev => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], [field]: value };
+      return copy;
+    });
+  };
+
+  const updateChassisNumber = (itemIdx: number, chassisIdx: number, val: string) => {
+    setSoItems(prev => {
+      const copy = [...prev];
+      const item = { ...copy[itemIdx] };
+      const chassisArr = [...(item.chassisNumbers || [])];
+      chassisArr[chassisIdx] = val;
+      item.chassisNumbers = chassisArr;
+      copy[itemIdx] = item;
+      return copy;
+    });
+  };
+
+  const addChassisSlot = (itemIdx: number) => {
+    setSoItems(prev => {
+      const copy = [...prev];
+      const item = { ...copy[itemIdx] };
+      const chassisArr = [...(item.chassisNumbers || []), ''];
+      item.chassisNumbers = chassisArr;
+      item.quantity = chassisArr.length;
+      copy[itemIdx] = item;
+      return copy;
+    });
+  };
+
+  const removeChassisSlot = (itemIdx: number, chassisIdx: number) => {
+    setSoItems(prev => {
+      const copy = [...prev];
+      const item = { ...copy[itemIdx] };
+      const chassisArr = [...(item.chassisNumbers || [])];
+      chassisArr.splice(chassisIdx, 1);
+      item.chassisNumbers = chassisArr;
+      if (chassisArr.length > 0) item.quantity = chassisArr.length;
+      copy[itemIdx] = item;
+      return copy;
+    });
+  };
+
+  const removeItemLine = (index: number) => {
+    setSoItems(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const addNewItemLine = () => {
+    setSoItems(prev => [
+      ...prev,
+      {
+        id: `soi-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        itemType: 'scooter',
+        productName: 'City XL',
+        color: 'Matte Black',
+        quantity: 1,
+        chassisNumbers: [''],
+        serialNumbers: [],
+        startNo: '',
+        endNo: '',
+        isUnderWarranty: false,
+        warrantyMonths: 0
+      }
+    ]);
+  };
+
+  const toggleExpand = (id: string) => {
+    setExpandedChallans(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
   return (
@@ -521,9 +651,8 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
           </h1>
 
           <p className="text-xs sm:text-sm text-slate-300 leading-relaxed font-medium">
-            Monitor truck shipment delivery challans containing Scooters, Batteries, and Chargers. 
-            Managers verify items against paper gate passes, edit details during pending stage, and finalize sales. 
-            Finished sales are locked and protected for owner audit.
+            Review truck dispatches and bulk sales orders. 
+            Managers assign mandatory Challan &amp; Bill Numbers, adjust last-minute item quantities, update chassis and serial numbers, and finalize bulk sales.
           </p>
         </div>
       </div>
@@ -566,7 +695,7 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
             }`}
           >
             <Truck className="h-4 w-4 text-cyan-400" />
-            <span>Delivery Challans ({groupedChallans.length})</span>
+            <span>Delivery Challans &amp; Orders ({displayOrdersAndChallans.length})</span>
           </button>
 
           <button
@@ -598,7 +727,7 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
           className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1.5 cursor-pointer border border-slate-200"
         >
           <RefreshCw className={`h-3.5 w-3.5 text-slate-500 ${isLoadingAuditLogs ? 'animate-spin' : ''}`} />
-          <span>Refresh Logs</span>
+          <span>Refresh Data</span>
         </button>
       </div>
 
@@ -611,7 +740,7 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
                 <Truck className="h-6 w-6" />
               </div>
               <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Total Delivery Challans</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Total Sales &amp; Dispatches</p>
                 <p className="text-xl font-black text-slate-800">{metrics.totalCount}</p>
               </div>
             </div>
@@ -621,7 +750,7 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
                 <Clock className="h-6 w-6" />
               </div>
               <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Pending Verification</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Pending Challan &amp; Bill</p>
                 <p className="text-xl font-black text-amber-700">{metrics.pendingCount}</p>
               </div>
             </div>
@@ -631,7 +760,7 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
                 <CheckCircle2 className="h-6 w-6" />
               </div>
               <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Finished & Verified</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Finished &amp; Issued</p>
                 <p className="text-xl font-black text-emerald-700">{metrics.finishedCount}</p>
               </div>
             </div>
@@ -641,520 +770,382 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
                 <Zap className="h-6 w-6" />
               </div>
               <div>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Total Units Dispatched</p>
-                <p className="text-lg font-black text-purple-900 leading-tight">
-                  {metrics.totalScootersDispatched + metrics.totalBatteriesDispatched + metrics.totalChargersDispatched} <span className="text-xs text-slate-500 font-normal">Total Items</span>
-                </p>
-                <p className="text-[10px] text-purple-700 font-semibold mt-0.5">
-                  {metrics.totalScootersDispatched} Scooters • {metrics.totalBatteriesDispatched} Batteries • {metrics.totalChargersDispatched} Chargers
-                </p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide">Total Dispatched Units</p>
+                <p className="text-xl font-black text-purple-900">{metrics.totalItems}</p>
               </div>
             </div>
           </div>
 
-      {/* Control Bar: Search & Status Filters */}
-      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-3 justify-between items-center">
-        {/* Search */}
-        <div className="relative w-full sm:w-80">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search Challan No, Buyer, Bill No, Chassis..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2 text-xs font-semibold text-slate-800 focus:bg-white focus:border-cyan-500 outline-none"
-          />
-          {searchTerm && (
-            <button 
-              onClick={() => setSearchTerm('')} 
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
-            >
-              Clear
-            </button>
-          )}
-        </div>
+          {/* Control Bar: Search & Status Filters */}
+          <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-3 justify-between items-center">
+            {/* Search */}
+            <div className="relative w-full sm:w-80">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Search Order No, Challan No, Buyer, Bill No, Chassis..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2 text-xs font-semibold text-slate-800 focus:bg-white focus:border-cyan-500 outline-none"
+              />
+              {searchTerm && (
+                <button 
+                  onClick={() => setSearchTerm('')} 
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs font-bold"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
 
-        {/* Filter Tabs */}
-        <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-auto text-xs font-bold">
-          <button
-            onClick={() => setStatusFilter('all')}
-            className={`flex-1 sm:flex-none px-4 py-1.5 rounded-lg transition-all cursor-pointer ${
-              statusFilter === 'all' 
-                ? 'bg-white text-slate-900 shadow-sm' 
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            All ({groupedChallans.length})
-          </button>
-          <button
-            onClick={() => setStatusFilter('pending')}
-            className={`flex-1 sm:flex-none px-4 py-1.5 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              statusFilter === 'pending' 
-                ? 'bg-amber-50 text-amber-900 border border-amber-200 shadow-sm' 
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <Clock className="h-3.5 w-3.5 text-amber-600" />
-            <span>Pending ({metrics.pendingCount})</span>
-          </button>
-          <button
-            onClick={() => setStatusFilter('finished')}
-            className={`flex-1 sm:flex-none px-4 py-1.5 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
-              statusFilter === 'finished' 
-                ? 'bg-emerald-50 text-emerald-900 border border-emerald-200 shadow-sm' 
-                : 'text-slate-500 hover:text-slate-800'
-            }`}
-          >
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
-            <span>Finished & Verified ({metrics.finishedCount})</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Delivery Challans List */}
-      <div className="space-y-4">
-        {filteredChallans.length === 0 ? (
-          <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center space-y-3">
-            <Truck className="h-12 w-12 text-slate-300 mx-auto" />
-            <h3 className="text-sm font-bold text-slate-700">No Delivery Challans Found</h3>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
-              No delivery challans match your search or filter options. Create wholesale sales or battery/charger sales with a Delivery Challan Number to see them here!
-            </p>
-          </div>
-        ) : (
-          filteredChallans.map((challan) => {
-            const isExpanded = !!expandedChallans[challan.challanNo];
-            const isFinished = challan.status === 'finished';
-            const isOwner = currentUser.role === 'owner' || currentUser.role === 'admin' || currentUser.username?.toLowerCase() === 'admin' || currentUser.username?.toLowerCase() === 'owner';
-            
-            const canEdit = !isFinished ? (currentUser.role === 'admin' || currentUser.role === 'manager' || currentUser.role === 'owner') : isOwner;
-            const canRemoveItems = !isFinished ? (currentUser.role === 'admin' || currentUser.role === 'manager' || currentUser.role === 'owner') : isOwner;
-            const canDeleteChallan = !isFinished ? (currentUser.role === 'admin' || currentUser.role === 'manager' || currentUser.role === 'owner') : isOwner;
-            const canAddItem = !isFinished ? (currentUser.role === 'admin' || currentUser.role === 'manager' || currentUser.role === 'owner') : isOwner;
-
-            return (
-              <div 
-                key={challan.challanNo}
-                className={`bg-white rounded-2xl border transition-all shadow-sm ${
-                  isFinished ? 'border-emerald-200 hover:border-emerald-300' : 'border-amber-200 hover:border-amber-300'
+            {/* Filter Tabs */}
+            <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 w-full sm:w-auto text-xs font-bold">
+              <button
+                onClick={() => setStatusFilter('all')}
+                className={`flex-1 sm:flex-none px-4 py-1.5 rounded-lg transition-all cursor-pointer ${
+                  statusFilter === 'all' 
+                    ? 'bg-white text-slate-900 shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                {/* Card Header */}
-                <div className="p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div className="flex items-start gap-3.5">
-                    <div className={`p-3 rounded-2xl border ${
-                      isFinished 
-                        ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
-                        : 'bg-amber-50 border-amber-200 text-amber-700'
-                    }`}>
-                      <Truck className="h-6 w-6" />
-                    </div>
+                All ({displayOrdersAndChallans.length})
+              </button>
+              <button
+                onClick={() => setStatusFilter('pending')}
+                className={`flex-1 sm:flex-none px-4 py-1.5 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  statusFilter === 'pending' 
+                    ? 'bg-amber-50 text-amber-900 border border-amber-200 shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <Clock className="h-3.5 w-3.5 text-amber-600" />
+                <span>Pending ({metrics.pendingCount})</span>
+              </button>
+              <button
+                onClick={() => setStatusFilter('finished')}
+                className={`flex-1 sm:flex-none px-4 py-1.5 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  statusFilter === 'finished' 
+                    ? 'bg-emerald-50 text-emerald-900 border border-emerald-200 shadow-sm' 
+                    : 'text-slate-500 hover:text-slate-800'
+                }`}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                <span>Finished &amp; Verified ({metrics.finishedCount})</span>
+              </button>
+            </div>
+          </div>
 
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-base font-black text-slate-900 tracking-tight">
-                          Challan #{challan.challanNo}
-                        </span>
-
-                        {isFinished ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                            <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                            <span>Sale Finished & Verified</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
-                            <Clock className="h-3 w-3 text-amber-600 animate-spin" />
-                            <span>Pending Manager Check</span>
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-4 text-xs font-semibold text-slate-500 flex-wrap">
-                        <span className="flex items-center gap-1">
-                          <Building2 className="h-3.5 w-3.5 text-slate-400" />
-                          <strong className="text-slate-800">{challan.buyerName}</strong>
-                          {challan.buyerContact && ` (${challan.buyerContact})`}
-                        </span>
-
-                        {challan.salesBillNo && (
-                          <span className="flex items-center gap-1">
-                            <FileText className="h-3.5 w-3.5 text-slate-400" />
-                            <span>Bill #: <strong className="text-slate-800">{challan.salesBillNo}</strong></span>
-                          </span>
-                        )}
-
-                        <span className="flex items-center gap-1">
-                          <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                          <span>{new Date(challan.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-                        </span>
-                      </div>
-
-                      {/* Items Pill Summary */}
-                      <div className="flex items-center gap-2 pt-1 font-sans text-[11px] font-bold">
-                        {challan.scooters.length > 0 && (
-                          <span className="px-2.5 py-0.5 rounded-md bg-cyan-50 text-cyan-800 border border-cyan-200">
-                            🛵 {challan.scooters.length} Scooters
-                          </span>
-                        )}
-                        {challan.batteries.length > 0 && (
-                          <span className="px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200">
-                            🔋 {challan.batteries.reduce((a, b) => a + b.quantity, 0)} Batteries
-                          </span>
-                        )}
-                        {challan.chargers.length > 0 && (
-                          <span className="px-2.5 py-0.5 rounded-md bg-purple-50 text-purple-800 border border-purple-200">
-                            ⚡ {challan.chargers.reduce((a, c) => a + c.quantity, 0)} Chargers
-                          </span>
-                        )}
-                      </div>
-
-                      {isFinished && challan.finishedBy && (
-                        <p className="text-[10px] text-emerald-700 font-bold pt-0.5">
-                          Verified by {challan.finishedBy} {challan.finishedTimestamp && `on ${new Date(challan.finishedTimestamp).toLocaleDateString()}`}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      onClick={() => setPrintChallan(challan)}
-                      className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
-                      title="Print Official Delivery Challan Pass"
-                    >
-                      <Printer className="h-4 w-4" />
-                      <span>Print Pass</span>
-                    </button>
-
-                    <button
-                      onClick={() => setSelectedChallanAuditModal(challan.challanNo)}
-                      className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
-                      title="View modification audit trail for this challan"
-                    >
-                      <History className="h-4 w-4 text-indigo-600" />
-                      <span>Audit Trail</span>
-                    </button>
-
-                    {canEdit ? (
-                      <button
-                        onClick={() => handleOpenEdit(challan)}
-                        className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
-                      >
-                        <Edit3 className="h-4 w-4" />
-                        <span>Edit Details</span>
-                      </button>
-                    ) : (
-                      <span className="px-3 py-2 bg-slate-100 text-slate-400 text-[10px] font-bold rounded-xl flex items-center gap-1 cursor-not-allowed">
-                        <Lock className="h-3.5 w-3.5" />
-                        <span>Verified (Owner Only Edit)</span>
-                      </span>
-                    )}
-
-                    {canAddItem && (
-                      <button
-                        onClick={() => { setAddItemModalTarget(challan); setSelectedItemId(''); }}
-                        className="px-3 py-2 bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
-                        title="Add an item (Scooter, Battery, Charger) to this Delivery Challan"
-                      >
-                        <PlusCircle className="h-4 w-4 text-cyan-600" />
-                        <span>Add Item</span>
-                      </button>
-                    )}
-
-                    {!isFinished && (currentUser.role === 'admin' || currentUser.role === 'manager' || currentUser.role === 'owner') && (
-                      <button
-                        onClick={() => setFinishConfirmationTarget(challan)}
-                        disabled={isSubmitting}
-                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl flex items-center gap-1.5 transition-all shadow-md active:scale-95 cursor-pointer disabled:opacity-50"
-                      >
-                        <CheckCircle2 className="h-4 w-4" />
-                        <span>Finish & Verify Sale</span>
-                      </button>
-                    )}
-
-                    {canDeleteChallan && (
-                      <button
-                        onClick={() => handleDeleteEntireChallan(challan.challanNo)}
-                        disabled={isSubmitting}
-                        className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
-                        title="Delete entire delivery challan and unassign items"
-                      >
-                        <Trash2 className="h-4 w-4 text-rose-600" />
-                        <span>Delete Entire Challan</span>
-                      </button>
-                    )}
-
-                    <button
-                      onClick={() => toggleExpand(challan.challanNo)}
-                      className="p-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-slate-600 cursor-pointer"
-                      title="Toggle Details"
-                    >
-                      {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                    </button>
-                  </div>
-                </div>
-
-                {/* Expanded Details Panel */}
-                {isExpanded && (
-                  <div className="border-t border-slate-100 p-4 sm:p-6 bg-slate-50/50 rounded-b-2xl space-y-5">
-                    {/* Scooters Breakdown */}
-                    {challan.scooters.length > 0 && (
-                      <div className="space-y-2">
-                        <h4 className="text-xs font-black text-cyan-900 uppercase tracking-wide flex items-center gap-2">
-                          <span>🛵 Dispatched Scooter Units ({challan.scooters.length})</span>
-                        </h4>
-                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                          <table className="w-full text-left text-xs">
-                            <thead className="bg-slate-100 text-slate-600 text-[10px] font-bold uppercase">
-                              <tr>
-                                <th className="p-2.5">Model & Color</th>
-                                <th className="p-2.5">Chassis Number</th>
-                                <th className="p-2.5">Motor / Controller</th>
-                                <th className="p-2.5">Assigned Batteries</th>
-                                <th className="p-2.5">Scooter Warranty</th>
-                                <th className="p-2.5 text-right">Action</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
-                              {challan.scooters.map((scoot) => (
-                                <tr key={scoot.id} className="hover:bg-slate-50">
-                                  <td className="p-2.5">
-                                    <span className="font-bold">{scoot.modelName}</span>
-                                    <span className="text-[10px] text-slate-400 block font-normal">{scoot.color}</span>
-                                  </td>
-                                  <td className="p-2.5 font-bold font-mono text-cyan-800">
-                                    <span className="bg-cyan-50 text-cyan-900 border border-cyan-200 px-2 py-0.5 rounded font-black text-xs">
-                                      {scoot.chassisNo}
-                                    </span>
-                                  </td>
-                                  <td className="p-2.5 text-[11px] text-slate-700 font-mono space-y-0.5">
-                                    <div><span className="text-slate-400 font-normal">Motor:</span> <strong className="text-slate-900">{scoot.motorNo || 'N/A'}</strong></div>
-                                    <div><span className="text-slate-400 font-normal">Ctrl:</span> <strong className="text-slate-900">{scoot.controllerNo || 'N/A'}</strong></div>
-                                  </td>
-                                  <td className="p-2.5">
-                                    {scoot.batterySerials && scoot.batterySerials.length > 0 ? (
-                                      <div className="space-y-1">
-                                        <span className="text-[10px] font-extrabold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                                          🔋 {scoot.batterySerials.length} Battery Serial(s)
-                                        </span>
-                                        <div className="font-mono text-[10px] font-bold text-slate-800">
-                                          {scoot.batterySerials.join(', ')}
-                                        </div>
-                                      </div>
-                                    ) : (
-                                      <span className="text-[10px] text-amber-600 italic font-mono">No battery linked</span>
-                                    )}
-                                  </td>
-                                  <td className="p-2.5 text-[11px]">
-                                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                      scoot.scooterWarrantyStatus === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'
-                                    }`}>
-                                      {scoot.scooterWarrantyStatus || 'None'} {scoot.scooterWarrantyExpiry && `(Exp: ${scoot.scooterWarrantyExpiry})`}
-                                    </span>
-                                  </td>
-                                  <td className="p-2.5 text-right">
-                                    <button
-                                      type="button"
-                                      disabled={isSubmitting || !canRemoveItems}
-                                      onClick={() => handleRemoveItem(challan.challanNo, 'scooter', scoot.id)}
-                                      title="Remove Scooter from this Challan"
-                                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer disabled:opacity-30"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Batteries Breakdown */}
-                    {challan.batteries.length > 0 && (
-                      <div className="space-y-2">
-                        <h4 className="text-xs font-black text-emerald-900 uppercase tracking-wide flex items-center gap-2">
-                          <span>🔋 Standalone Wholesale Battery Packs</span>
-                        </h4>
-                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                          <table className="w-full text-left text-xs">
-                            <thead className="bg-slate-100 text-slate-600 text-[10px] font-bold uppercase">
-                              <tr>
-                                <th className="p-2.5">Series</th>
-                                <th className="p-2.5">Quantity</th>
-                                <th className="p-2.5">Serial Numbers / Block</th>
-                                <th className="p-2.5">Warranty Duration</th>
-                                <th className="p-2.5 text-right">Action</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
-                              {challan.batteries.map((bat) => {
-                                const serialGroup = groupSerialsIntoRangesAndIndividuals(
-                                  bat.serialNumbers,
-                                  bat.startNo,
-                                  bat.endNo,
-                                  bat.quantity,
-                                  bat.batterySeries
-                                );
-
-                                return (
-                                  <tr key={bat.id} className="hover:bg-slate-50">
-                                    <td className="p-2.5 font-bold">{bat.batterySeries}</td>
-                                    <td className="p-2.5 font-black text-emerald-800 bg-emerald-50/70 rounded-lg">
-                                      {bat.quantity} {bat.quantity === 1 ? 'Battery' : 'Batteries'}
-                                    </td>
-                                    <td className="p-2.5 text-[11px]">
-                                      {serialGroup.allSerials.length > 0 ? (
-                                        <div className="space-y-1.5 py-1">
-                                          <div className="flex items-center gap-1.5 flex-wrap">
-                                            {serialGroup.ranges.map((r, rIdx) => (
-                                              <span key={`range-${rIdx}`} className="text-[10px] font-extrabold bg-cyan-100 text-cyan-950 px-2 py-0.5 rounded border border-cyan-300 flex items-center gap-1">
-                                                <span>In Series:</span>
-                                                <span className="font-mono">{r.text}</span>
-                                                <span className="opacity-80">({r.count} {r.count === 1 ? 'Battery' : 'Batteries'})</span>
-                                              </span>
-                                            ))}
-                                            {serialGroup.standalone.length > 0 && (
-                                              <span className="text-[10px] font-extrabold bg-amber-100 text-amber-950 px-2 py-0.5 rounded border border-amber-300">
-                                                Individual: {serialGroup.standalone.join(', ')}
-                                              </span>
-                                            )}
-                                          </div>
-                                          <div className="font-mono text-slate-800 text-[10px] bg-slate-50 p-2 rounded-xl border border-slate-200 flex flex-wrap gap-1 max-h-36 overflow-y-auto">
-                                            {serialGroup.allSerials.map((s, idx) => (
-                                              <span key={idx} className="bg-white text-slate-900 px-1.5 py-0.5 rounded-md border border-slate-200 font-bold shadow-2xs">
-                                                {s}
-                                              </span>
-                                            ))}
-                                          </div>
-                                        </div>
-                                      ) : (
-                                        <span className="text-slate-500 font-mono italic">
-                                          Bulk Batch ({bat.quantity} {bat.quantity === 1 ? 'Battery' : 'Batteries'} of Series {bat.batterySeries})
-                                        </span>
-                                      )}
-                                    </td>
-                                    <td className="p-2.5 text-[11px]">
-                                      {bat.isUnderWarranty ? `${bat.warrantyDurationMonths || 12} Months Warranty` : 'No Warranty'}
-                                    </td>
-                                    <td className="p-2.5 text-right">
-                                      <button
-                                        type="button"
-                                        disabled={isSubmitting || !canRemoveItems}
-                                        onClick={() => handleRemoveItem(challan.challanNo, 'battery', bat.id)}
-                                        title="Remove Battery Pack from this Challan"
-                                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer disabled:opacity-30"
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Chargers Breakdown */}
-                    {challan.chargers.length > 0 && (
-                      <div className="space-y-2">
-                        <h4 className="text-xs font-black text-purple-900 uppercase tracking-wide flex items-center gap-2">
-                          <span>⚡ Standalone Wholesale Chargers</span>
-                        </h4>
-                        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-                          <table className="w-full text-left text-xs">
-                            <thead className="bg-slate-100 text-slate-600 text-[10px] font-bold uppercase">
-                              <tr>
-                                <th className="p-2.5">Charger Type</th>
-                                <th className="p-2.5">Quantity</th>
-                                <th className="p-2.5">Serial Numbers / Range</th>
-                                <th className="p-2.5">Warranty</th>
-                                <th className="p-2.5 text-right">Action</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
-                              {challan.chargers.map((chg) => {
-                                const serialGroup = groupSerialsIntoRangesAndIndividuals(
-                                  chg.serialNumbers,
-                                  chg.startNo,
-                                  chg.endNo,
-                                  chg.quantity,
-                                  chg.chargerType
-                                );
-
-                                return (
-                                  <tr key={chg.id} className="hover:bg-slate-50">
-                                    <td className="p-2.5 font-bold">{chg.chargerType}</td>
-                                    <td className="p-2.5 font-black text-purple-800 bg-purple-50/70 rounded-lg">
-                                      {chg.quantity} {chg.quantity === 1 ? 'Unit' : 'Units'}
-                                    </td>
-                                    <td className="p-2.5 text-[11px]">
-                                      <div className="space-y-1.5 py-1 font-sans">
-                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                          {serialGroup.ranges.map((r, rIdx) => (
-                                            <span key={`chg-range-${rIdx}`} className="text-[10px] font-extrabold bg-purple-100 text-purple-950 px-2 py-0.5 rounded border border-purple-300 flex items-center gap-1">
-                                              <span>In Series:</span>
-                                              <span className="font-mono">{r.text}</span>
-                                              <span className="opacity-80">({r.count} {r.count === 1 ? 'Unit' : 'Units'})</span>
-                                            </span>
-                                          ))}
-                                          {serialGroup.standalone.length > 0 && (
-                                            <span className="text-[10px] font-extrabold bg-amber-100 text-amber-950 px-2 py-0.5 rounded border border-amber-300">
-                                              Individual: {serialGroup.standalone.join(', ')}
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="font-mono text-slate-800 text-[10px] bg-slate-50 p-2 rounded-xl border border-slate-200 flex flex-wrap gap-1 max-h-36 overflow-y-auto">
-                                          {serialGroup.allSerials.map((s, idx) => (
-                                            <span key={idx} className="bg-white text-slate-900 px-1.5 py-0.5 rounded-md border border-slate-200 font-bold shadow-2xs">
-                                              {s}
-                                            </span>
-                                          ))}
-                                        </div>
-                                      </div>
-                                    </td>
-                                    <td className="p-2.5 text-[11px]">
-                                      {chg.isUnderWarranty ? `${chg.warrantyDurationMonths || 12} Months Warranty` : 'No Warranty'}
-                                    </td>
-                                    <td className="p-2.5 text-right">
-                                      <button
-                                        type="button"
-                                        disabled={isSubmitting || !canRemoveItems}
-                                        onClick={() => handleRemoveItem(challan.challanNo, 'charger', chg.id)}
-                                        title="Remove Charger from this Challan"
-                                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer disabled:opacity-30"
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </button>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+          {/* List of Orders & Delivery Challans */}
+          <div className="space-y-4">
+            {filteredDisplayList.length === 0 ? (
+              <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center space-y-3">
+                <Truck className="h-12 w-12 text-slate-300 mx-auto" />
+                <h3 className="text-sm font-bold text-slate-700">No Dispatches or Challans Found</h3>
+                <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                  No orders match your search or filter options. Dispatched sales orders created by salespeople or dispatchers will appear here for manager verification.
+                </p>
               </div>
-            );
-          })
-        )}
-      </div>
-      </>
+            ) : (
+              filteredDisplayList.map((item) => {
+                const isExpanded = !!expandedChallans[item.id];
+                const isFinished = item.isFinished;
+                const isOwner = currentUser.role === 'admin' || currentUser.role === 'owner';
+                const canEdit = !isFinished || isOwner;
+
+                return (
+                  <div 
+                    key={item.id}
+                    className={`bg-white rounded-2xl border transition-all shadow-sm ${
+                      isFinished ? 'border-emerald-200 hover:border-emerald-300' : 'border-amber-200 hover:border-amber-300'
+                    }`}
+                  >
+                    {/* Card Header */}
+                    <div className="p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="flex items-start gap-3.5">
+                        <div className={`p-3 rounded-2xl border ${
+                          isFinished 
+                            ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
+                            : 'bg-amber-50 border-amber-200 text-amber-700'
+                        }`}>
+                          <Truck className="h-6 w-6" />
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {item.orderNo && (
+                              <span className="text-base font-black text-slate-900 tracking-tight">
+                                Order #{item.orderNo}
+                              </span>
+                            )}
+
+                            <span className="font-mono text-xs font-bold text-cyan-800 bg-cyan-50 px-2 py-0.5 rounded border border-cyan-200">
+                              Challan #: {item.challanNo}
+                            </span>
+
+                            {isFinished ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                                <span>Sale Finished &amp; Issued</span>
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-200">
+                                <Clock className="h-3 w-3 text-amber-600 animate-spin" />
+                                <span>Awaiting Manager Challan &amp; Bill No</span>
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-4 text-xs font-semibold text-slate-500 flex-wrap">
+                            <span className="flex items-center gap-1">
+                              <Building2 className="h-3.5 w-3.5 text-slate-400" />
+                              <strong className="text-slate-800">{item.buyerName}</strong>
+                              {item.buyerContact && ` (${item.buyerContact})`}
+                            </span>
+
+                            {item.deliveryLocation && (
+                              <span className="flex items-center gap-1 text-slate-600">
+                                <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                                <span>{item.deliveryLocation}</span>
+                              </span>
+                            )}
+
+                            {item.salesBillNo ? (
+                              <span className="flex items-center gap-1">
+                                <FileText className="h-3.5 w-3.5 text-slate-400" />
+                                <span>Bill #: <strong className="text-slate-800">{item.salesBillNo}</strong></span>
+                              </span>
+                            ) : (
+                              <span className="text-amber-700 text-[11px] font-bold bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                ⚠️ Missing Bill No
+                              </span>
+                            )}
+
+                            <span className="flex items-center gap-1">
+                              <Calendar className="h-3.5 w-3.5 text-slate-400" />
+                              <span>{new Date(item.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                            </span>
+                          </div>
+
+                          {/* Items Summary */}
+                          <div className="flex items-center gap-2 pt-1 font-sans text-[11px] font-bold flex-wrap">
+                            {item.groupedRepresentation.scooters.length > 0 && (
+                              <span className="px-2.5 py-0.5 rounded-md bg-cyan-50 text-cyan-800 border border-cyan-200">
+                                🛵 {item.groupedRepresentation.scooters.length} Scooters
+                              </span>
+                            )}
+                            {item.groupedRepresentation.batteries.length > 0 && (
+                              <span className="px-2.5 py-0.5 rounded-md bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                🔋 {item.groupedRepresentation.batteries.reduce((a, b) => a + b.quantity, 0)} Batteries
+                              </span>
+                            )}
+                            {item.groupedRepresentation.chargers.length > 0 && (
+                              <span className="px-2.5 py-0.5 rounded-md bg-purple-50 text-purple-800 border border-purple-200">
+                                ⚡ {item.groupedRepresentation.chargers.reduce((a, c) => a + c.quantity, 0)} Chargers
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          onClick={() => setPrintChallan(item.groupedRepresentation)}
+                          className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                          title="Print Official Delivery Challan Pass"
+                        >
+                          <Printer className="h-4 w-4" />
+                          <span>Print Pass</span>
+                        </button>
+
+                        <button
+                          onClick={() => setSelectedChallanAuditModal(item.challanNo)}
+                          className="px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                          title="View modification audit trail"
+                        >
+                          <History className="h-4 w-4 text-indigo-600" />
+                          <span>Audit Trail</span>
+                        </button>
+
+                        {canEdit && item.isSalesOrder && item.originalOrder ? (
+                          <button
+                            onClick={() => handleOpenSalesOrderEdit(item.originalOrder!)}
+                            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                          >
+                            <Edit3 className="h-4 w-4 text-cyan-400" />
+                            <span>Edit Order &amp; Challan</span>
+                          </button>
+                        ) : canEdit && !item.isSalesOrder ? (
+                          <button
+                            onClick={() => {
+                              setEditingChallan(item.groupedRepresentation);
+                              setEditBuyerName(item.buyerName);
+                              setEditBuyerContact(item.buyerContact);
+                              setEditBillNo(item.salesBillNo);
+                              setEditChallanNo(item.challanNo);
+                            }}
+                            className="px-3 py-2 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <Edit3 className="h-4 w-4" />
+                            <span>Edit Details</span>
+                          </button>
+                        ) : (
+                          <span className="px-3 py-2 bg-slate-100 text-slate-400 text-[10px] font-bold rounded-xl flex items-center gap-1 cursor-not-allowed">
+                            <Lock className="h-3.5 w-3.5" />
+                            <span>Verified (Owner Lock)</span>
+                          </span>
+                        )}
+
+                        <button
+                          onClick={() => toggleExpand(item.id)}
+                          className="p-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl text-slate-600 cursor-pointer"
+                          title="Toggle Breakdown Details"
+                        >
+                          {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Expanded Details Breakdown */}
+                    {isExpanded && (
+                      <div className="border-t border-slate-100 p-4 sm:p-6 bg-slate-50/50 rounded-b-2xl space-y-5">
+                        {item.groupedRepresentation.scooters.length > 0 && (
+                          <div className="space-y-2">
+                            <h4 className="text-xs font-black text-cyan-900 uppercase tracking-wide flex items-center gap-2">
+                              <span>🛵 Scooter Units ({item.groupedRepresentation.scooters.length})</span>
+                            </h4>
+                            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                              <table className="w-full text-left text-xs">
+                                <thead className="bg-slate-100 text-slate-600 text-[10px] font-bold uppercase">
+                                  <tr>
+                                    <th className="p-2.5">Model &amp; Color</th>
+                                    <th className="p-2.5">Chassis Number</th>
+                                    <th className="p-2.5">Motor / Controller</th>
+                                    <th className="p-2.5">Batteries &amp; Charger</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
+                                  {item.groupedRepresentation.scooters.map((scoot, sIdx) => (
+                                    <tr key={scoot.id || sIdx} className="hover:bg-slate-50">
+                                      <td className="p-2.5">
+                                        <span className="font-bold">{scoot.modelName}</span>
+                                        <span className="text-[10px] text-slate-400 block font-normal">{scoot.color}</span>
+                                      </td>
+                                      <td className="p-2.5 font-bold font-mono text-cyan-800">
+                                        <span className="bg-cyan-50 text-cyan-900 border border-cyan-200 px-2 py-0.5 rounded font-black text-xs">
+                                          {scoot.chassisNo}
+                                        </span>
+                                      </td>
+                                      <td className="p-2.5 text-[11px] text-slate-700 font-mono space-y-0.5">
+                                        <div><span className="text-slate-400 font-normal">Motor:</span> <strong className="text-slate-900">{scoot.motorNo || 'N/A'}</strong></div>
+                                        <div><span className="text-slate-400 font-normal">Ctrl:</span> <strong className="text-slate-900">{scoot.controllerNo || 'N/A'}</strong></div>
+                                      </td>
+                                      <td className="p-2.5 text-[11px]">
+                                        {scoot.batterySerials && scoot.batterySerials.length > 0 ? (
+                                          <span className="text-[10px] font-bold text-slate-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                                            🔋 Serials: {scoot.batterySerials.join(', ')}
+                                          </span>
+                                        ) : (
+                                          <span className="text-slate-400 italic">No battery serials linked</span>
+                                        )}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        {item.groupedRepresentation.batteries.length > 0 && (
+                          <div className="space-y-2">
+                            <h4 className="text-xs font-black text-emerald-900 uppercase tracking-wide">
+                              🔋 Standalone Batteries ({item.groupedRepresentation.batteries.reduce((a, b) => a + b.quantity, 0)})
+                            </h4>
+                            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                              <table className="w-full text-left text-xs">
+                                <thead className="bg-slate-100 text-slate-600 text-[10px] font-bold uppercase">
+                                  <tr>
+                                    <th className="p-2.5">Battery Series</th>
+                                    <th className="p-2.5">Quantity</th>
+                                    <th className="p-2.5">Serials</th>
+                                    <th className="p-2.5">Warranty</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
+                                  {item.groupedRepresentation.batteries.map((bat, bIdx) => (
+                                    <tr key={bat.id || bIdx} className="hover:bg-slate-50">
+                                      <td className="p-2.5 font-bold">{bat.batterySeries}</td>
+                                      <td className="p-2.5 font-black text-emerald-800 bg-emerald-50/70 rounded-lg">
+                                        {bat.quantity} Units
+                                      </td>
+                                      <td className="p-2.5 font-mono text-[11px]">
+                                        {bat.serialNumbers && bat.serialNumbers.length > 0 
+                                          ? bat.serialNumbers.join(', ') 
+                                          : (bat.startNo ? `${bat.startNo} to ${bat.endNo}` : 'Bulk Batch')}
+                                      </td>
+                                      <td className="p-2.5 text-[11px]">
+                                        {bat.isUnderWarranty ? `${bat.warrantyDurationMonths || 12} Months` : 'No Warranty'}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        {item.groupedRepresentation.chargers.length > 0 && (
+                          <div className="space-y-2">
+                            <h4 className="text-xs font-black text-purple-900 uppercase tracking-wide">
+                              ⚡ Standalone Chargers ({item.groupedRepresentation.chargers.reduce((a, c) => a + c.quantity, 0)})
+                            </h4>
+                            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+                              <table className="w-full text-left text-xs">
+                                <thead className="bg-slate-100 text-slate-600 text-[10px] font-bold uppercase">
+                                  <tr>
+                                    <th className="p-2.5">Charger Type</th>
+                                    <th className="p-2.5">Quantity</th>
+                                    <th className="p-2.5">Serials</th>
+                                    <th className="p-2.5">Warranty</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
+                                  {item.groupedRepresentation.chargers.map((chg, cIdx) => (
+                                    <tr key={chg.id || cIdx} className="hover:bg-slate-50">
+                                      <td className="p-2.5 font-bold">{chg.chargerType}</td>
+                                      <td className="p-2.5 font-black text-purple-800 bg-purple-50/70 rounded-lg">
+                                        {chg.quantity} Units
+                                      </td>
+                                      <td className="p-2.5 font-mono text-[11px]">
+                                        {chg.serialNumbers && chg.serialNumbers.length > 0 
+                                          ? chg.serialNumbers.join(', ') 
+                                          : (chg.startNo ? `${chg.startNo} to ${chg.endNo}` : 'Bulk Batch')}
+                                      </td>
+                                      <td className="p-2.5 text-[11px]">
+                                        {chg.isUnderWarranty ? `${chg.warrantyDurationMonths || 12} Months` : 'No Warranty'}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </>
       )}
 
-      {/* Audit Trail Section */}
+      {/* Audit Trail Tab */}
       {activeTab === 'audit_trail' && (
         <div className="space-y-4 font-sans">
-          {/* Audit Control Bar: Search & Action Filters */}
           <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-3 justify-between items-center">
-            {/* Search */}
             <div className="relative w-full md:w-96">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
               <input
@@ -1174,7 +1165,6 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
               )}
             </div>
 
-            {/* Action Filters */}
             <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 w-full md:w-auto text-xs font-bold flex-wrap gap-1">
               <button
                 onClick={() => setAuditActionFilter('all')}
@@ -1194,451 +1184,527 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
                 <span>Added</span>
               </button>
               <button
-                onClick={() => setAuditActionFilter('remove')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                  auditActionFilter === 'remove' ? 'bg-rose-50 text-rose-900 border border-rose-200 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <PackageMinus className="h-3.5 w-3.5 text-rose-600" />
-                <span>Removed</span>
-              </button>
-              <button
-                onClick={() => setAuditActionFilter('update')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                  auditActionFilter === 'update' ? 'bg-sky-50 text-sky-900 border border-sky-200 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Edit3 className="h-3.5 w-3.5 text-sky-600" />
-                <span>Updated</span>
-              </button>
-              <button
                 onClick={() => setAuditActionFilter('finish')}
                 className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                  auditActionFilter === 'finish' ? 'bg-emerald-50 text-emerald-900 border border-emerald-200 shadow-sm' : 'text-slate-500 hover:text-slate-800'
+                  auditActionFilter === 'finish' ? 'bg-indigo-50 text-indigo-900 border border-indigo-200 shadow-sm' : 'text-slate-500 hover:text-slate-800'
                 }`}
               >
-                <CheckCheck className="h-3.5 w-3.5 text-emerald-600" />
-                <span>Finished</span>
-              </button>
-              <button
-                onClick={() => setAuditActionFilter('delete')}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                  auditActionFilter === 'delete' ? 'bg-amber-50 text-amber-900 border border-amber-200 shadow-sm' : 'text-slate-500 hover:text-slate-800'
-                }`}
-              >
-                <Trash2 className="h-3.5 w-3.5 text-amber-600" />
-                <span>Deleted</span>
+                <CheckCircle2 className="h-3.5 w-3.5 text-indigo-600" />
+                <span>Verified</span>
               </button>
             </div>
           </div>
 
-          {/* Audit Logs List / Timeline */}
-          {challanAuditLogs.length === 0 ? (
-            <div className="bg-white p-12 rounded-3xl border border-slate-200 text-center space-y-3">
-              <FileClock className="h-12 w-12 text-slate-300 mx-auto" />
-              <h3 className="text-sm font-bold text-slate-700">No Challan Audit Logs Found</h3>
-              <p className="text-xs text-slate-400 max-w-sm mx-auto">
-                No historical modification events match your current filter criteria. Actions such as adding items, removing items, updating details, or finishing challans will automatically generate audit entries here.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {challanAuditLogs.map((log) => {
-                const action = (log.action || '').toLowerCase();
-                const isAttach = action.includes('attach') || (log.details || '').toLowerCase().includes('attached');
-                const isRemove = action.includes('remove') || (log.details || '').toLowerCase().includes('removed');
-                const isFinish = action.includes('finish') || (log.details || '').toLowerCase().includes('finished');
-                const isUpdate = action.includes('update') || (log.details || '').toLowerCase().includes('updated');
-                const isDelete = action.includes('delete') || (log.details || '').toLowerCase().includes('deleted');
-
-                let badgeBg = 'bg-slate-100 text-slate-800 border-slate-200';
-                let actionLabel = log.action || 'Modification';
-                let icon = <FileClock className="h-4 w-4 text-slate-600" />;
-
-                if (isAttach) {
-                  badgeBg = 'bg-emerald-50 text-emerald-800 border-emerald-200';
-                  actionLabel = 'Item Attached';
-                  icon = <PackagePlus className="h-4 w-4 text-emerald-600" />;
-                } else if (isRemove) {
-                  badgeBg = 'bg-rose-50 text-rose-800 border-rose-200';
-                  actionLabel = 'Item Removed';
-                  icon = <PackageMinus className="h-4 w-4 text-rose-600" />;
-                } else if (isFinish) {
-                  badgeBg = 'bg-emerald-100 text-emerald-900 border-emerald-300';
-                  actionLabel = 'Challan Finished & Verified';
-                  icon = <CheckCheck className="h-4 w-4 text-emerald-700" />;
-                } else if (isUpdate) {
-                  badgeBg = 'bg-sky-50 text-sky-800 border-sky-200';
-                  actionLabel = 'Details Updated';
-                  icon = <Edit3 className="h-4 w-4 text-sky-600" />;
-                } else if (isDelete) {
-                  badgeBg = 'bg-amber-50 text-amber-900 border-amber-200';
-                  actionLabel = 'Challan Deleted';
-                  icon = <Trash2 className="h-4 w-4 text-amber-600" />;
-                }
-
-                return (
-                  <div
-                    key={log.id}
-                    className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-xs hover:border-indigo-300 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                  >
-                    <div className="flex items-start gap-3.5">
-                      <div className={`p-3 rounded-2xl border shrink-0 ${badgeBg}`}>
-                        {icon}
-                      </div>
-
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${badgeBg}`}>
-                            {actionLabel}
-                          </span>
-                          <span className="text-xs font-semibold text-slate-500">
-                            • {new Date(log.timestamp).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
-                          </span>
-                        </div>
-
-                        <p className="text-xs font-bold text-slate-800 leading-relaxed">
-                          {log.details || 'No detailed log provided.'}
-                        </p>
-
-                        <div className="flex items-center gap-3 text-[11px] font-medium text-slate-500 pt-0.5 flex-wrap">
-                          <span className="flex items-center gap-1 bg-slate-100 text-slate-700 px-2 py-0.5 rounded-md font-semibold border border-slate-200">
-                            <UserCheck className="h-3 w-3 text-slate-500" />
-                            <span>{log.operator || log.operatorName || log.username || 'System'}</span>
-                            {log.operatorRole && (
-                              <span className="text-[10px] bg-slate-200 text-slate-800 px-1.5 rounded uppercase font-bold">
-                                {log.operatorRole}
-                              </span>
-                            )}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
+          <div className="bg-white rounded-2xl border border-slate-200 p-4 space-y-3">
+            {challanAuditLogs.length === 0 ? (
+              <div className="py-12 text-center space-y-2">
+                <FileClock className="h-10 w-10 text-slate-300 mx-auto" />
+                <p className="text-xs font-bold text-slate-600">No Challan audit logs found</p>
+              </div>
+            ) : (
+              challanAuditLogs.map(log => (
+                <div key={log.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs space-y-1.5">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-bold bg-indigo-50 text-indigo-900 border border-indigo-200">
+                      {log.action}
+                    </span>
+                    <span className="font-mono text-slate-400">
+                      {new Date(log.timestamp).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* EDIT MODAL */}
-      {editingChallan && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden space-y-4">
-            <div className="bg-slate-900 text-white p-6 flex justify-between items-center">
-              <div>
-                <h3 className="text-base font-black">Edit Delivery Challan Details</h3>
-                <p className="text-xs text-slate-400 mt-0.5">Modify buyer information or bill numbers for Challan #{editingChallan.challanNo}</p>
-              </div>
-              <button 
-                onClick={() => setEditingChallan(null)} 
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSaveEdit} className="p-6 space-y-4 font-sans text-xs">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
-                  Delivery Challan Number
-                </label>
-                <input
-                  type="text"
-                  value={editChallanNo}
-                  onChange={(e) => setEditChallanNo(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800 font-bold focus:border-cyan-500 outline-none uppercase"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
-                  Buyer Name
-                </label>
-                <input
-                  type="text"
-                  value={editBuyerName}
-                  onChange={(e) => setEditBuyerName(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800 font-bold focus:border-cyan-500 outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
-                  Buyer Contact Number
-                </label>
-                <input
-                  type="text"
-                  value={editBuyerContact}
-                  onChange={(e) => setEditBuyerContact(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800 font-bold focus:border-cyan-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
-                  Sales Bill Number
-                </label>
-                <input
-                  type="text"
-                  value={editBillNo}
-                  onChange={(e) => setEditBillNo(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800 font-bold focus:border-cyan-500 outline-none uppercase"
-                />
-              </div>
-
-              <div className="pt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEditingChallan(null)}
-                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-bold rounded-xl shadow-md cursor-pointer disabled:opacity-50"
-                >
-                  {isSubmitting ? 'Saving...' : 'Save Changes'}
-                </button>
-              </div>
-            </form>
+                  <p className="font-bold text-slate-800 leading-relaxed">
+                    {log.details || 'No detailed log.'}
+                  </p>
+                  <div className="flex items-center gap-2 text-[10px] text-slate-500 pt-1 font-semibold">
+                    <UserCheck className="h-3 w-3 text-slate-400" />
+                    <span>By <strong className="text-slate-800">{log.operator || log.operatorName || log.username}</strong> ({log.operatorRole || 'User'})</span>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
 
-      {/* ADD ITEM TO CHALLAN MODAL */}
-      {addItemModalTarget && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-200 overflow-hidden space-y-4">
-            <div className="bg-slate-900 text-white p-6 flex justify-between items-center">
-              <div>
-                <h3 className="text-base font-black">Add Item to Delivery Challan</h3>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Attach an unassigned Scooter, Battery, or Charger to Challan #{addItemModalTarget.challanNo}
-                </p>
+      {/* MANAGER SALES ORDER & CHALLAN EDITOR MODAL */}
+      {editingOrder && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-white rounded-3xl max-w-4xl w-full shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] animate-in fade-in zoom-in duration-150">
+            {/* Modal Header */}
+            <div className="bg-slate-900 text-white p-5 sm:p-6 flex items-center justify-between shrink-0 border-b border-slate-800">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-cyan-500/20 border border-cyan-400/30 text-cyan-400 rounded-2xl">
+                  <Truck className="h-6 w-6" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-base sm:text-lg font-black tracking-tight text-white">
+                      Manager Order &amp; Delivery Challan Editor
+                    </h3>
+                    <span className="bg-cyan-500/20 text-cyan-300 font-mono text-xs px-2 py-0.5 rounded font-bold border border-cyan-400/30">
+                      #{editingOrder.orderNo}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5 font-medium">
+                    Adjust quantities, edit chassis/serials, and assign mandatory Challan &amp; Bill Numbers to finish sale.
+                  </p>
+                </div>
               </div>
               <button 
-                onClick={() => { setAddItemModalTarget(null); setSelectedItemId(''); }} 
-                className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+                onClick={closeAndResetEditModal} 
+                className="p-2 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 cursor-pointer"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleAttachItem} className="p-6 space-y-4 font-sans text-xs">
-              <div>
-                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1.5">
-                  Select Item Category
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => { setAddItemType('scooter'); setSelectedItemId(''); }}
-                    className={`p-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer border ${
-                      addItemType === 'scooter' ? 'bg-cyan-50 border-cyan-500 text-cyan-900 font-extrabold' : 'bg-slate-50 border-slate-200 text-slate-600'
-                    }`}
-                  >
-                    <span>🛵 Scooter</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setAddItemType('battery'); setSelectedItemId(''); }}
-                    className={`p-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer border ${
-                      addItemType === 'battery' ? 'bg-emerald-50 border-emerald-500 text-emerald-900 font-extrabold' : 'bg-slate-50 border-slate-200 text-slate-600'
-                    }`}
-                  >
-                    <span>🔋 Battery</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setAddItemType('charger'); setSelectedItemId(''); }}
-                    className={`p-2.5 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer border ${
-                      addItemType === 'charger' ? 'bg-purple-50 border-purple-500 text-purple-900 font-extrabold' : 'bg-slate-50 border-slate-200 text-slate-600'
-                    }`}
-                  >
-                    <span>⚡ Charger</span>
-                  </button>
+            {/* Modal Form Body */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-6 flex-1 text-xs">
+              
+              {/* SECTION 1: MANDATORY CHALLAN & BILL NUMBER */}
+              <div className="bg-gradient-to-r from-cyan-950 via-slate-900 to-slate-900 text-white p-4 sm:p-5 rounded-2xl space-y-3 shadow-sm border border-cyan-800/40">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="h-5 w-5 text-cyan-400" />
+                  <h4 className="font-extrabold text-sm text-cyan-200">
+                    Mandatory Sales &amp; Delivery Documents
+                  </h4>
+                  <span className="text-[10px] bg-cyan-500/20 text-cyan-300 border border-cyan-400/40 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider ml-auto">
+                    Required For Sale
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wide mb-1">
+                      Delivery Challan Number <span className="text-cyan-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. CH-2026-001"
+                      value={soChallanNo}
+                      onChange={(e) => setSoChallanNo(e.target.value)}
+                      className="w-full bg-slate-800/90 border border-slate-700 rounded-xl p-3 text-white font-bold text-sm focus:border-cyan-400 outline-none uppercase font-mono"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-300 uppercase tracking-wide mb-1">
+                      Sales Bill / Invoice Number <span className="text-cyan-400">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. INV-9001"
+                      value={soSalesBillNo}
+                      onChange={(e) => setSoSalesBillNo(e.target.value)}
+                      className="w-full bg-slate-800/90 border border-slate-700 rounded-xl p-3 text-white font-bold text-sm focus:border-cyan-400 outline-none uppercase font-mono"
+                    />
+                  </div>
                 </div>
               </div>
 
+              {/* SECTION 2: CUSTOMER & LOGISTICS DETAILS */}
+              <div className="bg-slate-50 p-4 sm:p-5 rounded-2xl border border-slate-200 space-y-3">
+                <h4 className="font-extrabold text-slate-900 text-xs uppercase tracking-wide flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-slate-500" />
+                  <span>Customer &amp; Delivery Destination</span>
+                </h4>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                      Buyer Name
+                    </label>
+                    <input
+                      type="text"
+                      value={soBuyerName}
+                      onChange={(e) => setSoBuyerName(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-slate-900 font-bold outline-none focus:border-cyan-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                      Buyer Contact
+                    </label>
+                    <input
+                      type="text"
+                      value={soBuyerContact}
+                      onChange={(e) => setSoBuyerContact(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-slate-900 font-bold outline-none focus:border-cyan-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                      Delivery Location
+                    </label>
+                    <input
+                      type="text"
+                      value={soDeliveryLocation}
+                      onChange={(e) => setSoDeliveryLocation(e.target.value)}
+                      className="w-full bg-white border border-slate-200 rounded-xl p-2.5 text-slate-900 font-bold outline-none focus:border-cyan-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* SECTION 3: ITEMS & LAST-MINUTE QUANTITY / SERIAL EDITING */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-extrabold text-slate-900 text-xs uppercase tracking-wide flex items-center gap-2">
+                      <Zap className="h-4 w-4 text-cyan-600" />
+                      <span>Order Items &amp; Serial Numbers Manager</span>
+                    </h4>
+                    <p className="text-[11px] text-slate-500 font-medium">
+                      Customer made last-minute quantity changes? Update item quantities, chassis numbers, or serials below.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={addNewItemLine}
+                    className="px-3 py-1.5 bg-cyan-50 hover:bg-cyan-100 text-cyan-900 border border-cyan-200 rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4 text-cyan-600" />
+                    <span>Add Item</span>
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {soItems.map((item, idx) => (
+                    <div key={item.id || idx} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-2xs space-y-3 relative">
+                      {/* Item Line Header */}
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-slate-900 text-white font-bold text-[10px] flex items-center justify-center">
+                            {idx + 1}
+                          </span>
+                          <select
+                            value={item.itemType}
+                            onChange={(e) => updateItemField(idx, 'itemType', e.target.value as any)}
+                            className="bg-slate-100 font-extrabold text-slate-800 rounded-lg p-1.5 border border-slate-200 outline-none text-xs"
+                          >
+                            <option value="scooter">🛵 Scooter</option>
+                            <option value="battery">🔋 Battery</option>
+                            <option value="charger">⚡ Charger</option>
+                          </select>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => removeItemLine(idx)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                          title="Delete Item Line"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      {/* Details & Quantity Stepper */}
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                            {item.itemType === 'scooter' ? 'Model Name' : (item.itemType === 'battery' ? 'Battery Series' : 'Charger Type')}
+                          </label>
+                                                    {item.itemType === 'scooter' ? (
+                            <select
+                              value={item.productName || ''}
+                              onChange={(e) => {
+                                updateItemField(idx, 'productName', e.target.value);
+                                // Also update color if the new product has colors and current color isn't in it
+                                const prod = products.find(p => p.name === e.target.value);
+                                if (prod && prod.colors.length > 0 && !prod.colors.includes(item.color || '')) {
+                                  updateItemField(idx, 'color', prod.colors[0]);
+                                }
+                              }}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 font-bold outline-none"
+                            >
+                              <option value="">Select Model</option>
+                              {products.map(p => (
+                                <option key={p.id} value={p.name}>{p.name}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              type="text"
+                              value={item.batteryType || item.chargerType || ''}
+                              onChange={(e) => {
+                                if (item.itemType === 'battery') updateItemField(idx, 'batteryType', e.target.value);
+                                else updateItemField(idx, 'chargerType', e.target.value);
+                              }}
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 font-bold outline-none"
+                              placeholder="e.g. 60V 28Ah"
+                            />
+                          )}
+                        </div>
+
+                        {item.itemType === 'scooter' && (
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                              Color
+                            </label>
+                            {(() => {
+                              const prod = products.find(p => p.name === item.productName);
+                              if (prod && prod.colors && prod.colors.length > 0) {
+                                return (
+                                  <select
+                                    value={item.color || ''}
+                                    onChange={(e) => updateItemField(idx, 'color', e.target.value)}
+                                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 font-bold outline-none"
+                                  >
+                                    <option value="">Select Color</option>
+                                    {prod.colors.map(c => (
+                                      <option key={c} value={c}>{c}</option>
+                                    ))}
+                                  </select>
+                                );
+                              }
+                              return (
+                                <input
+                                  type="text"
+                                  value={item.color || ''}
+                                  onChange={(e) => updateItemField(idx, 'color', e.target.value)}
+                                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-slate-900 font-bold outline-none"
+                                  placeholder="e.g. Matte Black"
+                                />
+                              );
+                            })()}
+                          </div>
+                        )}
+
+                        {/* Quantity Stepper Controller */}
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
+                            Quantity (Units)
+                          </label>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => updateItemQuantity(idx, item.quantity - 1)}
+                              className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-black cursor-pointer border border-slate-200"
+                            >
+                              <Minus className="h-3.5 w-3.5" />
+                            </button>
+                            <input
+                              type="number"
+                              min="1"
+                              value={item.quantity}
+                              onChange={(e) => updateItemQuantity(idx, parseInt(e.target.value) || 1)}
+                              className="w-20 bg-slate-50 border border-slate-200 rounded-xl p-2 text-center text-slate-900 font-black text-sm outline-none focus:border-cyan-500"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateItemQuantity(idx, item.quantity + 1)}
+                              className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-black cursor-pointer border border-slate-200"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Scooter Chassis Numbers List Sub-Editor */}
+                      {item.itemType === 'scooter' && (
+                        <div className="pt-2 space-y-2 bg-slate-50/70 p-3 rounded-xl border border-slate-200">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-extrabold text-cyan-900 uppercase tracking-wide">
+                              Chassis Numbers ({item.chassisNumbers?.length || 0} assigned)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => addChassisSlot(idx)}
+                              className="text-[10px] font-bold text-cyan-700 hover:text-cyan-900 bg-cyan-100/80 px-2 py-0.5 rounded cursor-pointer"
+                            >
+                              + Add Chassis
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {(item.chassisNumbers || []).map((chassis, cIdx) => {
+                              const availableForModel = scooterUnits.filter(u => 
+                                (u.status === 'available' || u.chassisNo === chassis) && 
+                                (!item.productName || u.modelName === item.productName) &&
+                                (!item.color || u.color === item.color)
+                              );
+                              return (
+                              <div key={cIdx} className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-mono text-slate-400 shrink-0 w-6">#{cIdx + 1}</span>
+                                <select
+                                  value={chassis}
+                                  onChange={(e) => updateChassisNumber(idx, cIdx, e.target.value)}
+                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-slate-900 font-mono font-bold text-xs outline-none focus:border-cyan-500 cursor-pointer"
+                                >
+                                  <option value="">-- Select Chassis --</option>
+                                  {availableForModel.map(u => (
+                                    <option key={u.id} value={u.chassisNo}>
+                                      {u.chassisNo} {u.motorNo ? `(Motor: ${u.motorNo})` : ''}
+                                    </option>
+                                  ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => removeChassisSlot(idx, cIdx)}
+                                  className="p-1 text-slate-400 hover:text-rose-600 rounded cursor-pointer"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Battery / Charger Serials Sub-Editor */}
+                      {(item.itemType === 'battery' || item.itemType === 'charger') && (
+                        <div className="pt-2 space-y-2 bg-slate-50/70 p-3 rounded-xl border border-slate-200">
+                          <span className="text-[10px] font-extrabold text-emerald-900 uppercase tracking-wide">
+                            Series / Serial Numbers Range
+                          </span>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input
+                              type="text"
+                              placeholder="Start Serial No (e.g. BAT-1001)"
+                              value={item.startNo || ''}
+                              onChange={(e) => updateItemField(idx, 'startNo', e.target.value)}
+                              className="bg-white border border-slate-200 rounded-lg p-2 font-mono text-xs text-slate-900 font-bold outline-none"
+                            />
+                            <input
+                              type="text"
+                              placeholder="End Serial No (e.g. BAT-1020)"
+                              value={item.endNo || ''}
+                              onChange={(e) => updateItemField(idx, 'endNo', e.target.value)}
+                              className="bg-white border border-slate-200 rounded-lg p-2 font-mono text-xs text-slate-900 font-bold outline-none"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* SECTION 4: ORDER NOTES */}
               <div>
                 <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1">
-                  Choose Item to Attach
+                  Manager Verification Notes
                 </label>
-                {addItemType === 'scooter' && (
-                  availableScooterOptions.length === 0 ? (
-                    <p className="p-3 bg-amber-50 text-amber-800 rounded-xl text-xs border border-amber-200">
-                      No unassigned available scooters found.
-                    </p>
-                  ) : (
-                    <select
-                      value={selectedItemId}
-                      onChange={(e) => setSelectedItemId(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800 font-bold focus:border-cyan-500 outline-none"
-                      required
-                    >
-                      <option value="">-- Select Available Scooter --</option>
-                      {availableScooterOptions.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          Chassis: {s.chassisNo} | Model: {s.modelName} ({s.color})
-                        </option>
-                      ))}
-                    </select>
-                  )
-                )}
-
-                {addItemType === 'battery' && (
-                  availableBatteryOptions.length === 0 ? (
-                    <p className="p-3 bg-amber-50 text-amber-800 rounded-xl text-xs border border-amber-200">
-                      No unassigned standalone battery sales found.
-                    </p>
-                  ) : (
-                    <select
-                      value={selectedItemId}
-                      onChange={(e) => setSelectedItemId(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800 font-bold focus:border-cyan-500 outline-none"
-                      required
-                    >
-                      <option value="">-- Select Battery Sale/Hold --</option>
-                      {availableBatteryOptions.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          Series: {b.batterySeries} | Qty: {b.quantity} (Buyer: {b.buyerName})
-                        </option>
-                      ))}
-                    </select>
-                  )
-                )}
-
-                {addItemType === 'charger' && (
-                  availableChargerOptions.length === 0 ? (
-                    <p className="p-3 bg-amber-50 text-amber-800 rounded-xl text-xs border border-amber-200">
-                      No unassigned standalone charger sales found.
-                    </p>
-                  ) : (
-                    <select
-                      value={selectedItemId}
-                      onChange={(e) => setSelectedItemId(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-800 font-bold focus:border-cyan-500 outline-none"
-                      required
-                    >
-                      <option value="">-- Select Charger Sale/Hold --</option>
-                      {availableChargerOptions.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          Type: {c.chargerType} | Qty: {c.quantity} (Buyer: {c.buyerName})
-                        </option>
-                      ))}
-                    </select>
-                  )
-                )}
+                <textarea
+                  rows={2}
+                  value={soNotes}
+                  onChange={(e) => setSoNotes(e.target.value)}
+                  placeholder="Add any specific verification notes regarding driver, paper gate pass, or payment terms..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-slate-900 font-medium outline-none focus:border-cyan-500"
+                />
               </div>
 
-              <div className="pt-2 flex justify-end gap-2">
+            </div>
+
+            {/* Modal Footer Actions */}
+            <div className="p-4 sm:p-5 bg-slate-50 border-t border-slate-200 shrink-0 flex items-center justify-between gap-3 flex-wrap">
+              <button
+                type="button"
+                onClick={closeAndResetEditModal}
+                className="px-4 py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-800 text-xs font-bold rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => { setAddItemModalTarget(null); setSelectedItemId(''); }}
-                  className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
+                  disabled={isSubmitting}
+                  onClick={() => handleSaveSalesOrder(false)}
+                  className="px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  Cancel
+                  <Save className="h-4 w-4 text-cyan-400" />
+                  <span>{isSubmitting ? 'Saving...' : 'Save Progress (Draft)'}</span>
                 </button>
+
                 <button
-                  type="submit"
-                  disabled={isSubmitting || !selectedItemId}
-                  className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-bold rounded-xl shadow-md cursor-pointer disabled:opacity-50"
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => handleSaveSalesOrder(true)}
+                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl shadow-md cursor-pointer disabled:opacity-50 flex items-center gap-2 active:scale-95 transition-all"
                 >
-                  {isSubmitting ? 'Attaching...' : 'Attach Item to Challan'}
+                  <CheckCircle2 className="h-4 w-4" />
+                  <span>{isSubmitting ? 'Finalizing...' : 'Finalize Sale & Save Challan'}</span>
                 </button>
               </div>
-            </form>
+            </div>
           </div>
         </div>
       )}
 
-      {/* PRINT MODAL */}
+      {/* PRINT DELIVERY CHALLAN PASS MODAL */}
       {printChallan && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl border border-slate-200 overflow-hidden my-8">
-            <div className="bg-slate-900 text-white p-4 flex justify-between items-center print:hidden">
-              <span className="text-xs font-bold flex items-center gap-2">
-                <Printer className="h-4 w-4 text-cyan-400" /> Print Delivery Challan Pass
-              </span>
+        <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-3xl w-full p-8 shadow-2xl space-y-6 text-slate-900 font-sans my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-200">
+              <div>
+                <h2 className="text-xl font-black uppercase text-slate-900 tracking-wide">
+                  Official Delivery Challan &amp; Gate Pass
+                </h2>
+                <p className="text-xs text-slate-500 font-bold">Scooter Warehouse Dispatch Registry</p>
+              </div>
+
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => window.print()}
-                  className="px-3 py-1.5 bg-cyan-600 text-white text-xs font-bold rounded-xl hover:bg-cyan-500 cursor-pointer"
+                  className="px-4 py-2 bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer shadow-md"
                 >
-                  Print
+                  <Printer className="h-4 w-4" />
+                  <span>Print Document</span>
                 </button>
+
                 <button
                   onClick={() => setPrintChallan(null)}
-                  className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+                  className="p-2 text-slate-400 hover:text-slate-700 rounded-xl cursor-pointer"
                 >
                   <X className="h-5 w-5" />
                 </button>
               </div>
             </div>
 
-            {/* Printable Pass */}
-            <div className="p-8 space-y-6 font-sans text-slate-800">
-              {/* Header Pass Title */}
-              <div className="border-b-2 border-slate-900 pb-4 flex justify-between items-start">
+            {/* Printable Area */}
+            <div className="space-y-6 text-xs font-medium">
+              <div className="grid grid-cols-2 gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
                 <div>
-                  <h2 className="text-2xl font-black text-slate-900 uppercase tracking-tight">SENZO EV WAREHOUSE</h2>
-                  <p className="text-xs text-slate-500">Official Truck Dispatch Gate Pass & Delivery Challan</p>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase">Customer / Buyer</p>
+                  <p className="text-sm font-black text-slate-900">{printChallan.buyerName}</p>
+                  {printChallan.buyerContact && <p className="text-xs text-slate-600 font-bold">Contact: {printChallan.buyerContact}</p>}
                 </div>
+
                 <div className="text-right">
-                  <span className="text-lg font-black text-cyan-900 block">CHALLAN #{printChallan.challanNo}</span>
-                  <span className="text-xs text-slate-500">Date: {new Date(printChallan.date).toLocaleDateString()}</span>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase">Challan Number</p>
+                  <p className="text-base font-black text-cyan-800 font-mono">#{printChallan.challanNo}</p>
+                  {printChallan.salesBillNo && <p className="text-xs text-slate-700 font-bold">Bill No: #{printChallan.salesBillNo}</p>}
+                  <p className="text-[10px] text-slate-500 mt-1">Date: {new Date(printChallan.date).toLocaleDateString()}</p>
                 </div>
               </div>
 
-              {/* Info Grid */}
-              <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs">
-                <div>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase">Consignee / Buyer</p>
-                  <p className="font-bold text-slate-900 text-sm">{printChallan.buyerName}</p>
-                  {printChallan.buyerContact && <p className="text-slate-600">Contact: {printChallan.buyerContact}</p>}
-                </div>
-                <div>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase">Sales Bill Reference</p>
-                  <p className="font-bold text-slate-900 text-sm">{printChallan.salesBillNo || 'N/A'}</p>
-                  <p className="text-slate-600">Verification Status: <strong>{printChallan.status.toUpperCase()}</strong></p>
-                </div>
-              </div>
-
-              {/* Items List */}
+              {/* Items Table */}
               <div className="space-y-4">
-                <h4 className="text-xs font-bold uppercase text-slate-700 tracking-wider">Dispatched Cargo Manifest</h4>
-
                 {printChallan.scooters.length > 0 && (
                   <div>
-                    <p className="text-[11px] font-bold text-slate-600 mb-1">Scooter Vehicles ({printChallan.scooters.length} Units):</p>
-                    <table className="w-full text-left text-xs border border-slate-200 rounded-lg overflow-hidden">
-                      <thead className="bg-slate-100 text-[10px] font-bold uppercase">
+                    <h4 className="font-extrabold text-xs uppercase text-slate-700 mb-2">Scooters Dispatched</h4>
+                    <table className="w-full text-left border-collapse border border-slate-200 text-xs">
+                      <thead className="bg-slate-100 font-bold text-[10px] uppercase text-slate-600">
                         <tr>
-                          <th className="p-2">Model</th>
-                          <th className="p-2">Color</th>
-                          <th className="p-2">Chassis No</th>
-                          <th className="p-2">Motor No</th>
-                          <th className="p-2">Controller No</th>
-                          <th className="p-2">Batteries</th>
+                          <th className="p-2 border border-slate-200">Model</th>
+                          <th className="p-2 border border-slate-200">Color</th>
+                          <th className="p-2 border border-slate-200">Chassis No</th>
+                          <th className="p-2 border border-slate-200">Motor No</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {printChallan.scooters.map((s) => (
-                          <tr key={s.id}>
-                            <td className="p-2 font-bold">{s.modelName}</td>
-                            <td className="p-2">{s.color}</td>
-                            <td className="p-2 font-mono font-bold text-cyan-900">{s.chassisNo}</td>
-                            <td className="p-2 text-[10px]">{s.motorNo}</td>
-                            <td className="p-2 text-[10px]">{s.controllerNo}</td>
-                            <td className="p-2 text-[10px] font-bold text-emerald-800">
-                              {(s.batterySerials || []).join(', ') || 'None'}
-                            </td>
+                      <tbody>
+                        {printChallan.scooters.map((s, idx) => (
+                          <tr key={idx} className="border-b border-slate-200 font-semibold">
+                            <td className="p-2 border border-slate-200 font-bold">{s.modelName}</td>
+                            <td className="p-2 border border-slate-200">{s.color}</td>
+                            <td className="p-2 border border-slate-200 font-mono font-bold text-cyan-800">{s.chassisNo}</td>
+                            <td className="p-2 border border-slate-200 font-mono">{s.motorNo}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1648,53 +1714,23 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
 
                 {printChallan.batteries.length > 0 && (
                   <div>
-                    <p className="text-[11px] font-bold text-slate-600 mb-1">Standalone Battery Packs:</p>
-                    <table className="w-full text-left text-xs border border-slate-200 rounded-lg overflow-hidden">
-                      <thead className="bg-slate-100 text-[10px] font-bold uppercase">
+                    <h4 className="font-extrabold text-xs uppercase text-slate-700 mb-2">Batteries Dispatched</h4>
+                    <table className="w-full text-left border-collapse border border-slate-200 text-xs">
+                      <thead className="bg-slate-100 font-bold text-[10px] uppercase text-slate-600">
                         <tr>
-                          <th className="p-2">Series</th>
-                          <th className="p-2">Quantity</th>
-                          <th className="p-2">Serial Numbers / Barcodes</th>
+                          <th className="p-2 border border-slate-200">Series</th>
+                          <th className="p-2 border border-slate-200">Quantity</th>
+                          <th className="p-2 border border-slate-200">Serial Numbers</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {printChallan.batteries.map((b) => {
-                          const serialGroup = groupSerialsIntoRangesAndIndividuals(
-                            b.serialNumbers,
-                            b.startNo,
-                            b.endNo,
-                            b.quantity,
-                            b.batterySeries
-                          );
-
-                          return (
-                            <tr key={b.id}>
-                              <td className="p-2 font-bold">{b.batterySeries}</td>
-                              <td className="p-2 font-black text-emerald-700">{b.quantity} {b.quantity === 1 ? 'Unit' : 'Units'}</td>
-                              <td className="p-2 text-[10px] font-mono">
-                                {serialGroup.allSerials.length > 0 ? (
-                                  <div className="space-y-1">
-                                    {serialGroup.ranges.length > 0 && (
-                                      <div className="font-bold text-slate-800">
-                                        In Series: {serialGroup.ranges.map(r => `${r.text} (${r.count} ${r.count === 1 ? 'Unit' : 'Units'})`).join(', ')}
-                                      </div>
-                                    )}
-                                    {serialGroup.standalone.length > 0 && (
-                                      <div className="font-bold text-amber-800">
-                                        Individual: {serialGroup.standalone.join(', ')}
-                                      </div>
-                                    )}
-                                    <div className="leading-relaxed bg-slate-50 p-1.5 rounded border border-slate-200 font-bold text-slate-700 mt-1">
-                                      {serialGroup.allSerials.join(', ')}
-                                    </div>
-                                  </div>
-                                ) : (
-                                  `Bulk Batch (${b.quantity} ${b.quantity === 1 ? 'Unit' : 'Units'})`
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
+                      <tbody>
+                        {printChallan.batteries.map((b, idx) => (
+                          <tr key={idx} className="border-b border-slate-200 font-semibold">
+                            <td className="p-2 border border-slate-200 font-bold">{b.batterySeries}</td>
+                            <td className="p-2 border border-slate-200 font-bold">{b.quantity} Units</td>
+                            <td className="p-2 border border-slate-200 font-mono">{b.serialNumbers?.join(', ') || `${b.startNo} to ${b.endNo}`}</td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -1702,49 +1738,23 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
 
                 {printChallan.chargers.length > 0 && (
                   <div>
-                    <p className="text-[11px] font-bold text-slate-600 mb-1">Standalone Chargers:</p>
-                    <table className="w-full text-left text-xs border border-slate-200 rounded-lg overflow-hidden">
-                      <thead className="bg-slate-100 text-[10px] font-bold uppercase">
+                    <h4 className="font-extrabold text-xs uppercase text-slate-700 mb-2">Chargers Dispatched</h4>
+                    <table className="w-full text-left border-collapse border border-slate-200 text-xs">
+                      <thead className="bg-slate-100 font-bold text-[10px] uppercase text-slate-600">
                         <tr>
-                          <th className="p-2">Charger Type</th>
-                          <th className="p-2">Quantity</th>
-                          <th className="p-2">Serial Numbers / Barcodes</th>
+                          <th className="p-2 border border-slate-200">Charger Type</th>
+                          <th className="p-2 border border-slate-200">Quantity</th>
+                          <th className="p-2 border border-slate-200">Serial Numbers</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {printChallan.chargers.map((c) => {
-                          const serialGroup = groupSerialsIntoRangesAndIndividuals(
-                            c.serialNumbers,
-                            c.startNo,
-                            c.endNo,
-                            c.quantity,
-                            c.chargerType
-                          );
-
-                          return (
-                            <tr key={c.id}>
-                              <td className="p-2 font-bold">{c.chargerType}</td>
-                              <td className="p-2 font-black text-purple-700">{c.quantity} {c.quantity === 1 ? 'Unit' : 'Units'}</td>
-                              <td className="p-2 text-[10px] font-mono">
-                                <div className="space-y-1">
-                                  {serialGroup.ranges.length > 0 && (
-                                    <div className="font-bold text-slate-800">
-                                      In Series: {serialGroup.ranges.map(r => `${r.text} (${r.count} ${r.count === 1 ? 'Unit' : 'Units'})`).join(', ')}
-                                    </div>
-                                  )}
-                                  {serialGroup.standalone.length > 0 && (
-                                    <div className="font-bold text-amber-800">
-                                      Individual: {serialGroup.standalone.join(', ')}
-                                    </div>
-                                  )}
-                                  <div className="leading-relaxed bg-slate-50 p-1.5 rounded border border-slate-200 font-bold text-slate-700 mt-1">
-                                    {serialGroup.allSerials.join(', ')}
-                                  </div>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
+                      <tbody>
+                        {printChallan.chargers.map((c, idx) => (
+                          <tr key={idx} className="border-b border-slate-200 font-semibold">
+                            <td className="p-2 border border-slate-200 font-bold">{c.chargerType}</td>
+                            <td className="p-2 border border-slate-200 font-bold">{c.quantity} Units</td>
+                            <td className="p-2 border border-slate-200 font-mono">{c.serialNumbers?.join(', ') || `${c.startNo} to ${c.endNo}`}</td>
+                          </tr>
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -1765,145 +1775,10 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
         </div>
       )}
 
-      {/* Finish & Verify Confirmation Modal */}
-      {finishConfirmationTarget && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 font-sans space-y-4 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-center gap-3 text-emerald-600">
-              <div className="p-3 bg-emerald-100 rounded-2xl shrink-0">
-                <CheckCircle2 className="h-6 w-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900">
-                  Finish &amp; Verify Sale?
-                </h3>
-                <p className="text-xs text-slate-500 font-medium">Delivery Challan Verification</p>
-              </div>
-            </div>
-
-            <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-900 space-y-2">
-              <p className="font-bold">
-                Are you sure you want to Mark Sale as Finished &amp; Verified for Challan #{finishConfirmationTarget.challanNo}?
-              </p>
-              <p className="text-emerald-800 leading-relaxed font-medium">
-                Once verified, managers cannot edit this sale. Only Admin/Owner can make modifications.
-              </p>
-            </div>
-
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-[11px] text-slate-600 space-y-1">
-              <div className="flex justify-between font-semibold">
-                <span>Buyer Name:</span>
-                <span className="text-slate-900 font-bold">{finishConfirmationTarget.buyerName}</span>
-              </div>
-              <div className="flex justify-between font-semibold">
-                <span>Challan Number:</span>
-                <span className="font-mono font-bold text-cyan-800">#{finishConfirmationTarget.challanNo}</span>
-              </div>
-              <div className="flex justify-between font-semibold">
-                <span>Items Included:</span>
-                <span className="text-slate-900 font-bold">{finishConfirmationTarget.totalItemsCount} Total Items</span>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={() => setFinishConfirmationTarget(null)}
-                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={() => handleFinishChallan(finishConfirmationTarget)}
-                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-extrabold text-xs rounded-xl cursor-pointer transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
-              >
-                <CheckCircle2 className="h-4 w-4" />
-                <span>{isSubmitting ? 'Verifying...' : 'Yes, Finish & Verify Sale'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {deleteConfirmationTarget && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 font-sans space-y-4 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-center gap-3 text-rose-600">
-              <div className="p-3 bg-rose-100 rounded-2xl shrink-0">
-                <AlertCircle className="h-6 w-6" />
-              </div>
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900">
-                  {deleteConfirmationTarget.type === 'entire' ? 'Delete Entire Delivery Challan?' : 'Remove Item from Challan?'}
-                </h3>
-                <p className="text-xs text-slate-500 font-medium">Permission &amp; Confirmation Required</p>
-              </div>
-            </div>
-
-            <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs text-rose-900 space-y-2">
-              {deleteConfirmationTarget.type === 'entire' ? (
-                <>
-                  <p className="font-bold">
-                    ⚠️ You are about to DELETE the ENTIRE Delivery Challan #{deleteConfirmationTarget.challanNo}.
-                  </p>
-                  <p className="text-rose-800 leading-relaxed font-medium">
-                    This action will unassign all scooters, batteries, and chargers from this challan and reset their inventory status back to available.
-                  </p>
-                </>
-              ) : (
-                <>
-                  <p className="font-bold">
-                    You are about to remove this {deleteConfirmationTarget.itemType} {deleteConfirmationTarget.itemLabel ? `(${deleteConfirmationTarget.itemLabel})` : ''} from Delivery Challan #{deleteConfirmationTarget.challanNo}.
-                  </p>
-                  <p className="text-rose-800 leading-relaxed font-medium">
-                    The item will be detached and returned to available inventory.
-                  </p>
-                </>
-              )}
-            </div>
-
-            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-[11px] text-slate-600 space-y-1">
-              <div className="flex justify-between font-semibold">
-                <span>Requested By:</span>
-                <span className="text-slate-900 font-bold">{currentUser.name || currentUser.username} ({currentUser.role || 'operator'})</span>
-              </div>
-              <div className="flex justify-between font-semibold">
-                <span>Target Challan:</span>
-                <span className="font-mono font-bold text-cyan-800">#{deleteConfirmationTarget.challanNo}</span>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end gap-3 pt-2">
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={() => setDeleteConfirmationTarget(null)}
-                className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer transition-colors disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={executeDeleteAction}
-                className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white font-extrabold text-xs rounded-xl cursor-pointer transition-all shadow-md flex items-center gap-2 disabled:opacity-50"
-              >
-                <Trash2 className="h-4 w-4" />
-                <span>{isSubmitting ? 'Deleting...' : 'Yes, Confirm Delete'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* PER-CHALLAN AUDIT LOG MODAL */}
       {selectedChallanAuditModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 font-sans space-y-4 max-h-[85vh] flex flex-col animate-in fade-in zoom-in duration-150">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 shadow-2xl border border-slate-200 font-sans space-y-4 max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <div className="p-3 bg-indigo-50 border border-indigo-100 text-indigo-600 rounded-2xl">
@@ -1929,40 +1804,27 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
                 <div className="py-12 text-center space-y-2">
                   <FileClock className="h-10 w-10 text-slate-300 mx-auto" />
                   <p className="text-xs font-bold text-slate-600">No specific historical logs found for Challan #{selectedChallanAuditModal}</p>
-                  <p className="text-[11px] text-slate-400">Future changes made to this challan will automatically appear here.</p>
                 </div>
               ) : (
-                getModalChallanLogs(selectedChallanAuditModal).map((log) => {
-                  const action = (log.action || '').toLowerCase();
-                  const isAttach = action.includes('attach') || (log.details || '').toLowerCase().includes('attached');
-                  const isRemove = action.includes('remove') || (log.details || '').toLowerCase().includes('removed');
-                  const isFinish = action.includes('finish') || (log.details || '').toLowerCase().includes('finished');
-
-                  let badgeBg = 'bg-slate-100 text-slate-800 border-slate-200';
-                  if (isAttach) badgeBg = 'bg-emerald-50 text-emerald-800 border-emerald-200';
-                  else if (isRemove) badgeBg = 'bg-rose-50 text-rose-800 border-rose-200';
-                  else if (isFinish) badgeBg = 'bg-emerald-100 text-emerald-900 border-emerald-300';
-
-                  return (
-                    <div key={log.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs space-y-1.5">
-                      <div className="flex items-center justify-between text-[11px] text-slate-500">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-bold border ${badgeBg}`}>
-                          {log.action}
-                        </span>
-                        <span className="font-mono text-slate-400">
-                          {new Date(log.timestamp).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
-                        </span>
-                      </div>
-                      <p className="font-bold text-slate-800 leading-relaxed">
-                        {log.details || 'No detailed log.'}
-                      </p>
-                      <div className="flex items-center gap-2 text-[10px] text-slate-500 pt-1 font-semibold">
-                        <UserCheck className="h-3 w-3 text-slate-400" />
-                        <span>Changed by <strong className="text-slate-800">{log.operator || log.operatorName || log.username}</strong> ({log.operatorRole || 'User'})</span>
-                      </div>
+                getModalChallanLogs(selectedChallanAuditModal).map((log) => (
+                  <div key={log.id} className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs space-y-1.5">
+                    <div className="flex items-center justify-between text-[11px] text-slate-500">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md font-bold bg-indigo-50 text-indigo-900 border border-indigo-200">
+                        {log.action}
+                      </span>
+                      <span className="font-mono text-slate-400">
+                        {new Date(log.timestamp).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </span>
                     </div>
-                  );
-                })
+                    <p className="font-bold text-slate-800 leading-relaxed">
+                      {log.details || 'No detailed log.'}
+                    </p>
+                    <div className="flex items-center gap-2 text-[10px] text-slate-500 pt-1 font-semibold">
+                      <UserCheck className="h-3 w-3 text-slate-400" />
+                      <span>By <strong className="text-slate-800">{log.operator || log.operatorName || log.username}</strong> ({log.operatorRole || 'User'})</span>
+                    </div>
+                  </div>
+                ))
               )}
             </div>
 
@@ -1980,5 +1842,3 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
     </div>
   );
 };
-
-

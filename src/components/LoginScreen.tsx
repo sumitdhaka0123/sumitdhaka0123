@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Shield, User as UserIcon, Lock, Key, Battery, Compass, ShoppingCart } from 'lucide-react';
+import { Shield, User as UserIcon, Lock, Key, Battery, Compass, ShoppingCart, Truck } from 'lucide-react';
 import { User } from '../types';
 import SenzoLogo from './SenzoLogo';
 
@@ -13,7 +13,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [role, setRole] = useState<'admin' | 'manufacturer' | 'salesperson' | 'manager'>('manufacturer');
+  const [role, setRole] = useState<'admin' | 'manufacturer' | 'salesperson' | 'manager' | 'dispatcher'>('manufacturer');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
@@ -21,7 +21,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   // Server URL State for Capacitor / Android Native deployment
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [serverUrl, setServerUrl] = useState(() => {
-    return localStorage.getItem('SENZO_API_SERVER_URL') || 'https://sumitdhaka0123.onrender.com';
+    return localStorage.getItem('SENZO_API_SERVER_URL') || 'https://ais-pre-ok3o3tltxmte4gbcr2v3di-403794027483.asia-east1.run.app';
   });
   const [tempServerUrl, setTempServerUrl] = useState(serverUrl);
 
@@ -42,7 +42,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
 
   const handleResetServerUrl = () => {
     localStorage.removeItem('SENZO_API_SERVER_URL');
-    const defaultUrl = 'https://sumitdhaka0123.onrender.com';
+    const defaultUrl = 'https://ais-pre-ok3o3tltxmte4gbcr2v3di-403794027483.asia-east1.run.app';
     setServerUrl(defaultUrl);
     setTempServerUrl(defaultUrl);
     setShowServerConfig(false);
@@ -53,9 +53,10 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   // Quick-login helper values
   const quickLogins = [
     { label: 'Manufacturer: Production Specialist', user: 'manufacturer', pass: 'manu123', color: 'border-emerald-200 text-emerald-800 bg-emerald-50 hover:bg-emerald-100/70' },
-    { label: 'Salesperson: Sales & POS Advisor', user: 'sales', pass: 'sales', color: 'border-cyan-200 text-cyan-800 bg-cyan-50 hover:bg-cyan-100/70' },
+    { label: 'Salesperson: Sales Advisor', user: 'sales', pass: 'sales123', color: 'border-cyan-200 text-cyan-800 bg-cyan-50 hover:bg-cyan-100/70' },
     { label: 'Manager: Operations Manager', user: 'manager', pass: 'manager123', color: 'border-teal-200 text-teal-800 bg-teal-50 hover:bg-teal-100/70' },
-    { label: 'Admin: Warehouse Supervisor', user: 'admin', pass: 'admin', color: 'border-amber-200 text-amber-800 bg-amber-50 hover:bg-amber-100/70' },
+    { label: 'Dispatch: Delivery & Fulfillment', user: 'dispatcher', pass: 'dispatch123', color: 'border-indigo-200 text-indigo-800 bg-indigo-50 hover:bg-indigo-100/70' },
+    { label: 'Admin: Warehouse Supervisor', user: 'admin', pass: 'admin123', color: 'border-amber-200 text-amber-800 bg-amber-50 hover:bg-amber-100/70' },
   ];
 
   const handleQuickLogin = (user: string, pass: string) => {
@@ -241,46 +242,60 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
               <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
                 Assigned Role
               </label>
-              <div className="grid grid-cols-3 gap-2 mt-1">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1">
                 <button
                   type="button"
                   onClick={() => setRole('manufacturer')}
-                  className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
+                  className={`flex flex-col items-center justify-center p-2 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
                     role === 'manufacturer'
                       ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
                       : 'border-slate-100 bg-slate-50 text-slate-400 hover:border-slate-200'
                   }`}
                   id="reg-role-manufacturer"
                 >
-                  <Battery className="h-4.5 w-4.5 mb-1 text-emerald-600" />
-                  <span className="font-bold text-[10px]">Manufacturer</span>
-                  <span className="text-[8px] opacity-85">Assemble</span>
+                  <Battery className="h-4 w-4 mb-1 text-emerald-600" />
+                  <span className="font-bold text-[10px]">Assembly</span>
+                  <span className="text-[8px] opacity-85">Manufacture</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setRole('salesperson')}
-                  className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
+                  className={`flex flex-col items-center justify-center p-2 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
                     role === 'salesperson'
                       ? 'border-cyan-500 bg-cyan-50 text-cyan-800'
                       : 'border-slate-100 bg-slate-50 text-slate-400 hover:border-slate-200'
                   }`}
                   id="reg-role-salesperson"
                 >
-                  <ShoppingCart className="h-4.5 w-4.5 mb-1 text-cyan-600" />
-                  <span className="font-bold text-[10px]">Salesperson</span>
-                  <span className="text-[8px] opacity-85">POS / Sale</span>
+                  <ShoppingCart className="h-4 w-4 mb-1 text-cyan-600" />
+                  <span className="font-bold text-[10px]">Sales</span>
+                  <span className="text-[8px] opacity-85">Orders & POS</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRole('dispatcher')}
+                  className={`flex flex-col items-center justify-center p-2 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
+                    role === 'dispatcher'
+                      ? 'border-indigo-500 bg-indigo-50 text-indigo-800'
+                      : 'border-slate-100 bg-slate-50 text-slate-400 hover:border-slate-200'
+                  }`}
+                  id="reg-role-dispatcher"
+                >
+                  <Truck className="h-4 w-4 mb-1 text-indigo-600" />
+                  <span className="font-bold text-[10px]">Dispatch</span>
+                  <span className="text-[8px] opacity-85">Fulfillment</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setRole('manager')}
-                  className={`flex flex-col items-center justify-center p-2.5 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
+                  className={`flex flex-col items-center justify-center p-2 rounded-2xl border-2 text-xs font-sans transition-all text-center cursor-pointer ${
                     role === 'manager'
                       ? 'border-teal-500 bg-teal-50 text-teal-800'
                       : 'border-slate-100 bg-slate-50 text-slate-400 hover:border-slate-200'
                   }`}
                   id="reg-role-manager"
                 >
-                  <Shield className="h-4.5 w-4.5 mb-1 text-teal-600" />
+                  <Shield className="h-4 w-4 mb-1 text-teal-600" />
                   <span className="font-bold text-[10px]">Manager</span>
                   <span className="text-[8px] opacity-85">Operations</span>
                 </button>

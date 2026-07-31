@@ -7,7 +7,7 @@ export interface LocationHistoryEntry {
 export interface User {
   id: string;
   username: string;
-  role: 'admin' | 'manufacturer' | 'salesperson' | 'manager';
+  role: 'admin' | 'manufacturer' | 'salesperson' | 'manager' | 'dispatcher';
   name: string;
   locked?: boolean;
   failedAttempts?: number;
@@ -64,7 +64,12 @@ export interface ScooterUnit {
   batterySerials: string[]; // Up to 6 slots
   batteryWarrantyFlags?: boolean[]; // Marks which batteries are in warranty
   batteryWarrantyMonths?: number[]; // Warranty duration in months (12 or 13, or 0 for none)
-  status: 'available' | 'sold' | 'hold';
+  status: 'available' | 'sold' | 'hold' | 'incomplete';
+  missingParts?: string; // Specific parts or items missing to complete unit
+  flaggedIncompleteBy?: string;
+  flaggedIncompleteTimestamp?: string;
+  preparedTimestamp?: string;
+  preparedBy?: string;
   saleDate?: string;
   heldFor?: string;
   heldBy?: string;
@@ -90,6 +95,7 @@ export interface ScooterUnit {
   warrantyNotes?: string;
 
   // Sales Fields
+  salesPrice?: number;
   salesBillNo?: string;
   deliveryChallanNo?: string;
   challanStatus?: 'pending' | 'finished';
@@ -248,6 +254,73 @@ export interface WarrantyClaim {
   supplierWarrantyStatus?: string;
 }
 
+export interface SalesOrderItem {
+  id: string;
+  itemType: 'scooter' | 'battery' | 'charger';
+  
+  // Scooter details:
+  productName?: string; // e.g., "City XL", "BMW"
+  color?: string;       // e.g., "Matte Black", "Red"
+  
+  // Battery details:
+  batteryType?: string; // e.g., "60V 28Ah Lithium"
+  
+  // Charger details:
+  chargerType?: string; // e.g., "60V 5A Charger"
+
+  quantity: number;
+  
+  // Fulfillment & Dispatch state:
+  chassisNumbers?: string[]; // Chassis numbers assigned during dispatch
+  isUnderWarranty?: boolean;  // Battery / Charger warranty flag
+  warrantyMonths?: number;    // Warranty duration in months
+  serialNumbers?: string[];   // Battery / Charger serial numbers if under warranty
+  startNo?: string;           // Start serial number of series
+  endNo?: string;             // End serial number of series
+  
+  preparedQuantity?: number;
+}
+
+export interface SalesOrder {
+  id: string;
+  orderNo: string; // e.g., ORD-1001
+  buyerName: string;
+  buyerContact?: string;
+  deliveryLocation?: string; // Delivery address/destination for truck dispatch
+  salespersonName: string;
+  salespersonUsername: string;
+  createdTimestamp: string;
+  
+  items: SalesOrderItem[];
+  
+  status: 'pending' | 'prepared' | 'dispatched' | 'challan_generated' | 'cancelled';
+  
+  preparedTimestamp?: string;
+  preparedBy?: string;
+  dispatchedTimestamp?: string;
+  dispatchedBy?: string;
+  cancelledBy?: string;
+  cancelledTimestamp?: string;
+  
+  // Manager / Challan verification
+  challanNo?: string; // MANDATORY for Manager verification
+  salesBillNo?: string;
+  challanFinishedBy?: string;
+  challanFinishedTimestamp?: string;
+  challanLocked?: boolean; // Locked for Manager once saved; only Owner can unlock
+  
+  notes?: string;
+}
+
+export interface DriveConfig {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  connectedEmail: string;
+  autoSync: boolean;
+  folderId: string;
+}
+
 export interface DBState {
   users: { [username: string]: User & { passwordHash: string } };
   products: Product[];
@@ -263,4 +336,7 @@ export interface DBState {
   chargerTypeList?: string[];
   auditLogs?: AuditLog[];
   warrantyClaims?: WarrantyClaim[];
+  salesOrders?: SalesOrder[];
+  unassembledBoxedStock?: number;
+  driveConfig?: DriveConfig;
 }

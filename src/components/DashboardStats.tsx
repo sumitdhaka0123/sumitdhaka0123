@@ -63,10 +63,17 @@ export default function DashboardStats({
   currentUser
 }: DashboardStatsProps) {
   // Modal toggle state
-  const [activeDetailTab, setActiveDetailTab] = useState<'imported' | 'boxes' | 'ready' | 'states' | 'sold' | 'batteries' | 'chargers' | 'held' | null>(null);
+  const [activeDetailTab, setActiveDetailTab] = useState<'imported' | 'boxes' | 'ready' | 'states' | 'sold' | 'batteries' | 'chargers' | 'held' | 'incomplete' | null>(null);
   const [modalSearch, setModalSearch] = useState('');
   const [modalSearchTarget, setModalSearchTarget] = useState<'all' | 'buyer' | 'chassis' | 'model' | 'color'>('all');
   const [statesSubTab, setStatesSubTab] = useState<'all' | 'frame' | 'battery'>('all');
+
+  // Incomplete stock modal states
+  const [showLogIncompleteModal, setShowLogIncompleteModal] = useState(false);
+  const [logChassisNo, setLogChassisNo] = useState('');
+  const [logMissingParts, setLogMissingParts] = useState('');
+  const [logModelName, setLogModelName] = useState(products[0]?.name || 'SENZO ESSENATIAL DISC 12"/10"');
+  const [logColor, setLogColor] = useState('Black');
 
   // Hold management states
   const [actionStatus, setActionStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -79,6 +86,77 @@ export default function DashboardStats({
   const [completingNotes, setCompletingNotes] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [docValidationError, setDocValidationError] = useState<string | null>(null);
+
+  // Incomplete logging submit handler
+  const handleLogIncompleteSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!logChassisNo.trim()) {
+      alert('Please enter or select a Chassis Number.');
+      return;
+    }
+    if (!logMissingParts.trim()) {
+      alert('Please specify exactly what part or thing is missing to complete the unit.');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const res = await fetch('/api/scooter-units/mark-incomplete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chassisNo: logChassisNo.trim().toUpperCase(),
+          missingParts: logMissingParts.trim(),
+          modelName: logModelName,
+          color: logColor,
+          operator: currentUser?.name || currentUser?.username || 'Manager'
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setActionStatus({ type: 'success', text: `Chassis ${logChassisNo.toUpperCase()} logged as Unprepared/Incomplete with missing parts!` });
+        setShowLogIncompleteModal(false);
+        setLogChassisNo('');
+        setLogMissingParts('');
+        if (onRefresh) onRefresh();
+      } else {
+        setActionStatus({ type: 'error', text: data.error || 'Failed to log incomplete unit.' });
+      }
+    } catch (err: any) {
+      setActionStatus({ type: 'error', text: err.message || 'Error communicating with server.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  // Prepare Incomplete Unit (Restock to Built and Ready)
+  const handlePrepareIncompleteUnit = async (unit: ScooterUnit) => {
+    if (!window.confirm(`Confirm that missing parts ("${unit.missingParts || 'unspecified'}") have been added to Chassis #${unit.chassisNo}? It will be restocked into "Built & Ready" stock.`)) {
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const res = await fetch('/api/scooter-units/prepare-incomplete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: unit.id,
+          chassisNo: unit.chassisNo,
+          operator: currentUser?.name || currentUser?.username || 'Manager'
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setActionStatus({ type: 'success', text: `Chassis ${unit.chassisNo} completed and restocked into Built & Ready stock!` });
+        if (onRefresh) onRefresh();
+      } else {
+        setActionStatus({ type: 'error', text: data.error || 'Failed to complete unit.' });
+      }
+    } catch (err: any) {
+      setActionStatus({ type: 'error', text: err.message || 'Error communicating with server.' });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   // Edit quantity & details state
   const [editingHoldItem, setEditingHoldItem] = useState<{
@@ -118,7 +196,8 @@ export default function DashboardStats({
   // Charger metrics calculations
   const totalChargerImports = chargerImports.reduce((sum, imp) => sum + (imp.quantity || (imp.serialNumbers ? imp.serialNumbers.length : 0) || 0), 0);
   const totalChargerSalesWholesale = chargerSales.reduce((sum, sale) => sum + (sale.quantity || (sale.serialNumbers ? sale.serialNumbers.length : 0) || 0), 0);
-  const looseChargersInStock = Math.max(0, totalChargerImports - totalChargerSalesWholesale);
+  const totalChargersInScooters = scooterUnits.filter(u => u.chargerIncluded || u.chargerType || u.chargerSerial).length;
+  const looseChargersInStock = Math.max(0, totalChargerImports - totalChargerSalesWholesale - totalChargersInScooters);
   
   // Total Imported: sum of quantities of all "Stock IN" logs (excluding auto-generated assembly logs)
   const totalImported = stockLogs
@@ -157,6 +236,10 @@ export default function DashboardStats({
   // Warranty active stats
   const activeScooterWarranty = scooterUnits.filter(u => u.scooterWarrantyStatus === 'Active').length;
   const activeBatteryWarranty = scooterUnits.filter(u => u.batteryWarrantyStatus === 'Active').length;
+
+  // Incomplete / Unprepared Stock calculation
+  const incompleteUnitsList = scooterUnits.filter(u => u.status === 'incomplete');
+  const incompleteUnitsCount = incompleteUnitsList.length;
 
   // Helper to map color names to HEX values for pretty dashboard UI
   const getColorDotHex = (colorName: string): string => {
@@ -267,7 +350,7 @@ export default function DashboardStats({
           </div>
         </motion.div>
   
-        {/* Yet to be Prepared */}
+        {/* Still In Boxes (Unassembled Kits) */}
         <motion.div 
           onClick={() => { setActiveDetailTab('boxes'); setModalSearch(''); }}
           whileHover={{ scale: 1.02 }}
@@ -287,7 +370,31 @@ export default function DashboardStats({
           </div>
           <div className="mt-3">
             <span className="text-3xl font-extrabold text-amber-600 tracking-tight">{yetToBeAssembled}</span>
-            <div className="text-[11px] text-slate-500 mt-1 font-medium leading-tight">Unfinished stock waiting to be built</div>
+            <div className="text-[11px] text-slate-500 mt-1 font-medium leading-tight">Unassembled kits boxed stock</div>
+          </div>
+        </motion.div>
+
+        {/* Unprepared / Incomplete Stock */}
+        <motion.div 
+          onClick={() => { setActiveDetailTab('incomplete'); setModalSearch(''); }}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.08 }}
+          className="bg-white border-2 border-rose-500/20 hover:border-rose-500/50 hover:shadow-md transition-all rounded-3xl p-5 flex flex-col justify-between shadow-sm cursor-pointer select-none relative group overflow-hidden"
+          id="stat-card-incomplete-stock"
+        >
+          <div className="absolute top-0 right-0 p-1 bg-rose-500/10 text-rose-600 text-[9px] font-bold rounded-bl-xl opacity-0 group-hover:opacity-100 transition-opacity">
+            Click to View
+          </div>
+          <div className="flex items-center justify-between text-slate-400">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600">Incomplete Stock ⚠️</span>
+            <AlertTriangle className="h-5 w-5 text-rose-500 animate-pulse" />
+          </div>
+          <div className="mt-3">
+            <span className="text-3xl font-extrabold text-rose-600 tracking-tight">{incompleteUnitsCount}</span>
+            <div className="text-[11px] text-slate-500 mt-1 font-medium leading-tight">Built units missing parts / unprepared</div>
           </div>
         </motion.div>
   
@@ -426,41 +533,6 @@ export default function DashboardStats({
             </div>
           </div>
         </motion.div>
-  
-        {/* Held Stock */}
-        <motion.div 
-          onClick={() => { setActiveDetailTab('held'); setModalSearch(''); }}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
-          className="bg-white border-2 border-amber-500/10 hover:border-amber-500/40 hover:shadow-md transition-all rounded-3xl p-5 flex flex-col justify-between shadow-sm cursor-pointer select-none relative group overflow-hidden"
-          id="stat-card-held-stock"
-        >
-          <div className="absolute top-0 right-0 p-1 bg-amber-500/10 text-amber-600 text-[9px] font-bold rounded-bl-xl opacity-0 group-hover:opacity-100 transition-opacity">
-            Click to View
-          </div>
-          <div className="flex items-center justify-between text-slate-400">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600">8. Held Stock 🤝</span>
-            <User className="h-5 w-5 text-amber-500" />
-          </div>
-          <div className="mt-3 space-y-1.5">
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-slate-600 font-sans font-medium">Scooters 🛴:</span>
-              <span className="font-bold text-amber-600 font-mono bg-amber-50 px-2.5 py-0.5 rounded-lg">
-                {scooterUnits.filter(u => u.status === 'hold').length}
-              </span>
-            </div>
-            <div className="flex justify-between items-center text-xs">
-              <span className="text-slate-600 font-sans font-medium">Batteries 🔋:</span>
-              <span className="font-bold text-amber-600 font-mono bg-amber-50 px-2.5 py-0.5 rounded-lg">
-                {batterySales.filter(s => s.status === 'hold').reduce((sum, s) => sum + s.quantity, 0)}
-              </span>
-            </div>
-          </div>
-        </motion.div>
-
       </div>
 
       {/* 2. Visual Graphs & Pipeline Activity Row */}
@@ -651,6 +723,12 @@ export default function DashboardStats({
                       <span>Held Stock & Customer Reservations Ledger</span>
                     </>
                   )}
+                  {activeDetailTab === 'incomplete' && (
+                    <>
+                      <AlertTriangle className="h-5 w-5 text-rose-500" />
+                      <span>Unprepared / Incomplete Stock List</span>
+                    </>
+                  )}
                 </h3>
                 <p className="text-xs text-slate-500 mt-1">
                   {activeDetailTab === 'imported' && "View all documented shipping container counts and local seller logs."}
@@ -661,6 +739,7 @@ export default function DashboardStats({
                   {activeDetailTab === 'batteries' && "Detailed balance sheet of battery imports, standalone wholesale, and assemblies."}
                   {activeDetailTab === 'chargers' && "Detailed breakdown of imported chargers, sales, and standalone warehouse balance."}
                   {activeDetailTab === 'held' && "List of physical scooters currently put on hold/reserved for specific customer orders."}
+                  {activeDetailTab === 'incomplete' && "View built chassis with missing parts, log missing items, and confirm restoration to Built & Ready stock."}
                 </p>
               </div>
               <button 
@@ -672,8 +751,8 @@ export default function DashboardStats({
             </div>
 
             {/* Sub-filters / Search Control */}
-            <div className="p-4 border-b border-slate-100 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="relative flex-1">
+            <div className="p-3 sm:p-4 border-b border-slate-100 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0 w-full">
+              <div className="relative flex-1 min-w-0">
                 <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
                   <Search className="h-4 w-4" />
                 </span>
@@ -682,7 +761,7 @@ export default function DashboardStats({
                   value={modalSearch}
                   onChange={(e) => setModalSearch(e.target.value)}
                   placeholder="Search model, color, serials, names..."
-                  className="w-full bg-slate-50 hover:bg-slate-100/50 focus:bg-white border border-slate-200 focus:border-cyan-500 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-800 outline-none transition-all font-sans"
+                  className="w-full bg-slate-50 hover:bg-slate-100/50 focus:bg-white border border-slate-200 focus:border-cyan-500 rounded-xl pl-9 pr-4 py-2 text-xs text-slate-800 outline-none transition-all font-sans min-w-0"
                 />
               </div>
 
@@ -792,6 +871,121 @@ export default function DashboardStats({
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                );
+              })()}
+
+              {/* RENDER TAB: UNPREPARED / INCOMPLETE UNITS */}
+              {activeDetailTab === 'incomplete' && (() => {
+                const incompleteList = scooterUnits.filter(u => {
+                  if (u.status !== 'incomplete') return false;
+                  const searchLower = modalSearch.toLowerCase();
+                  return (
+                    String(u.modelName || '').toLowerCase().includes(searchLower) ||
+                    String(u.color || '').toLowerCase().includes(searchLower) ||
+                    String(u.chassisNo || '').toLowerCase().includes(searchLower) ||
+                    String(u.missingParts || '').toLowerCase().includes(searchLower) ||
+                    String(u.flaggedIncompleteBy || '').toLowerCase().includes(searchLower)
+                  );
+                });
+
+                return (
+                  <div className="space-y-4" id="incomplete-units-tab-container">
+                    {/* Header Banner & Action Button */}
+                    <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-amber-900">
+                      <div>
+                        <strong>⚠️ Incomplete / Unprepared Units Log:</strong> These units are built frames but missing specific parts (mirrors, mudguards, chargers, etc.).
+                      </div>
+                      {(currentUser?.role === 'manager' || currentUser?.role === 'admin' || !currentUser?.role) && (
+                        <button
+                          onClick={() => {
+                            setLogChassisNo('');
+                            setLogMissingParts('');
+                            setShowLogIncompleteModal(true);
+                          }}
+                          className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer whitespace-nowrap text-xs shrink-0"
+                        >
+                          <PlusCircle className="h-4 w-4" />
+                          <span>Log Incomplete Chassis</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {actionStatus && (
+                      <div className={`p-3.5 rounded-xl text-xs font-semibold flex items-center justify-between shadow-sm ${
+                        actionStatus.type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-800' : 'bg-rose-50 border border-rose-200 text-rose-800'
+                      }`}>
+                        <span>{actionStatus.text}</span>
+                        <button onClick={() => setActionStatus(null)} className="text-slate-400 hover:text-slate-600">
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
+                    )}
+
+                    {incompleteList.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center p-12 text-center bg-white border border-slate-100 rounded-2xl">
+                        <CheckCircle2 className="h-8 w-8 text-emerald-500 mb-2" />
+                        <p className="text-sm font-semibold text-slate-600">No Incomplete Units Logged!</p>
+                        <p className="text-xs text-slate-400 mt-1">All built scooters in warehouse are complete and ready for dispatch.</p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {incompleteList.map(unit => (
+                          <div key={unit.id} className="bg-white border-2 border-amber-200 rounded-2xl p-4 shadow-sm flex flex-col justify-between space-y-3">
+                            <div>
+                              <div className="flex items-center justify-between">
+                                <span className="font-extrabold text-slate-900 text-sm">{unit.modelName}</span>
+                                <span className="text-[10px] font-bold px-2.5 py-0.5 bg-amber-100 text-amber-800 rounded-full border border-amber-200">
+                                  {unit.color}
+                                </span>
+                              </div>
+
+                              <div className="mt-2 p-2.5 bg-slate-50 rounded-xl border border-slate-150 space-y-1.5 text-xs font-mono">
+                                <div className="flex justify-between">
+                                  <span className="text-slate-400 font-sans font-medium text-[11px]">Chassis No:</span>
+                                  <span className="font-bold text-amber-700">{unit.chassisNo}</span>
+                                </div>
+                                {unit.flaggedIncompleteBy && (
+                                  <div className="flex justify-between text-[10px]">
+                                    <span className="text-slate-400 font-sans font-medium">Logged By:</span>
+                                    <span className="text-slate-700 font-sans font-bold">{unit.flaggedIncompleteBy}</span>
+                                  </div>
+                                )}
+                                {unit.flaggedIncompleteTimestamp && (
+                                  <div className="flex justify-between text-[10px]">
+                                    <span className="text-slate-400 font-sans font-medium">Date Flagged:</span>
+                                    <span className="text-slate-500 font-sans">{new Date(unit.flaggedIncompleteTimestamp).toLocaleString()}</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              <div className="mt-2.5 p-3 bg-rose-50 border border-rose-200 rounded-xl">
+                                <span className="block text-[10px] font-extrabold uppercase text-rose-700 tracking-wider">
+                                  Missing Parts / Items Required:
+                                </span>
+                                <p className="text-xs font-bold text-rose-900 mt-0.5 leading-snug">
+                                  {unit.missingParts || 'Unspecified missing parts'}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+                              <span className="text-[10px] text-slate-400">
+                                Status: <strong className="text-amber-600">Unprepared</strong>
+                              </span>
+                              <button
+                                onClick={() => handlePrepareIncompleteUnit(unit)}
+                                disabled={isSubmitting}
+                                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+                              >
+                                <CheckCircle2 className="h-3.5 w-3.5" />
+                                <span>Prepare It (Restock)</span>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -2636,6 +2830,91 @@ export default function DashboardStats({
                 >
                   <CheckCircle2 className="h-4 w-4" />
                   <span>{isSubmitting ? 'Saving...' : 'Confirm & Complete Sale'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: LOG INCOMPLETE / UNPREPARED CHASSIS (MANAGER ROLE) */}
+      {showLogIncompleteModal && (
+        <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <h3 className="font-extrabold text-slate-900 text-base flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+                <span>Log Incomplete / Unprepared Unit</span>
+              </h3>
+              <button onClick={() => setShowLogIncompleteModal(false)} className="text-slate-400 hover:text-slate-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleLogIncompleteSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Chassis Number *</label>
+                <input
+                  type="text"
+                  required
+                  value={logChassisNo}
+                  onChange={(e) => setLogChassisNo(e.target.value.toUpperCase())}
+                  placeholder="e.g., SENZO-2026-CH001"
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-amber-500 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-800 outline-none uppercase"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Select or type an existing built chassis or enter new built chassis.</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Model Name</label>
+                  <select
+                    value={logModelName}
+                    onChange={(e) => setLogModelName(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none"
+                  >
+                    {products.map(p => (
+                      <option key={p.id} value={p.name}>{p.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Color Option</label>
+                  <input
+                    type="text"
+                    value={logColor}
+                    onChange={(e) => setLogColor(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Missing Parts / Detail Required *</label>
+                <textarea
+                  required
+                  rows={3}
+                  value={logMissingParts}
+                  onChange={(e) => setLogMissingParts(e.target.value)}
+                  placeholder="Type exactly what part or item is missing (e.g., Missing side mirror, front wheel mudguard, charger port cap)"
+                  className="w-full bg-slate-50 border border-slate-200 focus:border-amber-500 rounded-xl p-3 text-xs text-slate-800 outline-none"
+                />
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLogIncompleteModal(false)}
+                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-5 py-2 bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-sm cursor-pointer"
+                >
+                  {isSubmitting ? 'Logging...' : 'Save Incomplete Unit'}
                 </button>
               </div>
             </form>

@@ -231,9 +231,9 @@ export default function BatterySalesManager({
       const clean = input.trim().toLowerCase().replace(/\s*series/g, '');
       for (const k of Object.keys(map)) {
         const kClean = k.trim().toLowerCase().replace(/\s*series/g, '');
-        if (kClean === clean) return k;
+        if (kClean === clean || (kClean.length > 2 && clean.includes(kClean)) || (clean.length > 2 && kClean.includes(clean))) return k;
       }
-      return input;
+      return input.trim();
     };
 
     // 1. Process Imports
