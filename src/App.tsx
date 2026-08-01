@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { 
   Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap, Search, ShieldCheck, MoreHorizontal, X, Truck, ShoppingCart, Store
 } from 'lucide-react';
+import { Geolocation } from '@capacitor/geolocation';
 
 import { User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim, SalesOrder } from './types';
 import LoginScreen from './components/LoginScreen';
@@ -202,38 +203,20 @@ export default function App() {
       }
     };
 
-    const fetchCurrentPosition = (isStrictCheck = false) => {
-      if ('geolocation' in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            setLocationBlocked(false);
-            setLocationCheckError(null);
-            reportLocation(pos.coords.latitude, pos.coords.longitude);
-          },
-          (err) => {
-            // If the user is an active employee, block access strictly on any GPS failures/disables
-            if (isEmployee) {
-              setLocationBlocked(true);
-              if (err.code === err.PERMISSION_DENIED) {
-                setLocationCheckError('Permission Denied: Location access has been disabled or blocked. Please allow location access in your browser settings.');
-              } else if (err.code === err.POSITION_UNAVAILABLE) {
-                setLocationCheckError('Position Unavailable: GPS signal is inactive or device location services are switched off.');
-              } else if (err.code === err.TIMEOUT) {
-                setLocationCheckError('Timeout: The request to acquire device GPS coordinates timed out. Ensure location is enabled with high accuracy.');
-              } else {
-                setLocationCheckError('Device Location Inaccessible: Please turn your physical device location services ON.');
-              }
-            } else {
-              // Non-employees/admins fall back to IP Geolocation
-              fetchIpLocation();
-            }
-          },
-          { enableHighAccuracy: true, timeout: 8000 }
-        );
-      } else {
+    const fetchCurrentPosition = async (isStrictCheck = false) => {
+      try {
+        const perm = await Geolocation.checkPermissions();
+        if (perm.location !== 'granted') {
+          await Geolocation.requestPermissions();
+        }
+        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000 });
+        setLocationBlocked(false);
+        setLocationCheckError(null);
+        reportLocation(pos.coords.latitude, pos.coords.longitude);
+      } catch (err: any) {
         if (isEmployee) {
           setLocationBlocked(true);
-          setLocationCheckError('System Error: Geolocation is not supported by this browser terminal.');
+          setLocationCheckError('Device Location Inaccessible: Please turn your physical device location services ON and allow location permissions for the app.');
         } else {
           fetchIpLocation();
         }
@@ -306,17 +289,14 @@ export default function App() {
             };
 
             // Immediately pull the current physical coordinates of the device and report
-            if ('geolocation' in navigator) {
-              navigator.geolocation.getCurrentPosition(
-                async (pos) => {
-                  await reportPullResult(pos.coords.latitude, pos.coords.longitude);
-                },
-                async (err) => {
-                  await runIpPullFallback();
-                },
-                { enableHighAccuracy: true, timeout: 10000 }
-              );
-            } else {
+            try {
+              const perm = await Geolocation.checkPermissions();
+              if (perm.location !== 'granted') {
+                await Geolocation.requestPermissions();
+              }
+              const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 });
+              await reportPullResult(pos.coords.latitude, pos.coords.longitude);
+            } catch (err) {
               await runIpPullFallback();
             }
           }
