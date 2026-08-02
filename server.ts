@@ -1035,8 +1035,16 @@ function writeDB(state: DBState) {
   const oldState = globalDBState ? JSON.parse(JSON.stringify(globalDBState)) : null;
   globalDBState = state;
   try {
-    fs.writeFile(DB_FILE, JSON.stringify(state, null, 2), 'utf8', (err) => {
-      if (err) console.error('Error writing backup database file:', err);
+    const tempFile = `${DB_FILE}.tmp`;
+    const data = JSON.stringify(state, null, 2);
+    fs.writeFile(tempFile, data, 'utf8', (err) => {
+      if (err) {
+        console.error('Error writing temp database file:', err);
+        return;
+      }
+      fs.rename(tempFile, DB_FILE, (renameErr) => {
+        if (renameErr) console.error('Error renaming temp database file:', renameErr);
+      });
     });
     // Trigger automated rolling 14-day backup check
     checkAutoBackupTrigger(state);
