@@ -1343,12 +1343,12 @@ const ALPHANUMERIC_REGEX = /^[a-zA-Z0-9_\-]+$/;
 
 const loginSchema = z.object({
   username: z.string().min(1, "Username is required").max(100, "Username is too long").toLowerCase().trim(),
-  password: z.string().min(1, "Password is required").max(100, "Password is too long"),
+  password: z.string().min(1, "Password is required").max(100, "Password is too long").trim(),
 });
 
 const registerSchema = z.object({
   username: z.string().min(3, "Username must be at least 3 characters").max(100, "Username is too long").toLowerCase().trim().regex(ALPHANUMERIC_REGEX, "Username can only contain alphanumeric characters, underscores, and hyphens"),
-  password: z.string().min(4, "Password must be at least 4 characters").max(100, "Password is too long"),
+  password: z.string().min(4, "Password must be at least 4 characters").max(100, "Password is too long").trim(),
   role: z.enum(['admin', 'manufacturer', 'salesperson', 'manager', 'dispatcher']),
   name: z.string().min(1, "Name is required").max(150, "Name is too long").trim(),
   approved: z.boolean().optional(),
