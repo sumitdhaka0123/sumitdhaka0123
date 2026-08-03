@@ -22,7 +22,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   // Server URL State for Capacitor / Android Native deployment
   const [showServerConfig, setShowServerConfig] = useState(false);
   const [serverUrl, setServerUrl] = useState(() => {
-    return localStorage.getItem('SENZO_API_SERVER_URL') || 'https://ais-pre-ok3o3tltxmte4gbcr2v3di-403794027483.asia-east1.run.app';
+    return localStorage.getItem('SENZO_API_SERVER_URL') || 'https://sumitdhaka0123.onrender.com';
   });
   const [tempServerUrl, setTempServerUrl] = useState(serverUrl);
 
@@ -362,7 +362,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
                   onClick={() => {
                     setShowServerConfig(false);
                     if (!tempServerUrl.trim()) {
-                      setTempServerUrl('https://ais-pre-ok3o3tltxmte4gbcr2v3di-403794027483.asia-east1.run.app');
+                      setTempServerUrl('https://sumitdhaka0123.onrender.com');
                     }
                   }}
                   className="text-[10px] font-bold text-rose-500 hover:underline"
