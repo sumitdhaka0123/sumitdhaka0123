@@ -43,7 +43,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
 
   const handleResetServerUrl = () => {
     localStorage.removeItem('SENZO_API_SERVER_URL');
-    const defaultUrl = 'https://ais-pre-ok3o3tltxmte4gbcr2v3di-403794027483.asia-east1.run.app';
+    const defaultUrl = 'https://sumitdhaka0123.onrender.com';
     setServerUrl(defaultUrl);
     setTempServerUrl(defaultUrl);
     setShowServerConfig(false);
