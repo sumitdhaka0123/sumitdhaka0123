@@ -78,8 +78,8 @@ export default function SearchConsole({
   currentUser,
   onRefresh
 }: SearchConsoleProps) {
-  // Mode selection: 'regular' vs 'trail'
-  const [activeMode, setActiveMode] = useState<'regular' | 'trail'>('regular');
+  // Mode selection: 'regular' | 'trail' | 'purchase'
+  const [activeMode, setActiveMode] = useState<'regular' | 'trail' | 'purchase'>('regular');
 
   // --- Regular Search States ---
   const [regularQuery, setRegularQuery] = useState('');
@@ -91,6 +91,90 @@ export default function SearchConsole({
   const [searchCategory, setSearchCategory] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
+
+  // --- Purchase / Container Search States ---
+  const [purchaseQuery, setPurchaseQuery] = useState('');
+  const [selectedBillFilter, setSelectedBillFilter] = useState<string | null>(null);
+  const [expandedStockInNo, setExpandedStockInNo] = useState<string | null>(null);
+
+  // ================= PURCHASE & CONTAINER HIERARCHY COMPUTATION =================
+  const purchaseHierarchy = useMemo(() => {
+    // Collect all IN stock logs that have a billNo or stockInNo
+    const inLogs = stockLogs.filter(log => log.type === 'in' || log.billNo || log.stockInNo);
+    
+    // Group by billNo
+    const map = new Map<string, {
+      billNo: string;
+      totalUnits: number;
+      stockInGroups: Map<string, {
+        stockInNo: string;
+        totalQty: number;
+        logs: StockLog[];
+        variantBreakdown: Record<string, number>;
+        shortages: string[];
+        dateLogged: string;
+        operator: string;
+      }>;
+    }>();
+
+    inLogs.forEach(log => {
+      const bNo = log.billNo?.trim().toUpperCase() || 'UNASSIGNED-BILL';
+      const sInNo = log.stockInNo?.trim().toUpperCase() || 'UNASSIGNED-IN-NO';
+
+      if (!map.has(bNo)) {
+        map.set(bNo, {
+          billNo: bNo,
+          totalUnits: 0,
+          stockInGroups: new Map()
+        });
+      }
+
+      const bEntry = map.get(bNo)!;
+      bEntry.totalUnits += Number(log.quantity) || 1;
+
+      if (!bEntry.stockInGroups.has(sInNo)) {
+        bEntry.stockInGroups.set(sInNo, {
+          stockInNo: sInNo,
+          totalQty: 0,
+          logs: [],
+          variantBreakdown: {},
+          shortages: [],
+          dateLogged: log.timestamp || '',
+          operator: log.operator || 'Manager'
+        });
+      }
+
+      const sEntry = bEntry.stockInGroups.get(sInNo)!;
+      sEntry.totalQty += Number(log.quantity) || 1;
+      sEntry.logs.push(log);
+
+      const vKey = `${log.modelName} (${log.color})`;
+      sEntry.variantBreakdown[vKey] = (sEntry.variantBreakdown[vKey] || 0) + (Number(log.quantity) || 1);
+
+      if (log.notes && log.notes.includes('Shortage')) {
+        sEntry.shortages.push(log.notes);
+      }
+    });
+
+    const result = Array.from(map.values()).map(b => ({
+      ...b,
+      stockInList: Array.from(b.stockInGroups.values())
+    }));
+
+    // Filter based on purchaseQuery
+    if (!purchaseQuery.trim()) return result;
+
+    const q = purchaseQuery.toLowerCase().trim();
+    return result.filter(b => {
+      const matchesBill = b.billNo.toLowerCase().includes(q);
+      const matchesStockIn = b.stockInList.some(s => 
+        s.stockInNo.toLowerCase().includes(q) ||
+        Object.keys(s.variantBreakdown).some(k => k.toLowerCase().includes(q)) ||
+        s.shortages.some(sh => sh.toLowerCase().includes(q))
+      );
+      return matchesBill || matchesStockIn;
+    });
+  }, [stockLogs, purchaseQuery]);
 
   // ================= 1. REGULAR SEARCH INDEXING =================
   const regularSearchResults = useMemo(() => {
@@ -1739,13 +1823,13 @@ export default function SearchConsole({
     <div className="space-y-6 font-sans max-w-7xl mx-auto" id="trail-search-console">
       {/* Top Section Mode Switcher Tabs */}
       <div className="flex items-center justify-between bg-slate-200/80 p-1.5 rounded-2xl border border-slate-300/70" id="search-mode-tabs">
-        <div className="flex items-center gap-1.5 w-full sm:w-auto">
+        <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto">
           <button
             onClick={() => {
               setActiveMode('regular');
               setSelectedResult(null);
             }}
-            className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${
               activeMode === 'regular'
                 ? 'bg-white text-slate-900 shadow-sm border border-slate-200/80'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
@@ -1761,10 +1845,29 @@ export default function SearchConsole({
 
           <button
             onClick={() => {
+              setActiveMode('purchase');
+              setSelectedResult(null);
+            }}
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${
+              activeMode === 'purchase'
+                ? 'bg-amber-500 text-slate-950 shadow-sm border border-amber-400 font-extrabold'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
+            }`}
+            id="tab-btn-purchase-search"
+          >
+            <Package className="h-4 w-4 text-slate-950" />
+            <span>Purchase & Container Hierarchy Search</span>
+            <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-200 text-amber-950 font-mono font-bold">
+              New
+            </span>
+          </button>
+
+          <button
+            onClick={() => {
               setActiveMode('trail');
               setSelectedResult(null);
             }}
-            className={`flex-1 sm:flex-initial px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 ${
+            className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap ${
               activeMode === 'trail'
                 ? 'bg-slate-900 text-white shadow-sm border border-slate-800'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/60'
@@ -1918,6 +2021,177 @@ export default function SearchConsole({
                 <h4 className="text-xs font-bold text-slate-700 font-sans">No matching results</h4>
                 <p className="text-[11px] text-slate-400 mt-1 max-w-sm mx-auto font-sans">
                   No records match "{regularQuery}" in the selected dropdown category. Try choosing "All Categories" or adjusting your search term.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ================= SECTION: PURCHASE & CONTAINER HIERARCHY SEARCH ================= */}
+      {activeMode === 'purchase' && (
+        <div className="space-y-6" id="purchase-search-section">
+          {/* Header Card */}
+          <div className="p-6 bg-gradient-to-r from-amber-600 via-amber-700 to-amber-900 text-white rounded-3xl shadow-lg space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-1">
+                <span className="px-3 py-1 bg-amber-400/20 text-amber-200 rounded-full text-[10px] font-black uppercase tracking-widest border border-amber-300/30 inline-block font-mono">
+                  📦 INTERNATIONAL CONTAINER & PURCHASE SEARCH
+                </span>
+                <h2 className="text-2xl font-black text-white tracking-tight">Bill Number ➔ Stock IN / Invoice Flowchart</h2>
+                <p className="text-xs text-amber-100 max-w-2xl">
+                  Search any Bill Number to inspect all associated Stock IN / Invoices. Click any Stock IN number to view the complete model breakdown (e.g. 10 Black, 10 White), quantity, date logged, and shortage/missing part records.
+                </p>
+              </div>
+            </div>
+
+            {/* Purchase Search Input */}
+            <div className="relative pt-2 w-full min-w-0">
+              <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none pt-2">
+                <Search className="h-4 w-4 sm:h-5 sm:w-5 text-amber-200" />
+              </div>
+              <input
+                type="text"
+                placeholder="Type Bill Number (e.g. BILL-2026-088) or Stock IN / Invoice No (e.g. STKIN-1001)..."
+                value={purchaseQuery}
+                onChange={(e) => setPurchaseQuery(e.target.value)}
+                className="w-full bg-amber-950/60 border-2 border-amber-500/50 focus:border-amber-300 text-white placeholder-amber-200/60 pl-10 sm:pl-11 pr-3 sm:pr-4 py-2.5 sm:py-3.5 rounded-2xl text-xs sm:text-sm font-semibold outline-none transition-all font-sans shadow-inner min-w-0"
+                id="purchase-search-input"
+              />
+              {purchaseQuery && (
+                <button
+                  onClick={() => setPurchaseQuery('')}
+                  className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-amber-200 hover:text-white cursor-pointer font-bold text-xs pt-2"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Container Hierarchy Tree List */}
+          <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <span className="text-xs font-black uppercase tracking-wider text-slate-700 font-sans flex items-center gap-1.5">
+                <Package className="h-4 w-4 text-amber-600" />
+                <span>Container Bill Hierarchy ({purchaseHierarchy.length} Container Bills)</span>
+              </span>
+            </div>
+
+            {purchaseHierarchy.length > 0 ? (
+              <div className="space-y-4" id="purchase-hierarchy-tree">
+                {purchaseHierarchy.map((b) => (
+                  <div key={b.billNo} className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50 space-y-3">
+                    {/* Bill Level Header */}
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/80 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 font-mono">
+                          BILL NO
+                        </span>
+                        <h3 className="text-base font-black text-slate-900 font-mono tracking-tight">
+                          {b.billNo}
+                        </h3>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-bold text-slate-600 bg-white px-3 py-1 rounded-xl border border-slate-200 font-mono">
+                          {b.stockInList.length} Stock IN / Invoices
+                        </span>
+                        <span className="font-extrabold text-slate-900 bg-amber-200/80 text-amber-950 px-3 py-1 rounded-xl border border-amber-300 font-mono">
+                          {b.totalUnits} Total Units
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Stock IN / Invoices Flowchart Branch */}
+                    <div className="pl-2 sm:pl-4 border-l-2 border-amber-400/60 space-y-3">
+                      {b.stockInList.map((stk) => {
+                        const isExpanded = expandedStockInNo === stk.stockInNo;
+                        return (
+                          <div key={stk.stockInNo} className="bg-white border border-slate-200 rounded-xl p-3 shadow-2xs space-y-2">
+                            <div
+                              onClick={() => setExpandedStockInNo(isExpanded ? null : stk.stockInNo)}
+                              className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 cursor-pointer hover:bg-amber-50/40 p-1.5 rounded-lg transition-colors"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-[10px] font-black px-2 py-0.5 rounded bg-slate-900 text-white font-mono">
+                                  STK IN NO
+                                </span>
+                                <span className="text-xs font-black text-slate-900 font-mono">
+                                  {stk.stockInNo}
+                                </span>
+                                {stk.shortages.length > 0 && (
+                                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 border border-rose-300 flex items-center gap-1">
+                                    <AlertCircle className="h-3 w-3 text-rose-600" />
+                                    <span>Part Discrepancy / Shortage Reported</span>
+                                  </span>
+                                )}
+                              </div>
+
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs font-extrabold text-slate-700 font-mono">
+                                  {stk.totalQty} Units Logged
+                                </span>
+                                <span className="text-[11px] font-bold text-cyan-700 bg-cyan-50 px-2.5 py-1 rounded-lg border border-cyan-200">
+                                  {isExpanded ? 'Hide Details ▲' : 'View Models & Shortages ▼'}
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Expanded Stock IN Details */}
+                            {isExpanded && (
+                              <div className="pt-2 border-t border-slate-100 space-y-3 font-sans text-xs bg-slate-50/80 p-3 rounded-lg">
+                                {/* Variant Model & Color Breakdown */}
+                                <div className="space-y-1">
+                                  <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                                    Unpacked Model & Color Quantity Breakdown:
+                                  </span>
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-1">
+                                    {Object.entries(stk.variantBreakdown).map(([variantKey, count]) => (
+                                      <div key={variantKey} className="bg-white p-2 border border-slate-200 rounded-lg flex items-center justify-between">
+                                        <span className="font-bold text-slate-800">{variantKey}</span>
+                                        <span className="font-mono font-black text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                          {count} units
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Shortage / Missing Part Notes */}
+                                {stk.shortages.length > 0 && (
+                                  <div className="bg-rose-50 border border-rose-200 rounded-lg p-2.5 space-y-1">
+                                    <span className="text-[10px] font-black uppercase text-rose-800 tracking-wide flex items-center gap-1">
+                                      <AlertCircle className="h-3.5 w-3.5 text-rose-600" />
+                                      <span>Recorded Shortages & Missing Components:</span>
+                                    </span>
+                                    {stk.shortages.map((sh, idx) => (
+                                      <p key={idx} className="text-xs font-medium text-rose-900 font-sans pl-4">
+                                        • {sh}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
+
+                                {/* Logging Info */}
+                                <div className="text-[10px] font-mono text-slate-500 flex items-center justify-between pt-1 border-t border-slate-200/60">
+                                  <span>Logged by: {stk.operator}</span>
+                                  <span>Date: {stk.dateLogged ? new Date(stk.dateLogged).toLocaleString() : 'N/A'}</span>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-12 text-center" id="purchase-no-results">
+                <AlertCircle className="h-10 w-10 text-slate-300 mx-auto mb-2" />
+                <h4 className="text-xs font-bold text-slate-700 font-sans">No matching purchase or container records</h4>
+                <p className="text-[11px] text-slate-400 mt-1 max-w-sm mx-auto font-sans">
+                  No container bills or stock IN numbers match "{purchaseQuery}". Try entering a Bill Number or logging a purchase in the Purchase section.
                 </p>
               </div>
             )}

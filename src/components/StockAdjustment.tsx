@@ -103,6 +103,14 @@ export default function StockAdjustment({
   };
   const [successMsg, setSuccessMsg] = useState('');
 
+  // Multi-model & multi-color breakdown for container purchase stock entry
+  const [useMultiVariant, setUseMultiVariant] = useState(false);
+  const [multiVariantRows, setMultiVariantRows] = useState<Array<{ id: string; modelName: string; color: string; quantity: number }>>([
+    { id: '1', modelName: '', color: '', quantity: 1 }
+  ]);
+  const [hasShortage, setHasShortage] = useState(false);
+  const [shortageDetails, setShortageDetails] = useState('');
+
   // Battery Import States
   const [impBatterySeries, setImpBatterySeries] = useState('Standard');
   const [impQuantity, setImpQuantity] = useState('');
@@ -232,6 +240,70 @@ export default function StockAdjustment({
 
   const handleLogStock = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (type === 'in' && useMultiVariant) {
+      if (!scooterBillNo || !scooterStockInNo) {
+        setErrorMsg('Bill Number and unique Stock IN Number are required.');
+        return;
+      }
+      for (let i = 0; i < multiVariantRows.length; i++) {
+        const row = multiVariantRows[i];
+        if (!row.modelName || !row.color || !row.quantity || row.quantity <= 0) {
+          setErrorMsg(`Row #${i + 1} has incomplete model, color, or quantity details.`);
+          return;
+        }
+      }
+
+      setLoading(true);
+      setErrorMsg('');
+      setSuccessMsg('');
+
+      let allOk = true;
+      let totalLogged = 0;
+
+      for (const row of multiVariantRows) {
+        const combinedNotes = [
+          notes ? `Remarks: ${notes}` : '',
+          hasShortage && shortageDetails ? `⚠️ Shortage/Discrepancy: ${shortageDetails}` : ''
+        ].filter(Boolean).join(' | ');
+
+        const payload = {
+          modelName: row.modelName,
+          color: row.color,
+          type: 'in',
+          sourceChannel,
+          quantity: Number(row.quantity),
+          notes: combinedNotes,
+          operator: currentUser.username,
+          billNo: scooterBillNo.trim().toUpperCase(),
+          stockInNo: scooterStockInNo.trim().toUpperCase(),
+        };
+
+        const ok = await onSubmitStockLog(payload);
+        if (ok) {
+          totalLogged += Number(row.quantity);
+        } else {
+          allOk = false;
+        }
+      }
+
+      if (allOk) {
+        setSuccessMsg(`Successfully logged multi-model stock entry under Stock IN No [${scooterStockInNo.trim().toUpperCase()}] (${totalLogged} total units across ${multiVariantRows.length} variant rows)!`);
+        setMultiVariantRows([{ id: Date.now().toString(), modelName: '', color: '', quantity: 1 }]);
+        setNotes('');
+        setShortageDetails('');
+        setHasShortage(false);
+        setScooterBillNo(`BILL-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+        setScooterStockInNo(`STKIN-${Math.floor(10000 + Math.random() * 90000)}`);
+        onRefresh();
+      } else {
+        setErrorMsg('One or more variant rows failed to log. Please verify backend state.');
+      }
+      setLoading(false);
+      return;
+    }
+
+    // Standard Single-Item Stock Log
     if (!modelName || !color) {
       setErrorMsg('Please select model and color first');
       return;
@@ -246,6 +318,11 @@ export default function StockAdjustment({
     setErrorMsg('');
     setSuccessMsg('');
 
+    const combinedNotes = [
+      notes ? `Remarks: ${notes}` : '',
+      hasShortage && shortageDetails ? `⚠️ Shortage/Discrepancy: ${shortageDetails}` : ''
+    ].filter(Boolean).join(' | ');
+
     const payload = {
       modelName,
       color,
@@ -253,10 +330,10 @@ export default function StockAdjustment({
       sourceChannel,
       quantity: Number(quantity),
       buyerName: type === 'out' ? buyerName : undefined,
-      notes: notes || '',
+      notes: combinedNotes || notes || '',
       operator: currentUser.username,
-      billNo: type === 'in' ? scooterBillNo : undefined,
-      stockInNo: type === 'in' ? scooterStockInNo : undefined,
+      billNo: type === 'in' ? scooterBillNo.trim().toUpperCase() : undefined,
+      stockInNo: type === 'in' ? scooterStockInNo.trim().toUpperCase() : undefined,
     };
 
     const ok = await onSubmitStockLog(payload);
@@ -266,6 +343,8 @@ export default function StockAdjustment({
       setQuantity(1);
       setBuyerName('');
       setNotes('');
+      setShortageDetails('');
+      setHasShortage(false);
       if (type === 'in') {
         setScooterBillNo(`BILL-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
         setScooterStockInNo(`STKIN-${Math.floor(10000 + Math.random() * 90000)}`);
@@ -542,84 +621,241 @@ export default function StockAdjustment({
                   </div>
                 </div>
 
-                {/* Model Selector */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                    Scooter Model Name
-                  </label>
-                  <select
-                    value={modelName}
-                    onChange={(e) => handleModelChange(e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none cursor-pointer font-sans"
-                    required
-                  >
-                    <option value="">-- Choose Scooter Model --</option>
-                    {products.map((prod) => (
-                      <option key={prod.id} value={prod.name}>{prod.name}</option>
-                    ))}
-                  </select>
-                </div>
+                {/* Bill Number & Stock IN Number (Only for IN Operations) */}
+                {type === 'in' && (
+                  <div className="space-y-4 bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 font-sans">
+                          Bill Number <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. BILL-2026-088"
+                          value={scooterBillNo}
+                          onChange={(e) => setScooterBillNo(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-800 focus:border-cyan-500 outline-none font-sans font-mono"
+                          required
+                        />
+                        <span className="text-[10px] text-slate-500 font-sans mt-0.5 block">Shared container/supplier bill ID</span>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 font-sans">
+                          Stock IN / Invoice No <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. STKIN-1001"
+                          value={scooterStockInNo}
+                          onChange={(e) => setScooterStockInNo(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-800 focus:border-cyan-500 outline-none font-sans font-mono"
+                          required
+                        />
+                        <span className="text-[10px] text-amber-700 font-bold font-sans mt-0.5 block">🔒 Unique & Immutable Once Saved</span>
+                      </div>
+                    </div>
 
-                {/* Color Selector */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                    Scooter Variant Color
-                  </label>
-                  <select
-                    value={color}
-                    onChange={(e) => setColor(e.target.value)}
-                    className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none cursor-pointer font-sans"
-                    required
-                    disabled={!modelName}
-                  >
-                    <option value="">-- Select Variant Color --</option>
-                    {modelName && products.find(p => p.name === modelName)?.colors.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                </div>
+                    {/* Toggle Multi-Variant Unpacking Mode */}
+                    <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          id="toggle-multi-variant"
+                          checked={useMultiVariant}
+                          onChange={(e) => setUseMultiVariant(e.target.checked)}
+                          className="h-4 w-4 text-cyan-600 rounded border-slate-300 focus:ring-cyan-500 cursor-pointer"
+                        />
+                        <label htmlFor="toggle-multi-variant" className="text-xs font-bold text-slate-800 cursor-pointer font-sans">
+                          Unpacking Mode: Multi-Model & Multi-Color Breakdown
+                        </label>
+                      </div>
+                      <span className="text-[10px] bg-cyan-100 text-cyan-800 font-bold px-2 py-0.5 rounded-full font-sans">
+                        Container Unpacking
+                      </span>
+                    </div>
+                  </div>
+                )}
 
-                {/* Channel & Qty Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                      Source Channel
-                    </label>
-                    <select
-                      value={sourceChannel}
-                      onChange={(e) => setSourceChannel(e.target.value as any)}
-                      className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none cursor-pointer font-sans"
-                      required
+                {/* Single Variant vs Multi-Variant Rows */}
+                {!useMultiVariant || type === 'out' ? (
+                  <>
+                    {/* Model Selector */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
+                        Scooter Model Name
+                      </label>
+                      <select
+                        value={modelName}
+                        onChange={(e) => handleModelChange(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none cursor-pointer font-sans"
+                        required={!useMultiVariant}
+                      >
+                        <option value="">-- Choose Scooter Model --</option>
+                        {products.map((prod) => (
+                          <option key={prod.id} value={prod.name}>{prod.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Color Selector */}
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
+                        Scooter Variant Color
+                      </label>
+                      <select
+                        value={color}
+                        onChange={(e) => setColor(e.target.value)}
+                        className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none cursor-pointer font-sans"
+                        required={!useMultiVariant}
+                        disabled={!modelName}
+                      >
+                        <option value="">-- Select Variant Color --</option>
+                        {modelName && products.find(p => p.name === modelName)?.colors.map((c) => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Channel & Qty Grid */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
+                          Source Channel
+                        </label>
+                        <select
+                          value={sourceChannel}
+                          onChange={(e) => setSourceChannel(e.target.value as any)}
+                          className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none cursor-pointer font-sans"
+                          required
+                        >
+                          {type === 'in' ? (
+                            <>
+                              <option value="container_freight">Container Freight (CKD)</option>
+                              <option value="local_seller">Local Seller Purchase</option>
+                              <option value="adjustment">Internal Stock Adjustment</option>
+                            </>
+                          ) : (
+                            <>
+                              <option value="customer_sale">Retail Customer Sale</option>
+                              <option value="adjustment">Internal Write-off / Damage</option>
+                            </>
+                          )}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
+                          Quantity (Units)
+                        </label>
+                        <input
+                          type="number"
+                          value={quantity}
+                          onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                          className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
+                          required={!useMultiVariant}
+                          min="1"
+                        />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  /* Multi-Variant Dynamic Table */
+                  <div className="space-y-3 bg-white border border-cyan-200 rounded-2xl p-4 shadow-xs">
+                    <div className="flex items-center justify-between border-b border-cyan-100 pb-2">
+                      <span className="text-xs font-extrabold text-cyan-900 uppercase tracking-wide font-sans">
+                        Multi-Model & Color Breakdown Table
+                      </span>
+                      <span className="text-[10px] font-bold text-cyan-700 font-mono">
+                        {multiVariantRows.reduce((sum, r) => sum + (Number(r.quantity) || 0), 0)} Total Units
+                      </span>
+                    </div>
+
+                    <div className="space-y-2.5">
+                      {multiVariantRows.map((row, index) => {
+                        const selectedProd = products.find(p => p.name === row.modelName);
+                        return (
+                          <div key={row.id} className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2 text-xs">
+                            <div className="flex items-center justify-between text-[11px] font-bold text-slate-600">
+                              <span>Variant Breakdown Row #{index + 1}</span>
+                              {multiVariantRows.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setMultiVariantRows(prev => prev.filter(r => r.id !== row.id))}
+                                  className="text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
+                                >
+                                  ✕ Remove Row
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                              <div className="sm:col-span-5">
+                                <select
+                                  value={row.modelName}
+                                  onChange={(e) => {
+                                    const mName = e.target.value;
+                                    const p = products.find(prod => prod.name === mName);
+                                    const defaultColor = p?.colors[0] || '';
+                                    setMultiVariantRows(prev => prev.map(r => r.id === row.id ? { ...r, modelName: mName, color: defaultColor } : r));
+                                  }}
+                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-800 focus:border-cyan-500 outline-none"
+                                  required
+                                >
+                                  <option value="">-- Choose Model --</option>
+                                  {products.map(p => (
+                                    <option key={p.id} value={p.name}>{p.name}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="sm:col-span-4">
+                                <select
+                                  value={row.color}
+                                  onChange={(e) => {
+                                    const cVal = e.target.value;
+                                    setMultiVariantRows(prev => prev.map(r => r.id === row.id ? { ...r, color: cVal } : r));
+                                  }}
+                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-800 focus:border-cyan-500 outline-none"
+                                  required
+                                  disabled={!row.modelName}
+                                >
+                                  <option value="">-- Color --</option>
+                                  {selectedProd?.colors.map(c => (
+                                    <option key={c} value={c}>{c}</option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="sm:col-span-3">
+                                <input
+                                  type="number"
+                                  min="1"
+                                  placeholder="Qty"
+                                  value={row.quantity}
+                                  onChange={(e) => {
+                                    const qVal = Math.max(1, parseInt(e.target.value) || 1);
+                                    setMultiVariantRows(prev => prev.map(r => r.id === row.id ? { ...r, quantity: qVal } : r));
+                                  }}
+                                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-bold text-slate-800 font-mono focus:border-cyan-500 outline-none"
+                                  required
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setMultiVariantRows(prev => [...prev, { id: Date.now().toString(), modelName: '', color: '', quantity: 1 }])}
+                      className="w-full py-2 bg-cyan-50 hover:bg-cyan-100 text-cyan-800 font-bold text-xs rounded-xl border border-cyan-200 transition-colors flex items-center justify-center gap-1 cursor-pointer font-sans"
                     >
-                      {type === 'in' ? (
-                        <>
-                          <option value="container_freight">Container Freight (CKD)</option>
-                          <option value="local_seller">Local Seller Purchase</option>
-                          <option value="adjustment">Internal Stock Adjustment</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="customer_sale">Retail Customer Sale</option>
-                          <option value="adjustment">Internal Write-off / Damage</option>
-                        </>
-                      )}
-                    </select>
+                      <Plus className="h-3.5 w-3.5" />
+                      <span>Add Another Model / Color Row</span>
+                    </button>
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                      Quantity (Units)
-                    </label>
-                    <input
-                      type="number"
-                      value={quantity}
-                      onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
-                      required
-                      min="1"
-                    />
-                  </div>
-                </div>
+                )}
 
                 {/* Optional Buyer Name for Outflow Sales */}
                 {type === 'out' && sourceChannel === 'customer_sale' && (
@@ -641,38 +877,6 @@ export default function StockAdjustment({
                   </div>
                 )}
 
-                {/* Container & Invoice Auto Codes for Stock IN */}
-                {type === 'in' && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 border border-slate-200 rounded-2xl p-4">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-mono">
-                        Container Bill Number
-                      </label>
-                      <input
-                        type="text"
-                        value={scooterBillNo}
-                        onChange={(e) => setScooterBillNo(e.target.value.toUpperCase())}
-                        placeholder="e.g. BILL-2026-880"
-                        className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-mono font-bold text-slate-900 focus:border-amber-500 outline-none"
-                        required
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-mono">
-                        Stock IN / Invoice No
-                      </label>
-                      <input
-                        type="text"
-                        value={scooterStockInNo}
-                        onChange={(e) => setScooterStockInNo(e.target.value.toUpperCase())}
-                        placeholder="e.g. STKIN-9902"
-                        className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-mono font-bold text-slate-900 focus:border-amber-500 outline-none"
-                        required
-                      />
-                    </div>
-                  </div>
-                )}
 
                 {/* Additional Comments */}
                 <div>
