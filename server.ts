@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import { google } from 'googleapis';
 import path from 'path';
 import fs from 'fs';
@@ -46,6 +47,7 @@ if (fs.existsSync(firebaseConfigPath)) {
 let globalDBState: DBState | null = null;
 
 
+app.use(cors());
 app.use(express.json());
 
 // Helper to write to Google Sheets Webhook asynchronously (Disabled per user request)
