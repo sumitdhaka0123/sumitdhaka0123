@@ -5592,7 +5592,7 @@ app.post('/api/drive/callback', async (req, res) => {
       db.driveConfig.folderId = files[0].id;
     } else {
       const folderMetadata = { name: 'Inventory_Database_Backups', mimeType: 'application/vnd.google-apps.folder' };
-      const folder = await drive.files.create({ resource: folderMetadata, fields: 'id' });
+      const folder = await drive.files.create({ requestBody: folderMetadata, fields: 'id' });
       db.driveConfig.folderId = folder.data.id;
     }
     
@@ -5623,7 +5623,7 @@ async function uploadToDrive(db, backupItem, filePath) {
     const fileMetadata = { name: backupItem.filename, parents: [db.driveConfig.folderId] };
     const media = { mimeType: 'application/json', body: fs.createReadStream(filePath) };
     
-    await drive.files.create({ resource: fileMetadata, media: media, fields: 'id' });
+    await drive.files.create({ requestBody: fileMetadata, media: media, fields: 'id' });
     return true;
   } catch (error) {
     console.error('Drive Upload Error:', error);
