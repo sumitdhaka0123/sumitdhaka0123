@@ -219,6 +219,12 @@ export default function StockAdjustment({
     setType(newType);
     if (newType === 'in') {
       setSourceChannel('container_freight');
+      if (!scooterBillNo) {
+        setScooterBillNo(`BILL-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+      }
+      if (!scooterStockInNo) {
+        setScooterStockInNo(`STKIN-${Math.floor(10000 + Math.random() * 90000)}`);
+      }
     } else {
       setSourceChannel('customer_sale');
     }
@@ -260,8 +266,13 @@ export default function StockAdjustment({
       setQuantity(1);
       setBuyerName('');
       setNotes('');
-      setScooterBillNo('');
-      setScooterStockInNo('');
+      if (type === 'in') {
+        setScooterBillNo(`BILL-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
+        setScooterStockInNo(`STKIN-${Math.floor(10000 + Math.random() * 90000)}`);
+      } else {
+        setScooterBillNo('');
+        setScooterStockInNo('');
+      }
       onRefresh();
     } else {
       setErrorMsg('Failed to record stock log. Verify backend connection.');
