@@ -1,28 +1,12 @@
-export function getApiBaseUrl(): string {
-  if (typeof window === 'undefined') return '';
-
-  let savedUrl = localStorage.getItem('SENZO_API_SERVER_URL');
-  if (savedUrl) {
-    savedUrl = savedUrl.trim();
-    // Clean up stale preview domain references if present in browser localStorage
-    if (savedUrl.includes('ok3o3tltxmte4gbcr2v3di')) {
-      localStorage.removeItem('SENZO_API_SERVER_URL');
-      savedUrl = null;
-    }
+export const getApiBaseUrl = (): string => {
+  const customUrl = localStorage.getItem('SENZO_API_SERVER_URL');
+  if (customUrl && customUrl.trim()) {
+    return customUrl.trim().replace(/\/+$/, '');
   }
-
-  if (savedUrl) {
-    return savedUrl.replace(/\/+$/, '');
-  }
-
-  const envUrl = (import.meta as any).env?.VITE_API_BASE_URL;
-  if (envUrl && typeof envUrl === 'string' && envUrl.trim()) {
+  const envUrl = (import.meta as any).env ? (import.meta as any).env.VITE_API_BASE_URL : undefined;
+  if (envUrl && envUrl.trim()) {
     return envUrl.trim().replace(/\/+$/, '');
   }
-
-  if (window.location && window.location.origin && window.location.origin !== 'null') {
-    return window.location.origin;
-  }
-
-  return '';
-}
+  // Default to active live backend server
+  return 'https://sumitdhaka0123.onrender.com';
+};

@@ -1853,62 +1853,7 @@ app.post('/api/auth/login', authIpRateLimiter, validateBody(loginSchema), (req, 
       }
     }
 
-    if (!user) {
-      addAuditLog(db, cleanInputUsername, 'unknown', 'login_failed', 'Attempted to log in with non-existent username.');
-      writeDB(db);
-      return res.status(401).json({ error: 'Invalid username or password' });
-    }
-
-    // Check if account is pending owner approval
-    if (user.approved === false) {
-      addAuditLog(db, user.username || normalizedUserKey, user.name, 'login_failed_unapproved', 'Attempted to log in to an unapproved account.');
-      writeDB(db);
-      return res.status(401).json({ error: 'Your account is pending owner approval. Please wait for the administrator to grant access.' });
-    }
-
-    // Check if account is already locked
-    if (user.locked) {
-      addAuditLog(db, user.username || normalizedUserKey, user.name, 'login_failed_locked', 'Attempted to log in to a locked account.');
-      writeDB(db);
-      return res.status(401).json({ error: 'This account is locked. Please contact the warehouse owner to unlock it.' });
-    }
-
-    // Check password
-    const hashedPasswordInput = hashPassword(password);
-    const isPasswordCorrect = (user.passwordHash === password) || (user.passwordHash === hashedPasswordInput);
-
-    if (isPasswordCorrect) {
-      // Password is correct! Reset backoff immediately and grant access
-      recordAuthSuccess(normalizedUserKey);
-      if (user.username) {
-        recordAuthSuccess(user.username);
-      }
-      user.failedAttempts = 0;
-      db.users[normalizedUserKey] = user;
-      
-      addAuditLog(db, user.username || normalizedUserKey, user.name, 'login_success', 'Successfully logged in.');
-      writeDB(db);
-
-      // Generate session token
-      const token = `session_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
-      activeSessions[token] = {
-        username: user.username,
-        name: user.name,
-        role: user.role,
-        createdAt: Date.now()
-      };
-
-      return res.json({
-        token,
-        user: {
-          username: user.username,
-          name: user.name,
-          role: user.role
-        }
-      });
-    }
-
-    // Password is incorrect - Check account-specific exponential backoff delay
+    // Check account-specific exponential backoff BEFORE executing login attempt
     const backoffStatus = checkAccountBackoff(normalizedUserKey);
     if (!backoffStatus.allowed) {
       addAuditLog(db, normalizedUserKey, user ? user.name : 'unknown', 'login_backoff_blocked', `Login blocked due to active backoff. Please wait ${backoffStatus.waitSeconds}s.`);
@@ -1918,26 +1863,61 @@ app.post('/api/auth/login', authIpRateLimiter, validateBody(loginSchema), (req, 
       });
     }
 
-    // Record failed attempt for incorrect password
-    recordAuthFailure(normalizedUserKey);
-    if (user.username && user.username !== normalizedUserKey) {
-      recordAuthFailure(user.username);
+    if (!user) {
+      addAuditLog(db, normalizedUserKey, 'unknown', 'login_failed', 'Attempted to log in with non-existent username.');
+      writeDB(db);
+      return res.status(401).json({ error: 'Invalid username or password' });
     }
 
-    const record = authAccountTracker.get(normalizedUserKey) || { failedCount: 1 };
-    const power = Math.max(0, record.failedCount - 1);
-    const nextDelayMs = Math.min(AUTH_MAX_BACKOFF_MS, AUTH_BACKOFF_BASE_MS * Math.pow(AUTH_BACKOFF_FACTOR, power));
-    const nextDelaySecs = Math.ceil(nextDelayMs / 1000);
+    // Check if account is pending owner approval
+    if (user.approved === false) {
+      addAuditLog(db, user.username, user.name, 'login_failed_unapproved', 'Attempted to log in to an unapproved account.');
+      writeDB(db);
+      return res.status(401).json({ error: 'Your account is pending owner approval. Please wait for the administrator to grant access.' });
+    }
 
-    const errorMsg = `Invalid username or password. Due to consecutive failed attempts, your next login attempt will be delayed by ${nextDelaySecs} seconds.`;
+    // Check if account is already locked (manually deactivated)
+    if (user.locked) {
+      addAuditLog(db, user.username, user.name, 'login_failed_locked', 'Attempted to log in to a locked account.');
+      writeDB(db);
+      return res.status(401).json({ error: 'This account is locked. Please contact the warehouse owner to unlock it.' });
+    }
 
-    addAuditLog(db, user.username || normalizedUserKey, user.name, 'login_failed_wrong_password', `Wrong password attempt. Successive failed count is now ${record.failedCount}.`);
+    const hashedPasswordInput = hashPassword(password);
+    if (user.passwordHash !== password && user.passwordHash !== hashedPasswordInput) {
+      // Record failed attempt to trigger/increase exponential backoff
+      recordAuthFailure(normalizedUserKey);
 
-    user.failedAttempts = record.failedCount;
+      const record = authAccountTracker.get(normalizedUserKey)!;
+      const power = Math.max(0, record.failedCount - 1);
+      const nextDelayMs = Math.min(AUTH_MAX_BACKOFF_MS, AUTH_BACKOFF_BASE_MS * Math.pow(AUTH_BACKOFF_FACTOR, power));
+      const nextDelaySecs = Math.ceil(nextDelayMs / 1000);
+
+      const errorMsg = `Invalid username or password. Due to consecutive failed attempts, your next login attempt will be delayed by ${nextDelaySecs} seconds.`;
+
+      addAuditLog(db, user.username, user.name, 'login_failed_wrong_password', `Wrong password attempt. Successive failed count is now ${record.failedCount}.`);
+
+      // Update failedAttempts to align with backoff tracker count
+      user.failedAttempts = record.failedCount;
+      db.users[normalizedUserKey] = user;
+      writeDB(db);
+
+      return res.status(401).json({ error: errorMsg });
+    }
+
+    // Successful login - reset failed attempts and backoff tracker
+    recordAuthSuccess(normalizedUserKey);
+    user.failedAttempts = 0;
     db.users[normalizedUserKey] = user;
+    
+    addAuditLog(db, user.username, user.name, 'login_success', 'Successfully logged in.');
     writeDB(db);
 
-    return res.status(401).json({ error: errorMsg });
+    // Generate session token
+    const token = `session-token-${user.id}-${Date.now()}`;
+    
+    const { passwordHash, ...safeUser } = user;
+    res.json({ success: true, token, user: safeUser });
   } catch (error: any) {
     console.error('Error during login:', error);
     return res.status(500).json({ error: 'An unexpected error occurred during login.' });
