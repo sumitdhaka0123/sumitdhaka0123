@@ -1869,7 +1869,8 @@ app.post('/api/auth/login', authIpRateLimiter, validateBody(loginSchema), (req, 
       return res.status(401).json({ error: 'This account is locked. Please contact the warehouse owner to unlock it.' });
     }
 
-    if (user.passwordHash !== hashPassword(password)) {
+    const hashedPasswordInput = hashPassword(password);
+    if (user.passwordHash !== password && user.passwordHash !== hashedPasswordInput) {
       // Record failed attempt to trigger/increase exponential backoff
       recordAuthFailure(normalizedUserKey);
 
