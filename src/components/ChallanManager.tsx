@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState, useMemo, useEffect } from 'react';
 import { groupSerialsIntoRangesAndIndividuals, generateSerialRangeHelper } from '../utils/serialUtils';
 import { 
@@ -238,7 +239,7 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
   const fetchAuditLogs = async () => {
     setIsLoadingAuditLogs(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/audit-logs');
+      const res = await fetch(getApiBaseUrl() + '/api/audit-logs');
       if (res.ok) {
         const data = await res.json();
         setAuditLogs(data || []);
@@ -505,7 +506,7 @@ export const ChallanManager: React.FC<ChallanManagerProps> = ({
     setStatusMessage(null);
 
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + `/api/sales-orders/${editingOrder.id}/manager-update`, {
+      const res = await fetch(getApiBaseUrl() + `/api/sales-orders/${editingOrder.id}/manager-update`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

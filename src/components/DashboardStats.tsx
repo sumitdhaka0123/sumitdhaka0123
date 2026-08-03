@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { 
@@ -2451,7 +2452,7 @@ export default function DashboardStats({
               // Validate document numbers uniqueness
               if (completingBillingNo.trim() || completingDeliveryChallanNo.trim()) {
                 try {
-                  const valRes = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/validate-document-numbers', {
+                  const valRes = await fetch(getApiBaseUrl() + '/api/validate-document-numbers', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -2687,7 +2688,7 @@ export default function DashboardStats({
               // Validate document numbers uniqueness
               if (completingBillingNo.trim() || completingDeliveryChallanNo.trim()) {
                 try {
-                  const valRes = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/validate-document-numbers', {
+                  const valRes = await fetch(getApiBaseUrl() + '/api/validate-document-numbers', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({

@@ -1,12 +1,17 @@
+import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Users, UserPlus, Shield, ClipboardList, RefreshCw, Key, Trash2, Edit2, 
   Check, AlertCircle, Cloud, Activity, Search, Sparkles, User, Briefcase,
   Lock, Unlock, Printer, FileSpreadsheet, Calendar, ArrowDown, Filter, Clock,
-  Plus, X, Eye, EyeOff, MapPin, Compass, Navigation, Map, Database
+  Plus, X, Eye, EyeOff, MapPin, Compass, Navigation, Map, Database,
+  TrendingUp, BarChart3, Award, ShoppingBag, Wrench, Truck, ChevronDown, ChevronRight, Download
 } from 'lucide-react';
-import { SheetConfig, ScooterUnit, StockLog, BatterySale, BatteryImport, User as SessionUser } from '../types';
+import { 
+  SheetConfig, ScooterUnit, StockLog, BatterySale, BatteryImport, User as SessionUser,
+  SalesOrder, ChargerSale, ChargerImport, WarrantyClaim 
+} from '../types';
 import { formatUserMessage } from '../utils/errorHelper';
 import SheetSyncPanel from './SheetSyncPanel';
 import EmployeeMap from './EmployeeMap';
@@ -22,6 +27,10 @@ interface SettingsPanelProps {
   batterySales: BatterySale[];
   batteryImports: BatteryImport[];
   stockLogs: StockLog[];
+  salesOrders?: SalesOrder[];
+  chargerSales?: ChargerSale[];
+  chargerImports?: ChargerImport[];
+  warrantyClaims?: WarrantyClaim[];
   currentUser: SessionUser;
 }
 
@@ -37,6 +46,7 @@ interface DBUser {
   latitude?: number;
   longitude?: number;
   locationTimestamp?: string;
+  locationHistory?: any[];
 }
 
 interface SystemAuditLog {
@@ -46,6 +56,8 @@ interface SystemAuditLog {
   operatorRole: string;
   action: string;
   details: string;
+  username?: string;
+  operatorName?: string;
 }
 
 export default function SettingsPanel({
@@ -57,9 +69,21 @@ export default function SettingsPanel({
   batterySales,
   batteryImports,
   stockLogs,
+  salesOrders = [],
+  chargerSales = [],
+  chargerImports = [],
+  warrantyClaims = [],
   currentUser
 }: SettingsPanelProps) {
-  const [subTab, setSubTab] = useState<'employees' | 'sheets' | 'audit' | 'tracking' | 'trails'>('employees');
+  const [subTab, setSubTab] = useState<'employees' | 'performance' | 'sheets' | 'audit' | 'tracking' | 'trails'>('employees');
+  
+  // Owner Performance System Filters & States
+  const [perfSearch, setPerfSearch] = useState('');
+  const [perfViewMode, setPerfViewMode] = useState<'both' | 'sales' | 'workers'>('both');
+  const [perfRoleFilter, setPerfRoleFilter] = useState<string>('all');
+  const [perfStartDate, setPerfStartDate] = useState('');
+  const [perfEndDate, setPerfEndDate] = useState('');
+  const [expandedPerfUser, setExpandedPerfUser] = useState<string | null>(null);
   
   // Employees list state
   const [employees, setEmployees] = useState<DBUser[]>([]);
@@ -88,7 +112,7 @@ export default function SettingsPanel({
     setIsPullingLocation(true);
     setSuccessMsg(`Sending satellite ping to @${username}'s device...`);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/pull-location', {
+      const res = await fetch(getApiBaseUrl() + '/api/users/pull-location', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
@@ -164,7 +188,7 @@ export default function SettingsPanel({
   const fetchEmployees = async (silent = false) => {
     if (!silent) setLoadingEmployees(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users');
+      const res = await fetch(getApiBaseUrl() + '/api/users');
       if (res.ok) {
         const data = await res.json();
         setEmployees(data);
@@ -187,7 +211,7 @@ export default function SettingsPanel({
   const fetchAuditLogs = async () => {
     setLoadingAudit(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/audit-logs');
+      const res = await fetch(getApiBaseUrl() + '/api/audit-logs');
       if (res.ok) {
         const data = await res.json();
         setAuditLogs(data);
@@ -241,7 +265,7 @@ export default function SettingsPanel({
   // Unlock Locked Account
   const handleUnlockUser = async (username: string) => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/unlock', {
+      const res = await fetch(getApiBaseUrl() + '/api/users/unlock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -267,7 +291,7 @@ export default function SettingsPanel({
   // Approve Pending User Registration
   const handleApproveUser = async (id: string, name: string) => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/approve', {
+      const res = await fetch(getApiBaseUrl() + '/api/users/approve', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -290,7 +314,7 @@ export default function SettingsPanel({
   // Reject / Deny Pending User Registration
   const handleRejectUser = async (id: string, name: string) => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/reject', {
+      const res = await fetch(getApiBaseUrl() + '/api/users/reject', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -320,7 +344,7 @@ export default function SettingsPanel({
 
     setSubmittingForm(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/auth/register', {
+      const res = await fetch(getApiBaseUrl() + '/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -357,7 +381,7 @@ export default function SettingsPanel({
 
     setSubmittingForm(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/update', {
+      const res = await fetch(getApiBaseUrl() + '/api/users/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -399,7 +423,7 @@ export default function SettingsPanel({
 
     setDeletingUser(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/delete', {
+      const res = await fetch(getApiBaseUrl() + '/api/users/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id })
@@ -591,6 +615,440 @@ export default function SettingsPanel({
       feed: feed.slice(0, 30) // Show latest 30 actions
     };
   }, [selectedEmployee, scooterUnits, batterySales, batteryImports, stockLogs]);
+
+  // Comprehensive Owner Performance Analytics Engine ("Who Sold How Much" & "Which Worker Did How Much Work")
+  const performanceData = useMemo(() => {
+    const sOrders = salesOrders || [];
+    const cSales = chargerSales || [];
+    const cImports = chargerImports || [];
+    const wClaims = warrantyClaims || [];
+
+    // Helper: Date in range check
+    const isDateInRange = (dateStr?: string) => {
+      if (!dateStr) return true;
+      const time = new Date(dateStr).getTime();
+      if (isNaN(time)) return true;
+      if (perfStartDate && time < new Date(perfStartDate).getTime()) return false;
+      if (perfEndDate && time > new Date(perfEndDate).getTime() + (24 * 60 * 60 * 1000)) return false;
+      return true;
+    };
+
+    // Helper: Search filter
+    const matchesSearch = (...texts: (string | undefined)[]) => {
+      if (!perfSearch.trim()) return true;
+      const q = perfSearch.toLowerCase().trim();
+      return texts.some(t => (t || '').toLowerCase().includes(q));
+    };
+
+    // 1. SALESPERSON PERFORMANCE MAP ("WHO SOLD HOW MUCH")
+    const salesMap: Record<string, {
+      name: string;
+      username: string;
+      role: string;
+      ordersCount: number;
+      scootersSold: number;
+      batteriesSold: number;
+      chargersSold: number;
+      totalItemsSold: number;
+      latestDate: string;
+      ordersList: SalesOrder[];
+      posScooterUnits: ScooterUnit[];
+    }> = {};
+
+    // Seed sales Map with registered users
+    uniqueEmployees.forEach(emp => {
+      const key = emp.username.toLowerCase().trim();
+      salesMap[key] = {
+        name: emp.name,
+        username: emp.username,
+        role: emp.role,
+        ordersCount: 0,
+        scootersSold: 0,
+        batteriesSold: 0,
+        chargersSold: 0,
+        totalItemsSold: 0,
+        latestDate: '',
+        ordersList: [],
+        posScooterUnits: []
+      };
+    });
+
+    // Populate Sales Orders
+    sOrders.forEach(order => {
+      if (!isDateInRange(order.createdTimestamp)) return;
+      const spUsername = (order.salespersonUsername || order.salespersonName || 'salesperson').toLowerCase().trim();
+      if (!salesMap[spUsername]) {
+        salesMap[spUsername] = {
+          name: order.salespersonName || spUsername,
+          username: spUsername,
+          role: 'salesperson',
+          ordersCount: 0,
+          scootersSold: 0,
+          batteriesSold: 0,
+          chargersSold: 0,
+          totalItemsSold: 0,
+          latestDate: '',
+          ordersList: [],
+          posScooterUnits: []
+        };
+      }
+
+      if (matchesSearch(order.buyerName, order.orderNo, order.salespersonName, order.salespersonUsername, order.deliveryLocation)) {
+        salesMap[spUsername].ordersCount++;
+        salesMap[spUsername].ordersList.push(order);
+
+        let itemsTotal = 0;
+        (order.items || []).forEach(it => {
+          const qty = Number(it.quantity || 1);
+          itemsTotal += qty;
+          if (it.itemType === 'scooter') salesMap[spUsername].scootersSold += qty;
+          else if (it.itemType === 'battery') salesMap[spUsername].batteriesSold += qty;
+          else if (it.itemType === 'charger') salesMap[spUsername].chargersSold += qty;
+        });
+        salesMap[spUsername].totalItemsSold += itemsTotal;
+
+        const d = order.dispatchedTimestamp || order.createdTimestamp || '';
+        if (d > salesMap[spUsername].latestDate) salesMap[spUsername].latestDate = d;
+      }
+    });
+
+    // Populate POS Direct Scooter Sales
+    scooterUnits.forEach(u => {
+      if (u.status === 'sold' && u.lastUpdatedBy) {
+        if (!isDateInRange(u.saleDate || u.lastUpdatedTimestamp)) return;
+        const key = u.lastUpdatedBy.toLowerCase().trim();
+        if (!salesMap[key]) {
+          salesMap[key] = {
+            name: u.lastUpdatedBy,
+            username: key,
+            role: 'salesperson',
+            ordersCount: 0,
+            scootersSold: 0,
+            batteriesSold: 0,
+            chargersSold: 0,
+            totalItemsSold: 0,
+            latestDate: '',
+            ordersList: [],
+            posScooterUnits: []
+          };
+        }
+
+        if (matchesSearch(u.buyerName, u.modelName, u.chassisNo, u.lastUpdatedBy)) {
+          salesMap[key].scootersSold++;
+          salesMap[key].totalItemsSold++;
+          salesMap[key].posScooterUnits.push(u);
+          const d = u.saleDate || u.lastUpdatedTimestamp || '';
+          if (d > salesMap[key].latestDate) salesMap[key].latestDate = d;
+        }
+      }
+    });
+
+    let salesLeaderboard = Object.values(salesMap);
+    if (perfRoleFilter !== 'all') {
+      salesLeaderboard = salesLeaderboard.filter(s => s.role === perfRoleFilter);
+    }
+    salesLeaderboard.sort((a, b) => b.totalItemsSold - a.totalItemsSold || b.ordersCount - a.ordersCount);
+
+    // 2. WORKER PRODUCTIVITY MAP ("WHICH WORKER DID HOW MUCH WORK")
+    const workerMap: Record<string, {
+      name: string;
+      username: string;
+      role: string;
+      stage1Assemblies: number;
+      stage2Customizations: number;
+      dispatchesHandled: number;
+      batteryChargerOps: number;
+      warrantyClaimsHandled: number;
+      stockLogsCount: number;
+      totalTasks: number;
+      latestActiveDate: string;
+      recentActions: { id: string; title: string; category: string; date: string; details: string }[];
+    }> = {};
+
+    uniqueEmployees.forEach(emp => {
+      const key = emp.username.toLowerCase().trim();
+      workerMap[key] = {
+        name: emp.name,
+        username: emp.username,
+        role: emp.role,
+        stage1Assemblies: 0,
+        stage2Customizations: 0,
+        dispatchesHandled: 0,
+        batteryChargerOps: 0,
+        warrantyClaimsHandled: 0,
+        stockLogsCount: 0,
+        totalTasks: 0,
+        latestActiveDate: '',
+        recentActions: []
+      };
+    });
+
+    // Assemblies & Customizations
+    scooterUnits.forEach(u => {
+      if (u.createdOperator && isDateInRange(u.createdTimestamp)) {
+        const key = u.createdOperator.toLowerCase().trim();
+        if (!workerMap[key]) {
+          workerMap[key] = {
+            name: u.createdOperator,
+            username: key,
+            role: 'manufacturer',
+            stage1Assemblies: 0,
+            stage2Customizations: 0,
+            dispatchesHandled: 0,
+            batteryChargerOps: 0,
+            warrantyClaimsHandled: 0,
+            stockLogsCount: 0,
+            totalTasks: 0,
+            latestActiveDate: '',
+            recentActions: []
+          };
+        }
+        if (matchesSearch(u.modelName, u.chassisNo, u.createdOperator)) {
+          workerMap[key].stage1Assemblies++;
+          workerMap[key].totalTasks++;
+          workerMap[key].recentActions.push({
+            id: `asm-${u.id}`,
+            title: 'Assembled Scooter Chassis',
+            category: 'assembly',
+            date: u.createdTimestamp,
+            details: `${u.modelName} (${u.color}) — Chassis: ${u.chassisNo}`
+          });
+          if (u.createdTimestamp > workerMap[key].latestActiveDate) workerMap[key].latestActiveDate = u.createdTimestamp;
+        }
+      }
+
+      if (u.lastUpdatedBy && u.lastUpdatedBy !== u.createdOperator && isDateInRange(u.lastUpdatedTimestamp)) {
+        const key = u.lastUpdatedBy.toLowerCase().trim();
+        if (!workerMap[key]) {
+          workerMap[key] = {
+            name: u.lastUpdatedBy,
+            username: key,
+            role: 'manufacturer',
+            stage1Assemblies: 0,
+            stage2Customizations: 0,
+            dispatchesHandled: 0,
+            batteryChargerOps: 0,
+            warrantyClaimsHandled: 0,
+            stockLogsCount: 0,
+            totalTasks: 0,
+            latestActiveDate: '',
+            recentActions: []
+          };
+        }
+        if (matchesSearch(u.modelName, u.chassisNo, u.lastUpdatedBy)) {
+          workerMap[key].stage2Customizations++;
+          workerMap[key].totalTasks++;
+          workerMap[key].recentActions.push({
+            id: `cust-${u.id}`,
+            title: 'Customized / Updated Scooter Unit',
+            category: 'customization',
+            date: u.lastUpdatedTimestamp,
+            details: `${u.modelName} — Tires: ${u.tireSize}`
+          });
+          if (u.lastUpdatedTimestamp > workerMap[key].latestActiveDate) workerMap[key].latestActiveDate = u.lastUpdatedTimestamp;
+        }
+      }
+    });
+
+    // Dispatches
+    sOrders.forEach(o => {
+      const dispPerson = o.dispatchedBy || o.preparedBy || o.salespersonUsername;
+      if (dispPerson && isDateInRange(o.dispatchedTimestamp || o.createdTimestamp)) {
+        const key = dispPerson.toLowerCase().trim();
+        if (workerMap[key]) {
+          if (matchesSearch(o.buyerName, o.orderNo, dispPerson, o.deliveryLocation)) {
+            workerMap[key].dispatchesHandled++;
+            workerMap[key].totalTasks++;
+            workerMap[key].recentActions.push({
+              id: `ord-${o.id}`,
+              title: `Dispatched Order ${o.orderNo}`,
+              category: 'dispatch',
+              date: o.dispatchedTimestamp || o.createdTimestamp,
+              details: `Customer: ${o.buyerName} — Location: ${o.deliveryLocation || 'Warehouse'}`
+            });
+            const d = o.dispatchedTimestamp || o.createdTimestamp;
+            if (d > workerMap[key].latestActiveDate) workerMap[key].latestActiveDate = d;
+          }
+        }
+      }
+    });
+
+    // Standalone Battery Sales & Imports
+    batterySales.forEach(s => {
+      if (s.operator && isDateInRange(s.saleDate)) {
+        const key = s.operator.toLowerCase().trim();
+        if (workerMap[key] && matchesSearch(s.buyerName, s.batterySeries, s.operator)) {
+          workerMap[key].batteryChargerOps++;
+          workerMap[key].totalTasks++;
+          workerMap[key].recentActions.push({
+            id: `batsale-${s.id}`,
+            title: 'Dispatched Standalone Battery Pack',
+            category: 'battery',
+            date: s.saleDate,
+            details: `${s.quantity}x ${s.batterySeries} (${s.startNo}➔${s.endNo}) to ${s.buyerName}`
+          });
+          if (s.saleDate > workerMap[key].latestActiveDate) workerMap[key].latestActiveDate = s.saleDate;
+        }
+      }
+    });
+
+    batteryImports.forEach(i => {
+      if (i.operator && isDateInRange(i.importDate)) {
+        const key = i.operator.toLowerCase().trim();
+        if (workerMap[key] && matchesSearch(i.batterySeries, i.supplierName, i.operator)) {
+          workerMap[key].batteryChargerOps++;
+          workerMap[key].totalTasks++;
+          workerMap[key].recentActions.push({
+            id: `batimp-${i.id}`,
+            title: 'Imported Battery Shipment',
+            category: 'battery',
+            date: i.importDate,
+            details: `${i.quantity}x ${i.batterySeries} from ${i.supplierName || 'Supplier'}`
+          });
+          if (i.importDate > workerMap[key].latestActiveDate) workerMap[key].latestActiveDate = i.importDate;
+        }
+      }
+    });
+
+    // Charger Operations
+    cSales.forEach(s => {
+      if (s.operator && isDateInRange(s.saleDate)) {
+        const key = s.operator.toLowerCase().trim();
+        if (workerMap[key] && matchesSearch(s.buyerName, s.chargerType, s.operator)) {
+          workerMap[key].batteryChargerOps++;
+          workerMap[key].totalTasks++;
+          workerMap[key].recentActions.push({
+            id: `chgsale-${s.id}`,
+            title: 'Dispatched Charger Unit',
+            category: 'charger',
+            date: s.saleDate,
+            details: `${s.quantity}x ${s.chargerType} to ${s.buyerName}`
+          });
+          if (s.saleDate > workerMap[key].latestActiveDate) workerMap[key].latestActiveDate = s.saleDate;
+        }
+      }
+    });
+
+    cImports.forEach(i => {
+      if (i.operator && isDateInRange(i.importDate)) {
+        const key = i.operator.toLowerCase().trim();
+        if (workerMap[key] && matchesSearch(i.chargerType, i.operator)) {
+          workerMap[key].batteryChargerOps++;
+          workerMap[key].totalTasks++;
+          workerMap[key].recentActions.push({
+            id: `chgimp-${i.id}`,
+            title: 'Imported Charger Stock Batch',
+            category: 'charger',
+            date: i.importDate,
+            details: `${i.quantity}x ${i.chargerType}`
+          });
+          if (i.importDate > workerMap[key].latestActiveDate) workerMap[key].latestActiveDate = i.importDate;
+        }
+      }
+    });
+
+    // Warranty Claims
+    wClaims.forEach(c => {
+      if (c.operatorName && isDateInRange(c.claimDate)) {
+        const key = c.operatorName.toLowerCase().trim();
+        if (workerMap[key] && matchesSearch(c.buyerName, c.originalSerialNo, c.operatorName)) {
+          workerMap[key].warrantyClaimsHandled++;
+          workerMap[key].totalTasks++;
+          workerMap[key].recentActions.push({
+            id: `claim-${c.id}`,
+            title: `Handled Warranty Claim (${c.status.toUpperCase()})`,
+            category: 'warranty',
+            date: c.claimDate,
+            details: `Serial: ${c.originalSerialNo} — Issue: ${c.issueDescription}`
+          });
+          if (c.claimDate > workerMap[key].latestActiveDate) workerMap[key].latestActiveDate = c.claimDate;
+        }
+      }
+    });
+
+    // Stock Movement Logs
+    stockLogs.forEach(l => {
+      if (l.operator && isDateInRange(l.timestamp)) {
+        const key = l.operator.toLowerCase().trim();
+        if (workerMap[key] && matchesSearch(l.modelName, l.operator)) {
+          workerMap[key].stockLogsCount++;
+          workerMap[key].totalTasks++;
+          workerMap[key].recentActions.push({
+            id: `stock-${l.id}`,
+            title: `Logged Stock Adjustment (${l.type.toUpperCase()})`,
+            category: 'stock',
+            date: l.timestamp,
+            details: `${l.quantity}x ${l.modelName} (${l.color})`
+          });
+          if (l.timestamp > workerMap[key].latestActiveDate) workerMap[key].latestActiveDate = l.timestamp;
+        }
+      }
+    });
+
+    let workerProductivity = Object.values(workerMap);
+    if (perfRoleFilter !== 'all') {
+      workerProductivity = workerProductivity.filter(w => w.role === perfRoleFilter);
+    }
+    workerProductivity.sort((a, b) => b.totalTasks - a.totalTasks);
+
+    // High Level Totals
+    const totalOrdersCount = sOrders.length;
+    const totalScootersSucceeded = salesLeaderboard.reduce((acc, s) => acc + s.scootersSold, 0);
+    const totalAssembliesCount = workerProductivity.reduce((acc, w) => acc + w.stage1Assemblies, 0);
+    const totalDispatchesCount = workerProductivity.reduce((acc, w) => acc + w.dispatchesHandled, 0);
+    const topSalespersonObj = salesLeaderboard.length > 0 && salesLeaderboard[0].totalItemsSold > 0 ? salesLeaderboard[0] : null;
+    const topWorkerObj = workerProductivity.length > 0 && workerProductivity[0].totalTasks > 0 ? workerProductivity[0] : null;
+
+    return {
+      salesLeaderboard,
+      workerProductivity,
+      totalOrdersCount,
+      totalScootersSucceeded,
+      totalAssembliesCount,
+      totalDispatchesCount,
+      topSalespersonObj,
+      topWorkerObj
+    };
+  }, [
+    salesOrders, chargerSales, chargerImports, warrantyClaims, scooterUnits,
+    batterySales, batteryImports, stockLogs, uniqueEmployees,
+    perfSearch, perfRoleFilter, perfStartDate, perfEndDate
+  ]);
+
+  // Export CSV Performance Statement
+  const handleExportPerformanceCSV = () => {
+    const { salesLeaderboard, workerProductivity } = performanceData;
+    const rows: string[] = [];
+    
+    rows.push("=== OWNER EXECUTIVE PERFORMANCE REPORT ===");
+    rows.push(`Generated On,${new Date().toLocaleString()}`);
+    rows.push(`Owner Operator,${currentUser.name} (@${currentUser.username})`);
+    rows.push("");
+    rows.push("=== SALES PERFORMANCE (WHO SOLD HOW MUCH) ===");
+    rows.push("Salesperson Name,Username,Role,Orders Count,Scooters Sold,Batteries Sold,Chargers Sold,Total Items Sold,Latest Sale Date");
+    
+    salesLeaderboard.forEach(s => {
+      rows.push(`"${s.name}","${s.username}","${s.role}",${s.ordersCount},${s.scootersSold},${s.batteriesSold},${s.chargersSold},${s.totalItemsSold},"${s.latestDate || 'N/A'}"`);
+    });
+
+    rows.push("");
+    rows.push("=== WORKER PRODUCTIVITY (WHICH WORKER DID HOW MUCH WORK) ===");
+    rows.push("Worker Name,Username,Role,Stage 1 Assemblies,Stage 2 Customizations,Dispatches Handled,Battery & Charger Ops,Warranty Claims Handled,Stock Logs Count,Total Work Tasks,Latest Active Date");
+
+    workerProductivity.forEach(w => {
+      rows.push(`"${w.name}","${w.username}","${w.role}",${w.stage1Assemblies},${w.stage2Customizations},${w.dispatchesHandled},${w.batteryChargerOps},${w.warrantyClaimsHandled},${w.stockLogsCount},${w.totalTasks},"${w.latestActiveDate || 'N/A'}"`);
+    });
+
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `owner_employee_performance_report_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    triggerAlert('success', 'Employee Performance Statement exported to CSV spreadsheet.');
+  };
 
   // SYSTEM AUDIT LEDGER FILTERS AND SEARCH
   const filteredAuditLogs = useMemo(() => {
@@ -792,6 +1250,16 @@ export default function SettingsPanel({
         >
           <Users className="h-4 w-4" />
           <span>👥 Employees</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('performance')}
+          className={`flex-shrink-0 min-h-[44px] px-4 py-2.5 text-xs font-extrabold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] ${
+            subTab === 'performance' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <TrendingUp className="h-4 w-4 text-emerald-400" />
+          <span>📊 Owner Analytics</span>
         </button>
         <button
           type="button"
@@ -1292,6 +1760,524 @@ export default function SettingsPanel({
               </div>
             )}
           </div>
+        </div>
+      ) : subTab === 'performance' ? (
+        <div className="space-y-6 no-print animate-fade-in" id="owner-performance-dashboard">
+          {/* Header Banner */}
+          <div className="bg-slate-900 text-white rounded-3xl p-6 shadow-md border border-slate-800 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider">
+                  👑 Restricted Owner Access
+                </span>
+                <span className="text-[10px] font-bold text-slate-400 font-mono">
+                  Real-time Staff Intelligence
+                </span>
+              </div>
+              <h2 className="text-lg font-black tracking-tight text-white flex items-center gap-2 font-sans">
+                <TrendingUp className="h-5 w-5 text-emerald-400" />
+                EMPLOYEE & SALES PERFORMANCE SYSTEM
+              </h2>
+              <p className="text-xs text-slate-400 max-w-2xl mt-0.5">
+                Track who sold how many orders, individual worker assembly volume, dispatches handled, and total operational output across all factory departments.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleExportPerformanceCSV}
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-2xl shadow-sm transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap"
+            >
+              <Download className="h-4 w-4" /> Export CSV Statement
+            </button>
+          </div>
+
+          {/* Key Executive KPI Cards */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm space-y-1">
+              <div className="flex items-center justify-between text-slate-500 text-[10px] font-bold uppercase tracking-wider">
+                <span>Total Orders Placed</span>
+                <ShoppingBag className="h-4 w-4 text-indigo-500" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 font-mono">
+                {performanceData.totalOrdersCount}
+              </div>
+              <p className="text-[10px] text-slate-400 font-sans">Sales orders created in terminal</p>
+            </div>
+
+            <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm space-y-1">
+              <div className="flex items-center justify-between text-slate-500 text-[10px] font-bold uppercase tracking-wider">
+                <span>Scooters Sold</span>
+                <BarChart3 className="h-4 w-4 text-emerald-500" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 font-mono">
+                {performanceData.totalScootersSucceeded}
+              </div>
+              <p className="text-[10px] text-slate-400 font-sans">Delivered & POS direct sales</p>
+            </div>
+
+            <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm space-y-1">
+              <div className="flex items-center justify-between text-slate-500 text-[10px] font-bold uppercase tracking-wider">
+                <span>Assemblies Done</span>
+                <Wrench className="h-4 w-4 text-amber-500" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 font-mono">
+                {performanceData.totalAssembliesCount}
+              </div>
+              <p className="text-[10px] text-slate-400 font-sans">Scooter chassis assembled</p>
+            </div>
+
+            <div className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm space-y-1">
+              <div className="flex items-center justify-between text-slate-500 text-[10px] font-bold uppercase tracking-wider">
+                <span>Dispatches Handled</span>
+                <Truck className="h-4 w-4 text-cyan-500" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 font-mono">
+                {performanceData.totalDispatchesCount}
+              </div>
+              <p className="text-[10px] text-slate-400 font-sans">Fulfillments & truck loadings</p>
+            </div>
+          </div>
+
+          {/* Top Performers Spotlight */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Top Sales Rep */}
+            <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white rounded-3xl p-5 shadow-sm border border-indigo-900/50 flex items-center gap-4">
+              <div className="p-3 bg-amber-500/20 rounded-2xl border border-amber-500/30 text-amber-400">
+                <Award className="h-8 w-8" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-[10px] font-black uppercase tracking-wider text-amber-400 font-sans">
+                  🏆 Top Sales Representative
+                </div>
+                <div className="text-base font-extrabold text-white font-sans">
+                  {performanceData.topSalespersonObj ? performanceData.topSalespersonObj.name : 'No sales logged yet'}
+                </div>
+                {performanceData.topSalespersonObj && (
+                  <div className="text-[11px] text-slate-300 font-mono flex items-center gap-2 flex-wrap">
+                    <span>@{performanceData.topSalespersonObj.username}</span>
+                    <span>•</span>
+                    <span className="text-emerald-400 font-bold">{performanceData.topSalespersonObj.totalItemsSold} Items Sold</span>
+                    <span>({performanceData.topSalespersonObj.ordersCount} Orders)</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Top Operational Worker */}
+            <div className="bg-gradient-to-br from-slate-900 to-teal-950 text-white rounded-3xl p-5 shadow-sm border border-teal-900/50 flex items-center gap-4">
+              <div className="p-3 bg-cyan-500/20 rounded-2xl border border-cyan-500/30 text-cyan-400">
+                <Award className="h-8 w-8" />
+              </div>
+              <div className="space-y-0.5">
+                <div className="text-[10px] font-black uppercase tracking-wider text-cyan-400 font-sans">
+                  ⚡ Most Active Operational Worker
+                </div>
+                <div className="text-base font-extrabold text-white font-sans">
+                  {performanceData.topWorkerObj ? performanceData.topWorkerObj.name : 'No worker activity logged yet'}
+                </div>
+                {performanceData.topWorkerObj && (
+                  <div className="text-[11px] text-slate-300 font-mono flex items-center gap-2 flex-wrap">
+                    <span>@{performanceData.topWorkerObj.username}</span>
+                    <span>•</span>
+                    <span className="text-cyan-400 font-bold">{performanceData.topWorkerObj.totalTasks} Operational Tasks</span>
+                    <span>({performanceData.topWorkerObj.stage1Assemblies} Assemblies)</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Interactive Filters Bar */}
+          <div className="bg-white rounded-3xl border border-slate-200 p-4 shadow-sm space-y-3">
+            <div className="flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between">
+              {/* Search Box */}
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Filter by name, username, customer, chassis #, order #..."
+                  value={perfSearch}
+                  onChange={(e) => setPerfSearch(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 font-sans"
+                />
+              </div>
+
+              {/* View Mode Switcher */}
+              <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setPerfViewMode('both')}
+                  className={`px-3 py-1.5 rounded-xl cursor-pointer transition-all ${
+                    perfViewMode === 'both' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  All Performance
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPerfViewMode('sales')}
+                  className={`px-3 py-1.5 rounded-xl cursor-pointer transition-all ${
+                    perfViewMode === 'sales' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Who Sold How Much
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPerfViewMode('workers')}
+                  className={`px-3 py-1.5 rounded-xl cursor-pointer transition-all ${
+                    perfViewMode === 'workers' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Worker Productivity
+                </button>
+              </div>
+            </div>
+
+            {/* Sub-Filters: Date Range & Role Filter */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 border-t border-slate-100 text-xs">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-sans">
+                  Role Filter
+                </label>
+                <select
+                  value={perfRoleFilter}
+                  onChange={(e) => setPerfRoleFilter(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 font-sans"
+                >
+                  <option value="all">All Departments / Staff Roles</option>
+                  <option value="salesperson">Sales Representatives</option>
+                  <option value="manufacturer">Assembly / Production Workers</option>
+                  <option value="manager">Managers & Dispatchers</option>
+                  <option value="admin">Owners / Admins</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-sans">
+                  Start Date
+                </label>
+                <input
+                  type="date"
+                  value={perfStartDate}
+                  onChange={(e) => setPerfStartDate(e.target.value)}
+                  className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 font-sans"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 font-sans">
+                  End Date
+                </label>
+                <div className="flex gap-1.5">
+                  <input
+                    type="date"
+                    value={perfEndDate}
+                    onChange={(e) => setPerfEndDate(e.target.value)}
+                    className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-slate-900 font-sans"
+                  />
+                  {(perfStartDate || perfEndDate || perfSearch || perfRoleFilter !== 'all') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPerfSearch('');
+                        setPerfRoleFilter('all');
+                        setPerfStartDate('');
+                        setPerfEndDate('');
+                      }}
+                      className="px-2.5 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-xl text-[10px] uppercase cursor-pointer"
+                      title="Reset Filters"
+                    >
+                      Reset
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* SECTION 1: WHO SOLD HOW MUCH (SALESPERSON LEADERBOARD) */}
+          {(perfViewMode === 'both' || perfViewMode === 'sales') && (
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b pb-3">
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-2 font-sans">
+                    💼 Who Sold How Much — Sales Performance Leaderboard
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Breakdown of order sales volume, scooters dispatched, batteries sold, and chargers credited per salesperson.
+                  </p>
+                </div>
+                <span className="text-xs font-mono font-bold px-2.5 py-1 bg-slate-100 rounded-xl text-slate-600">
+                  {performanceData.salesLeaderboard.length} Reps
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {performanceData.salesLeaderboard.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-slate-400 italic bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    No sales matching your filter criteria.
+                  </div>
+                ) : (
+                  performanceData.salesLeaderboard.map((sp, idx) => {
+                    const isExpanded = expandedPerfUser === `sales-${sp.username}`;
+                    let medalBadge = null;
+                    if (idx === 0 && sp.totalItemsSold > 0) medalBadge = '🥇';
+                    else if (idx === 1 && sp.totalItemsSold > 0) medalBadge = '🥈';
+                    else if (idx === 2 && sp.totalItemsSold > 0) medalBadge = '🥉';
+
+                    return (
+                      <div
+                        key={`sp-${sp.username}`}
+                        className="border border-slate-200 rounded-2xl p-4 hover:border-slate-300 transition-all bg-slate-50/50"
+                      >
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-2xl bg-slate-900 text-white font-extrabold text-sm flex items-center justify-center font-mono shadow-sm">
+                              {medalBadge || `#${idx + 1}`}
+                            </div>
+                            <div>
+                              <div className="text-sm font-extrabold text-slate-900 font-sans flex items-center gap-2">
+                                {sp.name}
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-200 text-slate-700 font-semibold">
+                                  @{sp.username}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-sans">
+                                Role: {sp.role === 'salesperson' ? 'Sales Representative' : sp.role === 'admin' ? 'Owner / Admin' : sp.role}
+                                {sp.latestDate && ` • Last Sale: ${new Date(sp.latestDate).toLocaleString()}`}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Sales Summary Metrics Badges */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-indigo-600">Orders</div>
+                              <div className="text-xs font-black text-indigo-900 font-mono">{sp.ordersCount}</div>
+                            </div>
+                            <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-100 rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-emerald-600">Scooters</div>
+                              <div className="text-xs font-black text-emerald-900 font-mono">{sp.scootersSold}</div>
+                            </div>
+                            <div className="px-3 py-1.5 bg-amber-50 border border-amber-100 rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-amber-600">Batteries</div>
+                              <div className="text-xs font-black text-amber-900 font-mono">{sp.batteriesSold}</div>
+                            </div>
+                            <div className="px-3 py-1.5 bg-cyan-50 border border-cyan-100 rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-cyan-600">Chargers</div>
+                              <div className="text-xs font-black text-cyan-900 font-mono">{sp.chargersSold}</div>
+                            </div>
+                            <div className="px-3 py-1.5 bg-slate-900 text-white rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-emerald-400">Total Volume</div>
+                              <div className="text-xs font-black text-white font-mono">{sp.totalItemsSold}</div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => setExpandedPerfUser(isExpanded ? null : `sales-${sp.username}`)}
+                              className="p-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl cursor-pointer transition-all ml-1"
+                              title="Toggle Customer Orders Breakdown"
+                            >
+                              {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Accordion: Detailed Orders List */}
+                        {isExpanded && (
+                          <div className="mt-4 pt-3 border-t border-slate-200 space-y-2 animate-fade-in">
+                            <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-600 font-sans">
+                              📋 Customer Orders & Sales Credited to {sp.name} ({sp.ordersList.length + sp.posScooterUnits.length}):
+                            </div>
+                            {sp.ordersList.length === 0 && sp.posScooterUnits.length === 0 ? (
+                              <div className="text-[11px] text-slate-400 italic">No sales orders found for this salesperson.</div>
+                            ) : (
+                              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                {sp.ordersList.map(ord => (
+                                  <div key={`ord-det-${ord.id}`} className="p-2.5 bg-white border border-slate-200 rounded-xl text-xs flex justify-between items-center flex-wrap gap-2">
+                                    <div>
+                                      <div className="font-bold text-slate-900 flex items-center gap-2">
+                                        <span className="font-mono text-cyan-700 bg-cyan-50 px-1.5 py-0.5 rounded">{ord.orderNo}</span>
+                                        <span>Customer: {ord.buyerName}</span>
+                                      </div>
+                                      <div className="text-[10px] text-slate-500 mt-0.5">
+                                        Location: {ord.deliveryLocation || 'Warehouse'} • Date: {new Date(ord.createdTimestamp).toLocaleString()}
+                                      </div>
+                                    </div>
+                                    <div className="text-right">
+                                      <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                        {ord.status}
+                                      </span>
+                                      <div className="text-[10px] text-slate-600 font-mono mt-0.5">
+                                        {(ord.items || []).map(i => `${i.quantity}x ${i.itemType}`).join(', ')}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+
+                                {sp.posScooterUnits.map(unit => (
+                                  <div key={`pos-unit-${unit.id}`} className="p-2.5 bg-white border border-slate-200 rounded-xl text-xs flex justify-between items-center flex-wrap gap-2">
+                                    <div>
+                                      <div className="font-bold text-slate-900 flex items-center gap-2">
+                                        <span className="font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">POS SALE</span>
+                                        <span>Customer: {unit.buyerName || 'Walk-in'}</span>
+                                      </div>
+                                      <div className="text-[10px] text-slate-500 mt-0.5">
+                                        Model: {unit.modelName} ({unit.color}) • Chassis: {unit.chassisNo}
+                                      </div>
+                                    </div>
+                                    <div className="text-right text-[10px] text-slate-500 font-mono">
+                                      {unit.saleDate || unit.lastUpdatedTimestamp}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* SECTION 2: WHICH WORKER DID HOW MUCH WORK (WORKER PRODUCTIVITY) */}
+          {(perfViewMode === 'both' || perfViewMode === 'workers') && (
+            <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between border-b pb-3">
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-2 font-sans">
+                    ⚙️ Which Worker Is Doing How Much Work — Operational Output Ledger
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Assembly counts, customization logs, order dispatches, stock adjustments, and warranty claims processed per worker.
+                  </p>
+                </div>
+                <span className="text-xs font-mono font-bold px-2.5 py-1 bg-slate-100 rounded-xl text-slate-600">
+                  {performanceData.workerProductivity.length} Staff
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {performanceData.workerProductivity.length === 0 ? (
+                  <div className="text-center py-8 text-xs text-slate-400 italic bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    No worker operational tasks matching your filter criteria.
+                  </div>
+                ) : (
+                  performanceData.workerProductivity.map((w, idx) => {
+                    const isExpanded = expandedPerfUser === `worker-${w.username}`;
+
+                    return (
+                      <div
+                        key={`wk-${w.username}`}
+                        className="border border-slate-200 rounded-2xl p-4 hover:border-slate-300 transition-all bg-slate-50/50"
+                      >
+                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-2xl bg-teal-950 text-cyan-400 font-extrabold text-sm flex items-center justify-center font-mono shadow-sm border border-teal-800">
+                              #{idx + 1}
+                            </div>
+                            <div>
+                              <div className="text-sm font-extrabold text-slate-900 font-sans flex items-center gap-2">
+                                {w.name}
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-slate-200 text-slate-700 font-semibold">
+                                  @{w.username}
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-sans">
+                                Department: {w.role === 'manufacturer' ? 'Assembly & Production' : w.role === 'dispatcher' ? 'Logistics & Dispatch' : w.role === 'manager' ? 'Operations Manager' : w.role}
+                                {w.latestActiveDate && ` • Last Active: ${new Date(w.latestActiveDate).toLocaleString()}`}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Worker Operations Metrics Badges */}
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <div className="px-3 py-1.5 bg-amber-50 border border-amber-100 rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-amber-600">Assembled</div>
+                              <div className="text-xs font-black text-amber-900 font-mono">{w.stage1Assemblies}</div>
+                            </div>
+                            <div className="px-3 py-1.5 bg-cyan-50 border border-cyan-100 rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-cyan-600">Customized</div>
+                              <div className="text-xs font-black text-cyan-900 font-mono">{w.stage2Customizations}</div>
+                            </div>
+                            <div className="px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-indigo-600">Dispatches</div>
+                              <div className="text-xs font-black text-indigo-900 font-mono">{w.dispatchesHandled}</div>
+                            </div>
+                            <div className="px-3 py-1.5 bg-emerald-50 border border-emerald-100 rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-emerald-600">Bat/Chg Ops</div>
+                              <div className="text-xs font-black text-emerald-900 font-mono">{w.batteryChargerOps}</div>
+                            </div>
+                            <div className="px-3 py-1.5 bg-rose-50 border border-rose-100 rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-rose-600">Claims</div>
+                              <div className="text-xs font-black text-rose-900 font-mono">{w.warrantyClaimsHandled}</div>
+                            </div>
+                            <div className="px-3 py-1.5 bg-slate-900 text-white rounded-xl text-center">
+                              <div className="text-[9px] uppercase font-bold text-cyan-400">Total Work Score</div>
+                              <div className="text-xs font-black text-white font-mono">{w.totalTasks}</div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => setExpandedPerfUser(isExpanded ? null : `worker-${w.username}`)}
+                              className="p-2 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-xl cursor-pointer transition-all ml-1"
+                              title="Toggle Action Trail"
+                            >
+                              {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Accordion: Action Trail */}
+                        {isExpanded && (
+                          <div className="mt-4 pt-3 border-t border-slate-200 space-y-2 animate-fade-in">
+                            <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-600 font-sans">
+                              ⚡ Operational Action Trail Logged by {w.name} ({w.recentActions.length} Actions):
+                            </div>
+                            {w.recentActions.length === 0 ? (
+                              <div className="text-[11px] text-slate-400 italic">No operational actions recorded for this worker.</div>
+                            ) : (
+                              <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                                {w.recentActions.map(act => (
+                                  <div key={act.id} className="p-2.5 bg-white border border-slate-200 rounded-xl text-xs flex justify-between items-center flex-wrap gap-2">
+                                    <div>
+                                      <div className="font-bold text-slate-900 flex items-center gap-2">
+                                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded font-mono uppercase ${
+                                          act.category === 'assembly' ? 'bg-amber-100 text-amber-800' :
+                                          act.category === 'customization' ? 'bg-cyan-100 text-cyan-800' :
+                                          act.category === 'dispatch' ? 'bg-indigo-100 text-indigo-800' :
+                                          act.category === 'battery' ? 'bg-emerald-100 text-emerald-800' :
+                                          'bg-rose-100 text-rose-800'
+                                        }`}>
+                                          {act.category}
+                                        </span>
+                                        <span>{act.title}</span>
+                                      </div>
+                                      <div className="text-[10px] text-slate-500 mt-0.5">
+                                        {act.details}
+                                      </div>
+                                    </div>
+                                    <div className="text-right text-[10px] text-slate-500 font-mono">
+                                      {new Date(act.date).toLocaleString()}
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
         </div>
       ) : subTab === 'sheets' ? (
         <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm no-print">

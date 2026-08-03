@@ -1,9 +1,9 @@
+import { getApiBaseUrl } from './utils/apiConfig';
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Compass, LayoutDashboard, Shuffle, ClipboardList, BookOpen, Cloud, LogOut, RefreshCw, User as UserIcon, Battery, Settings, Sparkles, Zap, Search, ShieldCheck, MoreHorizontal, X, Truck, ShoppingCart, Store
 } from 'lucide-react';
-import { Geolocation } from '@capacitor/geolocation';
 
 import { User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim, SalesOrder } from './types';
 import LoginScreen from './components/LoginScreen';
@@ -46,7 +46,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [workerTab, setWorkerTab] = useState<'workspace' | 'charger' | 'dashboard' | 'challans'>('workspace');
   const [dispatcherTab, setDispatcherTab] = useState<'dispatch' | 'sales'>('dispatch');
-  const [salespersonTab, setSalespersonTab] = useState<'b2b' | 'retail'>('b2b');
+  const [salespersonTab, setSalespersonTab] = useState<'b2b' | 'retail' | 'customization'>('b2b');
   const [showMobileMoreMenu, setShowMobileMoreMenu] = useState(false);
 
   // Salesperson add buyer form state
@@ -121,19 +121,19 @@ export default function App() {
 
     try {
       const [pRes, bRes, sUnitRes, sLogRes, cRes, batRes, batImpRes, chgRes, chgImpRes, batTypeRes, chgTypeRes, claimsRes, salesOrdersRes] = await Promise.all([
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/stock-logs'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/sheet-config'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-imports'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-imports'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-types'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-types'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims'),
-        fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/sales-orders')
+        fetch(getApiBaseUrl() + '/api/products'),
+        fetch(getApiBaseUrl() + '/api/buyers'),
+        fetch(getApiBaseUrl() + '/api/scooter-units'),
+        fetch(getApiBaseUrl() + '/api/stock-logs'),
+        fetch(getApiBaseUrl() + '/api/sheet-config'),
+        fetch(getApiBaseUrl() + '/api/battery-sales'),
+        fetch(getApiBaseUrl() + '/api/battery-imports'),
+        fetch(getApiBaseUrl() + '/api/charger-sales'),
+        fetch(getApiBaseUrl() + '/api/charger-imports'),
+        fetch(getApiBaseUrl() + '/api/battery-types'),
+        fetch(getApiBaseUrl() + '/api/charger-types'),
+        fetch(getApiBaseUrl() + '/api/warranty-claims'),
+        fetch(getApiBaseUrl() + '/api/sales-orders')
       ]);
 
       await Promise.all([
@@ -170,7 +170,7 @@ export default function App() {
 
     const reportLocation = async (lat: number, lng: number) => {
       try {
-        await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
+        await fetch(getApiBaseUrl() + '/api/users/location', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -203,23 +203,33 @@ export default function App() {
       }
     };
 
-    const fetchCurrentPosition = async (isStrictCheck = false) => {
-      try {
-        const perm = await Geolocation.checkPermissions();
-        if (perm.location !== 'granted') {
-          await Geolocation.requestPermissions();
-        }
-        const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 8000 });
-        setLocationBlocked(false);
-        setLocationCheckError(null);
-        reportLocation(pos.coords.latitude, pos.coords.longitude);
-      } catch (err: any) {
-        if (isEmployee) {
-          setLocationBlocked(true);
-          setLocationCheckError('Device Location Inaccessible: Please turn your physical device location services ON and allow location permissions for the app.');
-        } else {
-          fetchIpLocation();
-        }
+    const fetchCurrentPosition = (isStrictCheck = false) => {
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            setLocationBlocked(false);
+            setLocationCheckError(null);
+            reportLocation(pos.coords.latitude, pos.coords.longitude);
+          },
+          (err) => {
+            // Attempt IP geolocation fallback when GPS is disabled or permission denied
+            fetchIpLocation();
+            if (isEmployee) {
+              if (err.code === err.PERMISSION_DENIED) {
+                setLocationCheckError('Permission Denied: Location access has been disabled or blocked in browser settings. You can unlock and proceed below.');
+              } else if (err.code === err.POSITION_UNAVAILABLE) {
+                setLocationCheckError('Position Unavailable: GPS signal is inactive or location services are off.');
+              } else if (err.code === err.TIMEOUT) {
+                setLocationCheckError('Timeout: Request to acquire GPS coordinates timed out.');
+              } else {
+                setLocationCheckError('Device Location Inaccessible: Physical location services are off.');
+              }
+            }
+          },
+          { enableHighAccuracy: true, timeout: 8000 }
+        );
+      } else {
+        fetchIpLocation();
       }
     };
 
@@ -249,7 +259,7 @@ export default function App() {
 
     const checkPullRequestAndRespond = async () => {
       try {
-        const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + `/api/users/check-pull?username=${encodeURIComponent(currentUser.username)}`);
+        const res = await fetch(getApiBaseUrl() + `/api/users/check-pull?username=${encodeURIComponent(currentUser.username)}`);
         if (res.ok) {
           const contentType = res.headers.get('content-type');
           if (contentType && contentType.includes('application/json')) {
@@ -257,7 +267,7 @@ export default function App() {
             if (data && data.pullRequested) {
             const reportPullResult = async (lat: number, lng: number) => {
               try {
-                await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
+                await fetch(getApiBaseUrl() + '/api/users/location', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
@@ -289,14 +299,17 @@ export default function App() {
             };
 
             // Immediately pull the current physical coordinates of the device and report
-            try {
-              const perm = await Geolocation.checkPermissions();
-              if (perm.location !== 'granted') {
-                await Geolocation.requestPermissions();
-              }
-              const pos = await Geolocation.getCurrentPosition({ enableHighAccuracy: true, timeout: 10000 });
-              await reportPullResult(pos.coords.latitude, pos.coords.longitude);
-            } catch (err) {
+            if ('geolocation' in navigator) {
+              navigator.geolocation.getCurrentPosition(
+                async (pos) => {
+                  await reportPullResult(pos.coords.latitude, pos.coords.longitude);
+                },
+                async (err) => {
+                  await runIpPullFallback();
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+              );
+            } else {
               await runIpPullFallback();
             }
           }
@@ -339,15 +352,15 @@ export default function App() {
     const refreshData = async () => {
       try {
         const [pRes, bRes, sUnitRes, sLogRes, batRes, batImpRes, chgRes, chgImpRes, wClaimRes] = await Promise.all([
-          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products'),
-          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers'),
-          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units'),
-          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/stock-logs'),
-          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales'),
-          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-imports'),
-          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales'),
-          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-imports'),
-          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims')
+          fetch(getApiBaseUrl() + '/api/products'),
+          fetch(getApiBaseUrl() + '/api/buyers'),
+          fetch(getApiBaseUrl() + '/api/scooter-units'),
+          fetch(getApiBaseUrl() + '/api/stock-logs'),
+          fetch(getApiBaseUrl() + '/api/battery-sales'),
+          fetch(getApiBaseUrl() + '/api/battery-imports'),
+          fetch(getApiBaseUrl() + '/api/charger-sales'),
+          fetch(getApiBaseUrl() + '/api/charger-imports'),
+          fetch(getApiBaseUrl() + '/api/warranty-claims')
         ]);
 
         await Promise.all([
@@ -392,7 +405,7 @@ export default function App() {
     setBatterySaving(true);
     setBatteryStatus(null);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales', {
+      const res = await fetch(getApiBaseUrl() + '/api/battery-sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -438,7 +451,7 @@ export default function App() {
     heldFor?: string;
   }): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales', {
+      const res = await fetch(getApiBaseUrl() + '/api/battery-sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -466,7 +479,7 @@ export default function App() {
     warrantyDurationMonths?: number;
   }): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-imports', {
+      const res = await fetch(getApiBaseUrl() + '/api/battery-imports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -482,7 +495,7 @@ export default function App() {
 
   const handleAddProduct = async (name: string, colors: string[]): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products', {
+      const res = await fetch(getApiBaseUrl() + '/api/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, colors }),
@@ -495,7 +508,7 @@ export default function App() {
 
   const handleBulkSeedProducts = async (mode: 'replace' | 'append'): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products/bulk-seed', {
+      const res = await fetch(getApiBaseUrl() + '/api/products/bulk-seed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, operator: currentUser?.name || currentUser?.username || 'system' }),
@@ -515,7 +528,7 @@ export default function App() {
     buyerType?: 'retail' | 'wholesale'
   ): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers', {
+      const res = await fetch(getApiBaseUrl() + '/api/buyers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, contact, address, gstNo, addressProof, buyerType }),
@@ -528,7 +541,7 @@ export default function App() {
 
   const handleSubmitScooterUnit = async (payload: any): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units', {
+      const res = await fetch(getApiBaseUrl() + '/api/scooter-units', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -541,7 +554,7 @@ export default function App() {
 
   const handleSubmitStockLog = async (payload: any): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/stock-logs', {
+      const res = await fetch(getApiBaseUrl() + '/api/stock-logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -554,7 +567,7 @@ export default function App() {
 
   const handleSaveSheetConfig = async (webhookUrl: string, enabled: boolean): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/sheet-config', {
+      const res = await fetch(getApiBaseUrl() + '/api/sheet-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ webhookUrl, enabled }),
@@ -571,7 +584,7 @@ export default function App() {
 
   const handleTriggerSyncAll = async () => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/sheet-config/sync-all', { method: 'POST' });
+      const res = await fetch(getApiBaseUrl() + '/api/sheet-config/sync-all', { method: 'POST' });
       return await res.json();
     } catch (e) {
       return { success: false, error: 'Network error communicating with warehouse server.' };
@@ -580,7 +593,7 @@ export default function App() {
 
   const handleTriggerPullAll = async () => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/sheet-config/pull-all', { method: 'POST' });
+      const res = await fetch(getApiBaseUrl() + '/api/sheet-config/pull-all', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         await fetchAllData();
@@ -593,7 +606,7 @@ export default function App() {
 
   const handleUpdateProduct = async (id: string, name: string, colors: string[]): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products/update', {
+      const res = await fetch(getApiBaseUrl() + '/api/products/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, name, colors, operator: currentUser?.name || 'system' }),
@@ -610,7 +623,7 @@ export default function App() {
 
   const handleUpdateBuyer = async (id: string, name: string, contact?: string): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers/update', {
+      const res = await fetch(getApiBaseUrl() + '/api/buyers/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, name, contact, operator: currentUser?.name || 'system' }),
@@ -627,7 +640,7 @@ export default function App() {
 
   const handleDeleteProduct = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products/delete', {
+      const res = await fetch(getApiBaseUrl() + '/api/products/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
@@ -644,7 +657,7 @@ export default function App() {
 
   const handleDeleteBuyer = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers/delete', {
+      const res = await fetch(getApiBaseUrl() + '/api/buyers/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
@@ -661,7 +674,7 @@ export default function App() {
 
   const handleUpdateBatteryTypes = async (newList: string[]): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-types', {
+      const res = await fetch(getApiBaseUrl() + '/api/battery-types', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ list: newList, operator: currentUser?.name || 'system' }),
@@ -678,7 +691,7 @@ export default function App() {
 
   const handleUpdateChargerTypes = async (newList: string[]): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-types', {
+      const res = await fetch(getApiBaseUrl() + '/api/charger-types', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ list: newList, operator: currentUser?.name || 'system' }),
@@ -695,7 +708,7 @@ export default function App() {
 
   const handleDirectChargerSale = async (data: any): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales', {
+      const res = await fetch(getApiBaseUrl() + '/api/charger-sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...data, operator: currentUser?.name || 'system' }),
@@ -712,7 +725,7 @@ export default function App() {
 
   const handleDirectChargerImport = async (data: any): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-imports', {
+      const res = await fetch(getApiBaseUrl() + '/api/charger-imports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...data, operator: currentUser?.name || 'system' }),
@@ -729,7 +742,7 @@ export default function App() {
 
   const handleReleaseChargerHold = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales/release', {
+      const res = await fetch(getApiBaseUrl() + '/api/charger-sales/release', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
@@ -746,7 +759,7 @@ export default function App() {
 
   const handleFinalizeChargerHold = async (id: string, extraData?: any): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales/finalize', {
+      const res = await fetch(getApiBaseUrl() + '/api/charger-sales/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, ...extraData, operator: currentUser?.name || 'system' }),
@@ -763,7 +776,7 @@ export default function App() {
 
   const handleReleaseBatteryHold = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/release', {
+      const res = await fetch(getApiBaseUrl() + '/api/battery-sales/release', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
@@ -780,7 +793,7 @@ export default function App() {
 
   const handleFinalizeBatteryHold = async (id: string, extraData?: any): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/finalize', {
+      const res = await fetch(getApiBaseUrl() + '/api/battery-sales/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, ...extraData, operator: currentUser?.name || 'system' }),
@@ -797,7 +810,7 @@ export default function App() {
 
   const handleReleaseScooterHold = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/release-hold', {
+      const res = await fetch(getApiBaseUrl() + '/api/scooter-units/release-hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
@@ -819,7 +832,7 @@ export default function App() {
     chargerIds?: string[];
   }): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/wholesale-package/release', {
+      const res = await fetch(getApiBaseUrl() + '/api/wholesale-package/release', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
@@ -836,7 +849,7 @@ export default function App() {
 
   const handleFinalizeScooterHold = async (payload: any): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/finalize-hold', {
+      const res = await fetch(getApiBaseUrl() + '/api/scooter-units/finalize-hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
@@ -853,7 +866,7 @@ export default function App() {
 
   const handleUpdateBatteryHold = async (payload: any): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/update-hold', {
+      const res = await fetch(getApiBaseUrl() + '/api/battery-sales/update-hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
@@ -870,7 +883,7 @@ export default function App() {
 
   const handleUpdateChargerHold = async (payload: any): Promise<boolean> => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales/update-hold', {
+      const res = await fetch(getApiBaseUrl() + '/api/charger-sales/update-hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
@@ -946,6 +959,18 @@ export default function App() {
           <div className="flex flex-col gap-2.5 pt-2" id="location-actions">
             <button
               onClick={() => {
+                setLocationBlocked(false);
+                setLocationCheckError(null);
+              }}
+              className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs rounded-2xl shadow-md transition-all active:scale-98 flex items-center justify-center gap-2 cursor-pointer"
+              id="location-bypass-btn"
+            >
+              <ShieldCheck className="h-4 w-4 text-emerald-200" />
+              <span>Unlock Terminal & Continue to App</span>
+            </button>
+
+            <button
+              onClick={() => {
                 if (checkingLocation) return;
                 setCheckingLocation(true);
                 setLocationCheckError(null);
@@ -958,7 +983,7 @@ export default function App() {
                       setLocationCheckError(null);
                       
                       // Report verified location
-                      fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
+                      fetch(getApiBaseUrl() + '/api/users/location', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -970,36 +995,34 @@ export default function App() {
                     },
                     (err) => {
                       setCheckingLocation(false);
-                      setLocationBlocked(true);
                       if (err.code === err.PERMISSION_DENIED) {
-                        setLocationCheckError('Permission Denied: Location access remains disabled. Please allow location access in your browser settings.');
+                        setLocationCheckError('Permission Denied: Location access disabled. You can click Unlock above to proceed.');
                       } else if (err.code === err.POSITION_UNAVAILABLE) {
-                        setLocationCheckError('Position Unavailable: GPS services are still switched off on this device.');
+                        setLocationCheckError('Position Unavailable: GPS services are off on this device.');
                       } else if (err.code === err.TIMEOUT) {
-                        setLocationCheckError('Timeout: Request timed out. Ensure you are outdoors or near a window for better GPS reception.');
+                        setLocationCheckError('Timeout: GPS request timed out.');
                       } else {
-                        setLocationCheckError('Verification Failed: Physical location services are still turned off on your device.');
+                        setLocationCheckError('Verification Failed: Location services off on device.');
                       }
                     },
                     { enableHighAccuracy: true, timeout: 6000 }
                   );
                 } else {
                   setCheckingLocation(false);
-                  setLocationBlocked(true);
                   setLocationCheckError('System Error: Geolocation is not supported by this browser.');
                 }
               }}
               disabled={checkingLocation}
-              className={`w-full py-3 ${checkingLocation ? 'bg-slate-400 cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800 cursor-pointer'} text-white font-black text-xs rounded-2xl shadow-md transition-all active:scale-98 flex items-center justify-center gap-2`}
+              className={`w-full py-2.5 ${checkingLocation ? 'bg-slate-400 cursor-not-allowed' : 'bg-slate-900 hover:bg-slate-800 cursor-pointer'} text-white font-bold text-xs rounded-2xl transition-all active:scale-98 flex items-center justify-center gap-2`}
               id="location-retry-btn"
             >
               <RefreshCw className={`h-4 w-4 ${checkingLocation ? 'animate-spin' : ''}`} style={{ animationDuration: checkingLocation ? '1s' : '3s' }} />
-              <span>{checkingLocation ? 'Checking Device GPS...' : 'Check Location Status'}</span>
+              <span>{checkingLocation ? 'Checking Device GPS...' : 'Retry Device GPS Check'}</span>
             </button>
 
             <button
               onClick={handleLogout}
-              className="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-extrabold text-xs rounded-2xl cursor-pointer transition-colors"
+              className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 font-semibold text-xs rounded-2xl cursor-pointer transition-colors"
               id="location-logout-btn"
             >
               Exit Terminal Session
@@ -1810,49 +1833,24 @@ export default function App() {
   if (currentUser.role === 'salesperson') {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-800 flex flex-col font-sans" id="terminal-layout">
-        <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
+        <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm w-full max-w-full">
+          <div className="max-w-7xl mx-auto px-3 sm:px-6 lg:px-8 h-14 sm:h-16 flex items-center justify-between gap-2 w-full">
+            
+            {/* Branding */}
             <div 
-              onClick={() => setSalespersonTab('b2b')} 
-              className="flex items-center gap-3 cursor-pointer hover:opacity-85 transition-opacity"
-              title="Go to Home Dashboard"
+              onClick={fetchAllData} 
+              className="flex items-center gap-2 cursor-pointer hover:opacity-85 transition-opacity shrink-0"
+              title="Sales Terminal - Click to Refresh"
               id="salesperson-logo-home"
             >
               <SenzoLogo layout="compact" />
-              <div className="h-4 w-[1px] bg-slate-200 hidden sm:block"></div>
-              <p className="text-[10px] text-slate-500 font-mono hidden sm:block">Salesman Terminal</p>
+              <div className="h-4 w-[1px] bg-slate-200"></div>
+              <span className="text-xs sm:text-sm font-black text-slate-800 tracking-tight">Sales Terminal</span>
             </div>
 
-            {/* Salesperson Switcher Tabs: B2B Dispatch Orders vs Direct Store Retail Sales */}
-            <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-2xl border border-slate-200">
-              <button
-                onClick={() => setSalespersonTab('b2b')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                  salespersonTab === 'b2b'
-                    ? 'bg-cyan-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                id="salesperson-b2b-tab"
-              >
-                <ShoppingCart className="h-3.5 w-3.5" />
-                <span>🛒 B2B / Dispatch Orders</span>
-              </button>
-              <button
-                onClick={() => setSalespersonTab('retail')}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-                  salespersonTab === 'retail'
-                    ? 'bg-emerald-600 text-white shadow-sm'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                id="salesperson-retail-tab"
-              >
-                <Store className="h-3.5 w-3.5" />
-                <span>🏪 Direct Store Retail Sales</span>
-              </button>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="flex flex-col items-end hidden sm:flex">
+            {/* Actions & User profile */}
+            <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+              <div className="hidden sm:flex flex-col items-end">
                 <span className="text-xs font-bold text-slate-800">{currentUser.name}</span>
                 <span className={`text-[9px] font-sans font-semibold px-2.5 py-0.5 rounded-full mt-0.5 ${roleDetails.color}`}>
                   {roleDetails.text}
@@ -1878,48 +1876,38 @@ export default function App() {
                 <LogOut className="h-4 w-4" />
               </button>
             </div>
+
           </div>
         </header>
 
-        <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full">
-          {salespersonTab === 'b2b' ? (
-            <SalesOrderTerminal 
-              products={products}
-              buyers={buyers}
-              batteryTypes={batteryTypes}
-              chargerTypes={chargerTypes}
-              currentUser={currentUser}
-              salesOrders={salesOrders}
-              onRefresh={fetchAllData}
-            />
-          ) : (
-            <AssemblyPipeline
-              products={products}
-              buyers={buyers}
-              scooterUnits={scooterUnits}
-              stockLogs={stockLogs}
-              currentUser={currentUser}
-              onRefresh={fetchAllData}
-              onSubmitAssembly={handleSubmitScooterUnit}
-              onAddBuyer={handleAddBuyer}
-              batterySales={batterySales}
-              batteryImports={batteryImports}
-              onSubmitBatterySale={handleDirectBatterySale}
-              onSubmitBatteryImport={handleDirectBatteryImport}
-              batterySeriesList={batteryTypes}
-              chargerSales={chargerSales}
-              chargerImports={chargerImports}
-              onSubmitChargerSale={handleDirectChargerSale}
-              onSubmitChargerImport={handleDirectChargerImport}
-              chargerTypeList={chargerTypes}
-              onReleaseChargerHold={handleReleaseChargerHold}
-              onFinalizeChargerHold={handleFinalizeChargerHold}
-            />
-          )}
+        <main className="flex-1 max-w-7xl mx-auto px-2 sm:px-6 lg:px-8 py-3 sm:py-6 w-full">
+          <AssemblyPipeline
+            products={products}
+            buyers={buyers}
+            scooterUnits={scooterUnits}
+            stockLogs={stockLogs}
+            currentUser={currentUser}
+            onRefresh={fetchAllData}
+            onSubmitAssembly={handleSubmitScooterUnit}
+            onAddBuyer={handleAddBuyer}
+            batterySales={batterySales}
+            batteryImports={batteryImports}
+            onSubmitBatterySale={handleDirectBatterySale}
+            onSubmitBatteryImport={handleDirectBatteryImport}
+            batterySeriesList={batteryTypes}
+            chargerSales={chargerSales}
+            chargerImports={chargerImports}
+            onSubmitChargerSale={handleDirectChargerSale}
+            onSubmitChargerImport={handleDirectChargerImport}
+            chargerTypeList={chargerTypes}
+            onReleaseChargerHold={handleReleaseChargerHold}
+            onFinalizeChargerHold={handleFinalizeChargerHold}
+            initialTab="stage3"
+          />
         </main>
 
-        <footer className="py-5 border-t border-slate-200 bg-white mt-12 text-center text-slate-400 text-xs font-semibold">
-          ✨ Senzo Warehouse Manager — Salesman Terminal — {new Date().getFullYear()}
+        <footer className="py-4 border-t border-slate-200 bg-white mt-8 text-center text-slate-400 text-xs font-semibold">
+          ✨ Senzo Warehouse Manager — Sales Terminal — {new Date().getFullYear()}
         </footer>
       </div>
     );
@@ -2482,6 +2470,10 @@ export default function App() {
                 batterySales={batterySales}
                 batteryImports={batteryImports}
                 stockLogs={stockLogs}
+                salesOrders={salesOrders}
+                chargerSales={chargerSales}
+                chargerImports={chargerImports}
+                warrantyClaims={warrantyClaims}
                 currentUser={currentUser}
               />
             )}

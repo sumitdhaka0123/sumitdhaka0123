@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Shield, User as UserIcon, Lock, Key, Battery, Compass, ShoppingCart, Truck } from 'lucide-react';
@@ -89,7 +90,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           return;
         }
 
-        const regRes = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/auth/register', {
+        const regRes = await fetch(getApiBaseUrl() + '/api/auth/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: loginUser, password: loginPass, role, name }),
@@ -115,7 +116,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
       }
 
       // Perform Login
-      const loginRes = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/auth/login', {
+      const loginRes = await fetch(getApiBaseUrl() + '/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: loginUser, password: loginPass }),

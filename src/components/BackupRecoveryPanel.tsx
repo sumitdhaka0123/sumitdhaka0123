@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -94,7 +95,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
 
   const fetchDriveConfig = async () => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/drive-config');
+      const res = await fetch(getApiBaseUrl() + '/api/drive-config');
       if (res.ok) {
         const data = await res.json();
         setDriveConfig(data);
@@ -105,7 +106,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
   const fetchDriveFiles = async () => {
     setLoadingDrive(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/backups/drive/list');
+      const res = await fetch(getApiBaseUrl() + '/api/backups/drive/list');
       if (res.ok) {
         const data = await res.json();
         setDriveFiles(data.files || []);
@@ -122,7 +123,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
 
   const handleSaveDriveSettings = async () => {
     try {
-      await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/drive-config', {
+      await fetch(getApiBaseUrl() + '/api/drive-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clientId: tempClientId, clientSecret: tempClientSecret })
@@ -137,7 +138,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
 
   const handleConnectDrive = async () => {
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/drive/auth-url');
+      const res = await fetch(getApiBaseUrl() + '/api/drive/auth-url');
       const data = await res.json();
       if (data.url) {
         window.location.href = data.url;
@@ -150,7 +151,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
 
   const handleDisconnectDrive = async () => {
     try {
-      await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/drive/disconnect', { method: 'POST' });
+      await fetch(getApiBaseUrl() + '/api/drive/disconnect', { method: 'POST' });
       fetchDriveConfig();
       setDriveFiles([]);
       triggerAlert('success', 'Disconnected from Google Drive.');
@@ -160,7 +161,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
   const handleToggleAutoSync = async () => {
     if (!driveConfig) return;
     try {
-      await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/drive-config', {
+      await fetch(getApiBaseUrl() + '/api/drive-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ autoSync: !driveConfig.autoSync })
@@ -172,7 +173,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
   const handleSyncToDriveNow = async () => {
     setSyncingDrive(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/backups/drive/sync', { method: 'POST' });
+      const res = await fetch(getApiBaseUrl() + '/api/backups/drive/sync', { method: 'POST' });
       const data = await res.json();
       if (res.ok) {
         triggerAlert('success', data.message);
@@ -192,7 +193,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
     if (!confirm('Are you sure you want to download and restore this database from Google Drive? A safety snapshot will be taken first.')) return;
     setRestoringDrive(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/backups/drive/restore', {
+      const res = await fetch(getApiBaseUrl() + '/api/backups/drive/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ fileId })
@@ -216,7 +217,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
   const fetchLocalBackups = async () => {
     setLoadingLocal(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/backups');
+      const res = await fetch(getApiBaseUrl() + '/api/backups');
       if (res.ok) {
         const data = await res.json();
         setBackups(data);
@@ -238,7 +239,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
   const handleCreateBackup = async () => {
     setCreating(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/backups/create', {
+      const res = await fetch(getApiBaseUrl() + '/api/backups/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -266,7 +267,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
     if (!selectedBackupForRestore) return;
     setRestoring(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/backups/restore', {
+      const res = await fetch(getApiBaseUrl() + '/api/backups/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -292,7 +293,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
 
   // Download snapshot file to local phone/computer
   const handleDownload = (filename: string) => {
-    const url = ((import.meta as any).env.VITE_API_BASE_URL || '') + `/api/backups/download/${encodeURIComponent(filename)}`;
+    const url = getApiBaseUrl() + `/api/backups/download/${encodeURIComponent(filename)}`;
     window.open(url, '_blank');
   };
 
@@ -307,7 +308,7 @@ export default function BackupRecoveryPanel({ currentUser, onRefreshData }: Back
       reader.onload = async (event) => {
         try {
           const jsonContent = JSON.parse(event.target?.result as string);
-          const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/backups/upload-restore', {
+          const res = await fetch(getApiBaseUrl() + '/api/backups/upload-restore', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

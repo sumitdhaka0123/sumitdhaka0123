@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState, useMemo } from 'react';
 import { 
   Truck, CheckCircle2, Clock, AlertCircle, ArrowLeft, ArrowRight, Package, Shield, Layers, 
@@ -344,7 +345,7 @@ export const DispatchDashboard: React.FC<DispatchDashboardProps> = ({
     setIsSubmitting(true);
     setStatusMessage(null);
     try {
-      const baseUrl = (import.meta as any).env.VITE_API_BASE_URL || '';
+      const baseUrl = getApiBaseUrl();
       const res = await fetch(`${baseUrl}/api/sales-orders/${orderId}/prepare`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -438,7 +439,7 @@ export const DispatchDashboard: React.FC<DispatchDashboardProps> = ({
     setStatusMessage(null);
 
     try {
-      const baseUrl = (import.meta as any).env.VITE_API_BASE_URL || '';
+      const baseUrl = getApiBaseUrl();
       const res = await fetch(`${baseUrl}/api/sales-orders/${selectedOrderForDispatch.id}/dispatch`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

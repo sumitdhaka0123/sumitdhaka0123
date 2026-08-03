@@ -22,24 +22,29 @@ export default function SheetSyncPanel({ sheetConfig, onSaveConfig, onTriggerSyn
 
   // The updated, bullet-proof Google Apps Script code to copy paste matching our 5-stage registry schema
   const appsScriptCode = `/**
- * Google Apps Script for Executive Warehouse Registry Sync
+ * Google Apps Script for Executive Warehouse Registry, Sales & Employee Performance Sync
  * 
  * DESIGN CONCEPTS:
- * - Designed by a 20-year Spreadsheet Architecture Veteran.
+ * - Designed for Warehouse Owners, Managers, and Operations Directors.
  * - Cohesive professional slate/indigo palette, clean typography, custom row heights, and auto-resizable layouts.
- * - Multi-tab layout including a fully interactive Executive Performance Dashboard with large metric blocks.
- * - Dynamic color status mapping, alternating row zebra striping, and automatic number/currency formatting.
+ * - Automated native Data Filters on every single tab for instant sorting and filtering.
+ * - Comprehensive Owner Reports:
+ *     1. "SalesPerformance" ("Who Sold How Much" - Breakdown per Salesperson)
+ *     2. "EmployeePerformance" ("Worker Productivity & Operations" - Assemblies, Dispatches & Logs per Worker)
+ *     3. "SalesOrders" (Complete Customer Orders Ledger)
+ *     4. "ScooterUnits" (Full Chassis / Motor / Controller / Battery / Warranty Serial Ledger)
+ *     5. "StockLogs", "BatterySales", "BatteryImports", "ChargerSales", "ChargerImports", "WarrantyClaims", "AuditLogs"
  * 
  * Instructions:
  * 1. Open your Google Sheet.
  * 2. Click "Extensions" > "Apps Script".
- * 3. Delete any default code and paste this script.
+ * 3. Delete any default code and paste this entire script.
  * 4. Click "Deploy" > "New deployment".
  * 5. Select "Web app" as deployment type.
  * 6. Set "Execute as" to "Me (your email)".
  * 7. Set "Who has access" to "Anyone".
  * 8. Click "Deploy", approve permissions, and COPY the Web App URL!
- * 9. Paste that URL into the control panel.
+ * 9. Paste that Web App URL into the Senzo Control Panel.
  */
 
 function doPost(e) {
@@ -51,38 +56,43 @@ function doPost(e) {
     var doc = SpreadsheetApp.getActiveSpreadsheet();
     
     // Create tabs if they do not exist (with human-readable proper headers)
-    getOrCreateSheet(doc, "StockLogs", ["Log ID", "Model Name", "Color", "Type (IN/OUT)", "Source Channel", "Quantity", "Buyer", "Timestamp", "Operator", "Notes"]);
-    getOrCreateSheet(doc, "ScooterUnits", ["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Tires", "Buyer Name", "Buyer Contact", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Last Updated", "Created By"]);
+    getOrCreateSheet(doc, "SalesOrders", ["Order No", "Buyer Name", "Buyer Contact", "Salesperson Name", "Salesperson Username", "Status", "Delivery Location", "Challan No", "Bill No", "Items Summary", "Created Date", "Dispatched Date", "Notes"]);
+    getOrCreateSheet(doc, "SalesPerformance", ["Salesperson Name", "Username", "Orders Placed", "Scooters Sold", "Battery Packs Sold", "Chargers Sold", "Total Items Sold", "Latest Sale Date"]);
+    getOrCreateSheet(doc, "EmployeePerformance", ["Worker / Operator Name", "System Username", "Stage 1 Assemblies", "Stage 2 Customizations", "Dispatches Handled", "Battery/Charger Ops", "Warranty Claims", "Total Audit Actions", "Total Work Output", "Last Active Date"]);
+    getOrCreateSheet(doc, "ScooterUnits", ["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Front Tire", "Rear Tire", "Buyer Name", "Buyer Contact", "Bill No", "Challan No", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Assembly Worker", "Last Updated By", "Last Updated"]);
+    getOrCreateSheet(doc, "StockLogs", ["Log ID", "Model Name", "Color", "Type (IN/OUT)", "Source Channel", "Quantity", "Buyer", "Bill No", "Challan No", "Timestamp", "Operator / Worker", "Notes"]);
+    getOrCreateSheet(doc, "BatterySales", ["Sale ID", "Buyer Name", "Buyer Contact", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Status", "Bill No", "Challan No", "Sale Date", "Operator / Worker", "Warranty Months", "Held For", "Notes"]);
+    getOrCreateSheet(doc, "BatteryImports", ["Import ID", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Import Date", "Operator / Worker", "Supplier Name", "Container ID", "Notes"]);
+    getOrCreateSheet(doc, "ChargerSales", ["Sale ID", "Buyer Name", "Charger Type", "Start Serial No", "End Serial No", "Quantity", "Status", "Bill No", "Challan No", "Sale Date", "Operator / Worker", "Notes"]);
+    getOrCreateSheet(doc, "ChargerImports", ["Import ID", "Charger Type", "Start Serial No", "End Serial No", "Quantity", "Import Date", "Operator / Worker", "Supplier Name", "Notes"]);
+    getOrCreateSheet(doc, "WarrantyClaims", ["Claim ID", "Buyer Name", "Buyer Contact", "Component / Serial", "Issue Description", "Status", "Action Taken", "Replacement Serial", "Claim Date", "Processed By", "Notes"]);
+    getOrCreateSheet(doc, "AuditLogs", ["Log ID", "Action", "Timestamp", "Username", "Operator Name", "Role", "Details"]);
+    getOrCreateSheet(doc, "Buyers", ["Buyer ID", "Buyer Name", "Contact Details", "Address", "GST No", "Buyer Type"]);
     getOrCreateSheet(doc, "Products", ["Product ID", "Model Name", "Available Colors"]);
-    getOrCreateSheet(doc, "Buyers", ["Buyer ID", "Buyer Name", "Contact Details"]);
-    getOrCreateSheet(doc, "BatterySales", ["Sale ID", "Buyer Name", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Sale Date", "Operator", "Notes", "Under Warranty", "Warranty Months", "Status", "Held For", "Held By", "Hold Date"]);
-    getOrCreateSheet(doc, "BatteryImports", ["Import ID", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Import Date", "Operator", "Supplier Name", "Container ID", "Notes"]);
-    getOrCreateSheet(doc, "SummaryStats", ["Metric Name", "Value", "Description"]);
-    getOrCreateSheet(doc, "ColorBreakdown", ["Model Name", "Color", "Available Stock", "Sold Stock", "Total Registered", "Imported via Logs"]);
     
     if (action === "log_stock") {
       var sheet = doc.getSheetByName("StockLogs");
-      sheet.appendRow([data.id, data.modelName, data.color, data.type.toUpperCase(), data.sourceChannel || "", data.quantity, data.buyerName || "", data.timestamp, data.operator, data.notes || ""]);
-      applyProfessionalFormatting(sheet, true, 4); // status column 4 is Type
+      sheet.appendRow([data.id, data.modelName, data.color, (data.type || "").toUpperCase(), data.sourceChannel || "", data.quantity, data.buyerName || "", data.billNo || "", data.deliveryChallanNo || "", data.timestamp, data.operator, data.notes || ""]);
+      applyProfessionalFormatting(sheet, true, 4);
     } 
     else if (action === "create_scooter" || action === "update_scooter") {
       updateOrAddScooter(doc, data);
     }
     else if (action === "add_product") {
       var sheet = doc.getSheetByName("Products");
-      sheet.appendRow([data.id, data.name, data.colors.join(", ")]);
+      sheet.appendRow([data.id, data.name, (data.colors || []).join(", ")]);
       applyProfessionalFormatting(sheet, true, 0);
     }
     else if (action === "add_buyer") {
       var sheet = doc.getSheetByName("Buyers");
-      sheet.appendRow([data.id, data.name, data.contact || ""]);
+      sheet.appendRow([data.id, data.name, data.contact || "", data.address || "", data.gstNo || "", data.buyerType || ""]);
       applyProfessionalFormatting(sheet, true, 0);
     }
     else if (action === "sync_all") {
       syncAllData(doc, data);
     }
     
-    // Automatically rebuild the gorgeous, executive control panel dashboard
+    // Automatically rebuild the executive control panel dashboard and owner performance sheets
     rebuildExecutiveDashboard(doc, data);
     
     return ContentService.createTextOutput(JSON.stringify({ success: true }))
@@ -98,16 +108,17 @@ function doGet(e) {
   try {
     var doc = SpreadsheetApp.getActiveSpreadsheet();
     var synonymsMap = {
-      id: ["id", "id", "accessory id", "buyer id", "product id", "log id", "scooter id", "sale id", "import id"],
-      name: ["name", "model name", "model", "buyer name", "accessory name"],
-      colors: ["colors", "color list", "available colors"],
-      contact: ["contact", "contact info", "phone", "contact details"],
+      id: ["id", "scooter id", "log id", "sale id", "import id", "product id", "buyer id", "claim id"],
+      name: ["name", "model name", "buyer name", "product name"],
+      colors: ["colors", "available colors"],
+      contact: ["contact", "buyer contact", "contact details", "phone"],
       modelName: ["model", "model name"],
       color: ["color"],
       chassisNo: ["chassis no", "chassis number", "chassisno"],
       motorNo: ["motor no", "motor number", "motorno"],
       controllerNo: ["controller no", "controller number", "controllerno"],
-      tireSize: ["tires", "tire size"],
+      frontTireSize: ["front tire", "front tire size"],
+      rearTireSize: ["rear tire", "rear tire size", "tires"],
       buyerName: ["buyer name", "buyer"],
       buyerContact: ["buyer contact", "contact"],
       batterySerials: ["battery serials", "battery serial"],
@@ -115,16 +126,16 @@ function doGet(e) {
       scooterWarrantyStatus: ["scooter warranty", "scooter warranty status"],
       batteryWarrantyStatus: ["battery warranty", "battery warranty status"],
       lastUpdatedTimestamp: ["last updated", "lastupdated"],
-      createdOperator: ["created by", "createdby", "operator"],
+      createdOperator: ["created by", "assembly worker", "operator"],
+      lastUpdatedBy: ["last updated by", "updated by"],
       type: ["type", "type (in/out)"],
       sourceChannel: ["source channel", "sourcechannel"],
       quantity: ["quantity", "qty"],
-      timestamp: ["timestamp", "date"],
-      operator: ["operator", "user"],
+      timestamp: ["timestamp", "date", "created date"],
+      operator: ["operator", "operator / worker", "user", "processed by"],
       notes: ["notes", "note"],
-      category: ["category"],
-      availableStock: ["available stock", "stock", "availablestock", "quantity", "qty"],
-      buyingPrice: ["buying price", "buy price", "buyingprice", "price", "cost"]
+      billNo: ["bill no", "sales bill no", "bill"],
+      deliveryChallanNo: ["challan no", "delivery challan no", "challan"]
     };
 
     return ContentService.createTextOutput(JSON.stringify({
@@ -134,17 +145,29 @@ function doGet(e) {
         buyers: getSheetDataAsJson(doc, "Buyers", ["id", "name", "contact"], synonymsMap),
         scooterUnits: getSheetDataAsJson(doc, "ScooterUnits", [
           "id", "modelName", "color", "chassisNo", "motorNo", "controllerNo", 
-          "tireSize", "buyerName", "buyerContact", "batterySerials", 
-          "status", "scooterWarrantyStatus", "batteryWarrantyStatus", "lastUpdatedTimestamp", "createdOperator"
+          "frontTireSize", "rearTireSize", "buyerName", "buyerContact", "billNo", "deliveryChallanNo", "batterySerials", 
+          "status", "scooterWarrantyStatus", "batteryWarrantyStatus", "createdOperator", "lastUpdatedBy", "lastUpdatedTimestamp"
         ], synonymsMap),
         stockLogs: getSheetDataAsJson(doc, "StockLogs", [
-          "id", "modelName", "color", "type", "sourceChannel", "quantity", "buyerName", "timestamp", "operator", "notes"
+          "id", "modelName", "color", "type", "sourceChannel", "quantity", "buyerName", "billNo", "deliveryChallanNo", "timestamp", "operator", "notes"
+        ], synonymsMap),
+        salesOrders: getSheetDataAsJson(doc, "SalesOrders", [
+          "orderNo", "buyerName", "buyerContact", "salespersonName", "salespersonUsername", "status", "deliveryLocation", "challanNo", "salesBillNo", "notes", "createdTimestamp", "dispatchedTimestamp"
         ], synonymsMap),
         batterySales: getSheetDataAsJson(doc, "BatterySales", [
-          "id", "buyerName", "batterySeries", "startNo", "endNo", "quantity", "saleDate", "operator", "notes", "isUnderWarranty", "warrantyDurationMonths", "status", "heldFor", "heldBy", "holdDate"
+          "id", "buyerName", "buyerContact", "batterySeries", "startNo", "endNo", "quantity", "status", "billNo", "deliveryChallanNo", "saleDate", "operator", "warrantyDurationMonths", "heldFor", "notes"
         ], synonymsMap),
         batteryImports: getSheetDataAsJson(doc, "BatteryImports", [
           "id", "batterySeries", "startNo", "endNo", "quantity", "importDate", "operator", "supplierName", "containerId", "notes"
+        ], synonymsMap),
+        chargerSales: getSheetDataAsJson(doc, "ChargerSales", [
+          "id", "buyerName", "chargerType", "startNo", "endNo", "quantity", "status", "billNo", "deliveryChallanNo", "saleDate", "operator", "notes"
+        ], synonymsMap),
+        chargerImports: getSheetDataAsJson(doc, "ChargerImports", [
+          "id", "chargerType", "startNo", "endNo", "quantity", "importDate", "operator", "supplierName", "notes"
+        ], synonymsMap),
+        warrantyClaims: getSheetDataAsJson(doc, "WarrantyClaims", [
+          "id", "buyerName", "buyerContact", "originalSerialNo", "issueDescription", "status", "actionTaken", "newSerialNo", "claimDate", "operatorName", "notes"
         ], synonymsMap)
       }
     }))
@@ -227,7 +250,24 @@ function getOrCreateSheet(doc, name, headers) {
   return sheet;
 }
 
-// Applies stunning, 20-year-expert visual styles to data sheets
+// Applies filter to data sheet
+function applyFilter(sheet) {
+  try {
+    var lastRow = sheet.getLastRow();
+    var lastCol = sheet.getLastColumn();
+    if (lastRow > 1 && lastCol > 0) {
+      var existingFilter = sheet.getFilter();
+      if (existingFilter) {
+        existingFilter.remove();
+      }
+      sheet.getRange(1, 1, lastRow, lastCol).createFilter();
+    }
+  } catch (e) {
+    // Filter creation optional if restricted
+  }
+}
+
+// Applies executive visual styling and automatic data filters
 function applyProfessionalFormatting(sheet, hasZebra, statusColIndex) {
   var lastRow = sheet.getLastRow();
   var lastCol = sheet.getLastColumn();
@@ -236,10 +276,10 @@ function applyProfessionalFormatting(sheet, hasZebra, statusColIndex) {
   
   // Format Header Row
   var headerRange = sheet.getRange(1, 1, 1, lastCol);
-  headerRange.setFontFamily("Inter")
+  headerRange.setFontFamily("Segoe UI")
              .setFontSize(10)
              .setFontWeight("bold")
-             .setBackground("#1E293B") // Dark Slate Blue
+             .setBackground("#0F172A") // Dark Slate 900
              .setFontColor("#FFFFFF")
              .setHorizontalAlignment("center")
              .setVerticalAlignment("middle");
@@ -248,7 +288,7 @@ function applyProfessionalFormatting(sheet, hasZebra, statusColIndex) {
   if (lastRow > 1) {
     // Format Data Range
     var dataRange = sheet.getRange(2, 1, lastRow - 1, lastCol);
-    dataRange.setFontFamily("Inter")
+    dataRange.setFontFamily("Segoe UI")
              .setFontSize(9)
              .setFontColor("#334155") // Deep neutral
              .setVerticalAlignment("middle");
@@ -269,59 +309,57 @@ function applyProfessionalFormatting(sheet, hasZebra, statusColIndex) {
       }
     }
     
-    // Smart Column Formatting (Zebra override / Alignments / Number formats)
+    // Smart Column Formatting
     var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
     for (var colIdx = 0; colIdx < lastCol; colIdx++) {
       var headerName = headers[colIdx].toString().toLowerCase();
       var colRange = sheet.getRange(2, colIdx + 1, lastRow - 1, 1);
       
-      // Right alignment for Numeric / Prices / Quantities
-      if (headerName.indexOf("price") !== -1 || headerName.indexOf("quantity") !== -1 || headerName.indexOf("months") !== -1 || headerName.indexOf("total") !== -1 || headerName.indexOf("stock") !== -1) {
+      if (headerName.indexOf("price") !== -1 || headerName.indexOf("quantity") !== -1 || headerName.indexOf("months") !== -1 || headerName.indexOf("total") !== -1 || headerName.indexOf("stock") !== -1 || headerName.indexOf("count") !== -1) {
         colRange.setHorizontalAlignment("right");
-      }
-      // Center alignment for Codes, Statuses, Dates, IDs
-      else if (headerName.indexOf("id") !== -1 || headerName.indexOf("no") !== -1 || headerName.indexOf("status") !== -1 || headerName.indexOf("date") !== -1 || headerName.indexOf("timestamp") !== -1 || headerName.indexOf("warranty") !== -1) {
+      } else if (headerName.indexOf("id") !== -1 || headerName.indexOf("no") !== -1 || headerName.indexOf("status") !== -1 || headerName.indexOf("date") !== -1 || headerName.indexOf("timestamp") !== -1 || headerName.indexOf("warranty") !== -1) {
         colRange.setHorizontalAlignment("center");
-      }
-      // Left align for Names, Notes, Text
-      else {
+      } else {
         colRange.setHorizontalAlignment("left");
       }
       
-      // Formatting Currency
-      if (headerName.indexOf("price") !== -1) {
+      if (headerName.indexOf("price") !== -1 || headerName.indexOf("amount") !== -1) {
         colRange.setNumberFormat("$#,##0.00");
       }
       
-      // Formatting Dates
       if (headerName.indexOf("date") !== -1 || headerName.indexOf("timestamp") !== -1 || headerName.indexOf("updated") !== -1) {
         colRange.setNumberFormat("yyyy-mm-dd hh:mm");
       }
       
-      // Dynamic status coloring (Soft pastel colors)
-      if (colIdx + 1 === statusColIndex) {
+      // Dynamic status coloring
+      if (statusColIndex > 0 && colIdx + 1 === statusColIndex) {
         for (var row = 2; row <= lastRow; row++) {
           var cell = sheet.getRange(row, colIdx + 1);
           var val = cell.getValue().toString().toLowerCase().trim();
           
-          if (val === "available" || val === "in") {
-            cell.setBackground("#D1FAE5").setFontColor("#065F46").setFontWeight("bold"); // Light Green theme
-          } else if (val === "sold" || val === "out") {
-            cell.setBackground("#FEE2E2").setFontColor("#991B1B").setFontWeight("bold"); // Light Red theme
-          } else if (val === "hold") {
-            cell.setBackground("#FEF3C7").setFontColor("#92400E").setFontWeight("bold"); // Light Amber theme
+          if (val === "available" || val === "in" || val === "dispatched" || val === "challan_generated" || val === "resolved" || val === "repaired") {
+            cell.setBackground("#D1FAE5").setFontColor("#065F46").setFontWeight("bold"); // Soft Green
+          } else if (val === "sold" || val === "out" || val === "cancelled" || val === "rejected") {
+            cell.setBackground("#FEE2E2").setFontColor("#991B1B").setFontWeight("bold"); // Soft Red
+          } else if (val === "hold" || val === "pending" || val === "under_repair" || val === "incomplete") {
+            cell.setBackground("#FEF3C7").setFontColor("#92400E").setFontWeight("bold"); // Soft Amber
+          } else if (val === "prepared") {
+            cell.setBackground("#E0E7FF").setFontColor("#3730A3").setFontWeight("bold"); // Soft Indigo
           }
         }
       }
     }
   }
   
-  // Auto-resize columns and add dynamic margin
+  // Auto-resize columns and add dynamic breathing room
   sheet.autoResizeColumns(1, lastCol);
   for (var col = 1; col <= lastCol; col++) {
     var width = sheet.getColumnWidth(col);
-    sheet.setColumnWidth(col, Math.max(90, width + 15)); // Add breathing room
+    sheet.setColumnWidth(col, Math.max(100, width + 15));
   }
+
+  // Create native Google Sheet Data Filter
+  applyFilter(sheet);
 }
 
 function updateOrAddScooter(doc, scoot) {
@@ -330,7 +368,7 @@ function updateOrAddScooter(doc, scoot) {
   var rowIdx = -1;
   
   for (var i = 1; i < values.length; i++) {
-    if (values[i][0] === scoot.id) {
+    if (values[i][0] === scoot.id || (values[i][3] && values[i][3] === scoot.chassisNo)) {
       rowIdx = i + 1;
       break;
     }
@@ -343,15 +381,19 @@ function updateOrAddScooter(doc, scoot) {
     scoot.chassisNo,
     scoot.motorNo,
     scoot.controllerNo,
-    scoot.tireSize,
+    scoot.frontTireSize || "12-inch",
+    scoot.rearTireSize || "12-inch",
     scoot.buyerName || "",
     scoot.buyerContact || "",
+    scoot.salesBillNo || scoot.billNo || "",
+    scoot.deliveryChallanNo || "",
     (scoot.batterySerials || []).join(", "),
     scoot.status,
     scoot.scooterWarrantyStatus || "None",
     scoot.batteryWarrantyStatus || "None",
-    scoot.lastUpdatedTimestamp,
-    scoot.createdOperator || ""
+    scoot.createdOperator || "",
+    scoot.lastUpdatedBy || "",
+    scoot.lastUpdatedTimestamp || ""
   ];
   
   if (rowIdx !== -1) {
@@ -359,41 +401,41 @@ function updateOrAddScooter(doc, scoot) {
   } else {
     sheet.appendRow(rowData);
   }
-  applyProfessionalFormatting(sheet, true, 11); // column 11 is status
+  applyProfessionalFormatting(sheet, true, 14); // column 14 is status
 }
 
 function syncAllData(doc, data) {
-  // Products
-  var prodSheet = getOrCreateSheet(doc, "Products", ["Product ID", "Model Name", "Available Colors"]);
-  prodSheet.clearContents();
-  prodSheet.appendRow(["Product ID", "Model Name", "Available Colors"]);
-  (data.products || []).forEach(function(p) {
-    prodSheet.appendRow([p.id, p.name, p.colors.join(", ")]);
+  // 1. SalesOrders
+  var ordersSheet = getOrCreateSheet(doc, "SalesOrders", ["Order No", "Buyer Name", "Buyer Contact", "Salesperson Name", "Salesperson Username", "Status", "Delivery Location", "Challan No", "Bill No", "Items Summary", "Created Date", "Dispatched Date", "Notes"]);
+  ordersSheet.clearContents();
+  ordersSheet.appendRow(["Order No", "Buyer Name", "Buyer Contact", "Salesperson Name", "Salesperson Username", "Status", "Delivery Location", "Challan No", "Bill No", "Items Summary", "Created Date", "Dispatched Date", "Notes"]);
+  (data.salesOrders || []).forEach(function(o) {
+    var itemsSummary = (o.items || []).map(function(it) {
+      return (it.productName || it.itemType) + " (Qty: " + (it.quantity || 1) + ")";
+    }).join("; ");
+
+    ordersSheet.appendRow([
+      o.orderNo || "",
+      o.buyerName || "",
+      o.buyerContact || "",
+      o.salespersonName || "",
+      o.salespersonUsername || "",
+      o.status || "pending",
+      o.deliveryLocation || "",
+      o.challanNo || "",
+      o.salesBillNo || "",
+      itemsSummary,
+      o.createdTimestamp || "",
+      o.dispatchedTimestamp || "",
+      o.notes || ""
+    ]);
   });
-  applyProfessionalFormatting(prodSheet, true, 0);
-  
-  // Buyers
-  var buySheet = getOrCreateSheet(doc, "Buyers", ["Buyer ID", "Buyer Name", "Contact Details"]);
-  buySheet.clearContents();
-  buySheet.appendRow(["Buyer ID", "Buyer Name", "Contact Details"]);
-  (data.buyers || []).forEach(function(b) {
-    buySheet.appendRow([b.id, b.name, b.contact || ""]);
-  });
-  applyProfessionalFormatting(buySheet, true, 0);
-  
-  // StockLogs
-  var stockSheet = getOrCreateSheet(doc, "StockLogs", ["Log ID", "Model Name", "Color", "Type (IN/OUT)", "Source Channel", "Quantity", "Buyer", "Timestamp", "Operator", "Notes"]);
-  stockSheet.clearContents();
-  stockSheet.appendRow(["Log ID", "Model Name", "Color", "Type (IN/OUT)", "Source Channel", "Quantity", "Buyer", "Timestamp", "Operator", "Notes"]);
-  (data.stockLogs || []).forEach(function(log) {
-    stockSheet.appendRow([log.id, log.modelName, log.color, log.type.toUpperCase(), log.sourceChannel || "", log.quantity, log.buyerName || "", log.timestamp, log.operator, log.notes || ""]);
-  });
-  applyProfessionalFormatting(stockSheet, true, 4); // Status index 4 is type (IN/OUT)
-  
-  // ScooterUnits
-  var scootSheet = getOrCreateSheet(doc, "ScooterUnits", ["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Tires", "Buyer Name", "Buyer Contact", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Last Updated", "Created By"]);
+  applyProfessionalFormatting(ordersSheet, true, 6); // Col 6 is Status
+
+  // 2. ScooterUnits
+  var scootSheet = getOrCreateSheet(doc, "ScooterUnits", ["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Front Tire", "Rear Tire", "Buyer Name", "Buyer Contact", "Bill No", "Challan No", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Assembly Worker", "Last Updated By", "Last Updated"]);
   scootSheet.clearContents();
-  scootSheet.appendRow(["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Tires", "Buyer Name", "Buyer Contact", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Last Updated", "Created By"]);
+  scootSheet.appendRow(["Scooter ID", "Model Name", "Color", "Chassis No", "Motor No", "Controller No", "Front Tire", "Rear Tire", "Buyer Name", "Buyer Contact", "Bill No", "Challan No", "Battery Serials", "Status", "Scooter Warranty", "Battery Warranty", "Assembly Worker", "Last Updated By", "Last Updated"]);
   (data.scooterUnits || []).forEach(function(scoot) {
     scootSheet.appendRow([
       scoot.id,
@@ -402,48 +444,61 @@ function syncAllData(doc, data) {
       scoot.chassisNo,
       scoot.motorNo,
       scoot.controllerNo,
-      scoot.tireSize,
+      scoot.frontTireSize || "12-inch",
+      scoot.rearTireSize || "12-inch",
       scoot.buyerName || "",
       scoot.buyerContact || "",
+      scoot.salesBillNo || scoot.billNo || "",
+      scoot.deliveryChallanNo || "",
       (scoot.batterySerials || []).join(", "),
       scoot.status,
       scoot.scooterWarrantyStatus || "None",
       scoot.batteryWarrantyStatus || "None",
-      scoot.lastUpdatedTimestamp,
-      scoot.createdOperator || ""
+      scoot.createdOperator || "",
+      scoot.lastUpdatedBy || "",
+      scoot.lastUpdatedTimestamp || ""
     ]);
   });
-  applyProfessionalFormatting(scootSheet, true, 11); // Status column 11
-  
-  // BatterySales
-  var batSalesSheet = getOrCreateSheet(doc, "BatterySales", ["Sale ID", "Buyer Name", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Sale Date", "Operator", "Notes", "Under Warranty", "Warranty Months", "Status", "Held For", "Held By", "Hold Date"]);
+  applyProfessionalFormatting(scootSheet, true, 14); // Status column 14
+
+  // 3. StockLogs
+  var stockSheet = getOrCreateSheet(doc, "StockLogs", ["Log ID", "Model Name", "Color", "Type (IN/OUT)", "Source Channel", "Quantity", "Buyer", "Bill No", "Challan No", "Timestamp", "Operator / Worker", "Notes"]);
+  stockSheet.clearContents();
+  stockSheet.appendRow(["Log ID", "Model Name", "Color", "Type (IN/OUT)", "Source Channel", "Quantity", "Buyer", "Bill No", "Challan No", "Timestamp", "Operator / Worker", "Notes"]);
+  (data.stockLogs || []).forEach(function(log) {
+    stockSheet.appendRow([log.id, log.modelName, log.color, (log.type || "").toUpperCase(), log.sourceChannel || "", log.quantity, log.buyerName || "", log.billNo || "", log.deliveryChallanNo || "", log.timestamp, log.operator, log.notes || ""]);
+  });
+  applyProfessionalFormatting(stockSheet, true, 4);
+
+  // 4. BatterySales
+  var batSalesSheet = getOrCreateSheet(doc, "BatterySales", ["Sale ID", "Buyer Name", "Buyer Contact", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Status", "Bill No", "Challan No", "Sale Date", "Operator / Worker", "Warranty Months", "Held For", "Notes"]);
   batSalesSheet.clearContents();
-  batSalesSheet.appendRow(["Sale ID", "Buyer Name", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Sale Date", "Operator", "Notes", "Under Warranty", "Warranty Months", "Status", "Held For", "Held By", "Hold Date"]);
+  batSalesSheet.appendRow(["Sale ID", "Buyer Name", "Buyer Contact", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Status", "Bill No", "Challan No", "Sale Date", "Operator / Worker", "Warranty Months", "Held For", "Notes"]);
   (data.batterySales || []).forEach(function(s) {
     batSalesSheet.appendRow([
       s.id,
-      s.buyerName,
-      s.batterySeries,
+      s.buyerName || "",
+      s.buyerContact || "",
+      s.batterySeries || "",
       s.startNo || "N/A",
       s.endNo || "N/A",
-      s.quantity,
-      s.saleDate,
-      s.operator,
-      s.notes || "",
-      s.isUnderWarranty ? "Yes" : "No",
+      s.quantity || 1,
+      s.status || "sold",
+      s.billNo || "",
+      s.deliveryChallanNo || "",
+      s.saleDate || "",
+      s.operator || "",
       s.warrantyDurationMonths || "N/A",
-      s.status,
       s.heldFor || "",
-      s.heldBy || "",
-      s.holdDate || ""
+      s.notes || ""
     ]);
   });
-  applyProfessionalFormatting(batSalesSheet, true, 12); // column 12 is status
-  
-  // BatteryImports
-  var batImportsSheet = getOrCreateSheet(doc, "BatteryImports", ["Import ID", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Import Date", "Operator", "Supplier Name", "Container ID", "Notes"]);
+  applyProfessionalFormatting(batSalesSheet, true, 8);
+
+  // 5. BatteryImports
+  var batImportsSheet = getOrCreateSheet(doc, "BatteryImports", ["Import ID", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Import Date", "Operator / Worker", "Supplier Name", "Container ID", "Notes"]);
   batImportsSheet.clearContents();
-  batImportsSheet.appendRow(["Import ID", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Import Date", "Operator", "Supplier Name", "Container ID", "Notes"]);
+  batImportsSheet.appendRow(["Import ID", "Battery Series", "Start Serial No", "End Serial No", "Quantity", "Import Date", "Operator / Worker", "Supplier Name", "Container ID", "Notes"]);
   (data.batteryImports || []).forEach(function(imp) {
     batImportsSheet.appendRow([
       imp.id,
@@ -459,144 +514,244 @@ function syncAllData(doc, data) {
     ]);
   });
   applyProfessionalFormatting(batImportsSheet, true, 0);
+
+  // 6. ChargerSales
+  var chgSalesSheet = getOrCreateSheet(doc, "ChargerSales", ["Sale ID", "Buyer Name", "Charger Type", "Start Serial No", "End Serial No", "Quantity", "Status", "Bill No", "Challan No", "Sale Date", "Operator / Worker", "Notes"]);
+  chgSalesSheet.clearContents();
+  chgSalesSheet.appendRow(["Sale ID", "Buyer Name", "Charger Type", "Start Serial No", "End Serial No", "Quantity", "Status", "Bill No", "Challan No", "Sale Date", "Operator / Worker", "Notes"]);
+  (data.chargerSales || []).forEach(function(s) {
+    chgSalesSheet.appendRow([
+      s.id,
+      s.buyerName || "",
+      s.chargerType || "",
+      s.startNo || "N/A",
+      s.endNo || "N/A",
+      s.quantity || 1,
+      s.status || "sold",
+      s.billNo || "",
+      s.deliveryChallanNo || "",
+      s.saleDate || "",
+      s.operator || "",
+      s.notes || ""
+    ]);
+  });
+  applyProfessionalFormatting(chgSalesSheet, true, 7);
+
+  // 7. ChargerImports
+  var chgImportsSheet = getOrCreateSheet(doc, "ChargerImports", ["Import ID", "Charger Type", "Start Serial No", "End Serial No", "Quantity", "Import Date", "Operator / Worker", "Supplier Name", "Notes"]);
+  chgImportsSheet.clearContents();
+  chgImportsSheet.appendRow(["Import ID", "Charger Type", "Start Serial No", "End Serial No", "Quantity", "Import Date", "Operator / Worker", "Supplier Name", "Notes"]);
+  (data.chargerImports || []).forEach(function(imp) {
+    chgImportsSheet.appendRow([
+      imp.id,
+      imp.chargerType,
+      imp.startNo || "N/A",
+      imp.endNo || "N/A",
+      imp.quantity,
+      imp.importDate,
+      imp.operator,
+      imp.supplierName || "",
+      imp.notes || ""
+    ]);
+  });
+  applyProfessionalFormatting(chgImportsSheet, true, 0);
+
+  // 8. WarrantyClaims
+  var wcSheet = getOrCreateSheet(doc, "WarrantyClaims", ["Claim ID", "Buyer Name", "Buyer Contact", "Component / Serial", "Issue Description", "Status", "Action Taken", "Replacement Serial", "Claim Date", "Processed By", "Notes"]);
+  wcSheet.clearContents();
+  wcSheet.appendRow(["Claim ID", "Buyer Name", "Buyer Contact", "Component / Serial", "Issue Description", "Status", "Action Taken", "Replacement Serial", "Claim Date", "Processed By", "Notes"]);
+  (data.warrantyClaims || []).forEach(function(c) {
+    wcSheet.appendRow([
+      c.id || "",
+      c.buyerName || "",
+      c.buyerContact || "",
+      c.originalSerialNo || "",
+      c.issueDescription || "",
+      c.status || "investigating",
+      c.actionTaken || "",
+      c.newSerialNo || "",
+      c.claimDate || "",
+      c.operatorName || c.operatorUsername || "",
+      c.notes || ""
+    ]);
+  });
+  applyProfessionalFormatting(wcSheet, true, 6);
+
+  // 9. AuditLogs
+  var auditSheet = getOrCreateSheet(doc, "AuditLogs", ["Log ID", "Action", "Timestamp", "Username", "Operator Name", "Role", "Details"]);
+  auditSheet.clearContents();
+  auditSheet.appendRow(["Log ID", "Action", "Timestamp", "Username", "Operator Name", "Role", "Details"]);
+  (data.auditLogs || []).slice(0, 1000).forEach(function(a) {
+    auditSheet.appendRow([
+      a.id || "",
+      a.action || "",
+      a.timestamp || "",
+      a.username || "",
+      a.operatorName || a.operator || "",
+      a.operatorRole || "",
+      a.details || ""
+    ]);
+  });
+  applyProfessionalFormatting(auditSheet, true, 0);
+
+  // 10. Products
+  var prodSheet = getOrCreateSheet(doc, "Products", ["Product ID", "Model Name", "Available Colors"]);
+  prodSheet.clearContents();
+  prodSheet.appendRow(["Product ID", "Model Name", "Available Colors"]);
+  (data.products || []).forEach(function(p) {
+    prodSheet.appendRow([p.id, p.name, (p.colors || []).join(", ")]);
+  });
+  applyProfessionalFormatting(prodSheet, true, 0);
+  
+  // 11. Buyers
+  var buySheet = getOrCreateSheet(doc, "Buyers", ["Buyer ID", "Buyer Name", "Contact Details", "Address", "GST No", "Buyer Type"]);
+  buySheet.clearContents();
+  buySheet.appendRow(["Buyer ID", "Buyer Name", "Contact Details", "Address", "GST No", "Buyer Type"]);
+  (data.buyers || []).forEach(function(b) {
+    buySheet.appendRow([b.id, b.name, b.contact || "", b.address || "", b.gstNo || "", b.buyerType || ""]);
+  });
+  applyProfessionalFormatting(buySheet, true, 0);
 }
 
-// Masterpiece dashboard rebuilding engine
+// Rebuild Executive Dashboard, Sales Leaderboard, and Employee Performance Reports
 function rebuildExecutiveDashboard(doc, data) {
+  // A. Rebuild Owner Sales Performance Sheet ("Who Sold How Much")
+  rebuildSalesPerformanceSheet(doc, data);
+
+  // B. Rebuild Owner Employee Performance Sheet ("Which Worker Is Doing How Much Work")
+  rebuildEmployeePerformanceSheet(doc, data);
+
+  // C. Rebuild Main Dashboard
   var dashboardSheet = doc.getSheetByName("Dashboard");
   if (!dashboardSheet) {
     dashboardSheet = doc.insertSheet("Dashboard");
   }
   
-  // Ensure dashboard is always the very first visible sheet tab
   doc.setActiveSheet(dashboardSheet);
   doc.moveActiveSheet(1);
-  
-  // Clear everything & turn off default grid lines to look like an expert web app control deck
   dashboardSheet.clear();
   dashboardSheet.setGridlinesVisible(false);
   
-  // Compute key stats for indicators
-  var totalImported = 0;
-  var stockLogs = data.stockLogs || [];
-  for (var i = 0; i < stockLogs.length; i++) {
-    if (stockLogs[i].type && stockLogs[i].type.toLowerCase() === "in") {
-      totalImported += Number(stockLogs[i].quantity || 0);
-    }
-  }
-  
   var scooterUnits = data.scooterUnits || [];
+  var salesOrders = data.salesOrders || [];
   var totalAssembled = scooterUnits.length;
   var availableStock = 0;
   var totalSold = 0;
   var totalHold = 0;
   for (var i = 0; i < scooterUnits.length; i++) {
     var st = scooterUnits[i].status ? scooterUnits[i].status.toLowerCase().trim() : "";
-    if (st === "available") {
-      availableStock++;
-    } else if (st === "sold") {
-      totalSold++;
-    } else if (st === "hold") {
-      totalHold++;
-    }
+    if (st === "available") availableStock++;
+    else if (st === "sold") totalSold++;
+    else if (st === "hold") totalHold++;
   }
   
-  // 1. Setup Column Widths for clean grid rhythm
-  dashboardSheet.setColumnWidth(1, 24);   // Left margin spacing
-  dashboardSheet.setColumnWidth(2, 220);  // Column 1 values
-  dashboardSheet.setColumnWidth(3, 110);  // Column 2 values
-  dashboardSheet.setColumnWidth(4, 30);   // Spacer column
-  dashboardSheet.setColumnWidth(5, 160);  // Col breakdown Col 1
-  dashboardSheet.setColumnWidth(6, 110);  // Col breakdown Col 2
-  dashboardSheet.setColumnWidth(7, 100);  // Col breakdown Col 3
-  dashboardSheet.setColumnWidth(8, 100);  // Col breakdown Col 4
-  dashboardSheet.setColumnWidth(9, 100);  // Col breakdown Col 5
-  dashboardSheet.setColumnWidth(10, 100); // Col breakdown Col 6
+  // Set Column Widths
+  dashboardSheet.setColumnWidth(1, 24);   // Left margin
+  dashboardSheet.setColumnWidth(2, 220);  // Col 1
+  dashboardSheet.setColumnWidth(3, 110);  // Col 2
+  dashboardSheet.setColumnWidth(4, 30);   // Spacer
+  dashboardSheet.setColumnWidth(5, 180);  // Col 3
+  dashboardSheet.setColumnWidth(6, 120);  // Col 4
+  dashboardSheet.setColumnWidth(7, 100);  // Col 5
+  dashboardSheet.setColumnWidth(8, 100);  // Col 6
+  dashboardSheet.setColumnWidth(9, 100);  // Col 7
+  dashboardSheet.setColumnWidth(10, 100); // Col 8
   
-  // Set default fonts and size for Dashboard
-  dashboardSheet.getRange("A1:K100").setFontFamily("Inter");
+  dashboardSheet.getRange("A1:K100").setFontFamily("Segoe UI");
   
-  // 2. Main Executive Header Banner
+  // Executive Header Banner
   var headerRange = dashboardSheet.getRange("B2:J4");
   headerRange.merge();
-  headerRange.setValue("⚡ EXECUTIVE WAREHOUSE REGISTRY & CONTROL SYSTEM\nReal-Time Executive Operations Platform | Live Assembly & Inventory ledger");
-  headerRange.setBackground("#0F172A") // Slate 900
+  headerRange.setValue("⚡ SENZO EXECUTIVE WAREHOUSE & OPERATIONS CONTROL CENTER\nReal-Time Executive Platform | Orders, Sales Leaderboard & Worker Performance");
+  headerRange.setBackground("#0F172A")
              .setFontColor("#FFFFFF")
              .setFontSize(13)
              .setFontWeight("bold")
              .setHorizontalAlignment("left")
              .setVerticalAlignment("middle")
-             .setWrap(true)
-             .setBorder(true, true, true, true, false, false, "#0F172A", SpreadsheetApp.BorderStyle.SOLID);
+             .setWrap(true);
   
-  // 3. Draw Beautiful KPI Cards (3 columns wide cards with distinct styling)
-  drawKPICard(dashboardSheet, "B6:C6", "B7:C8", "ASSEMBLIES REGISTERED", totalAssembled, "#F1F5F9", "#1E293B"); // Slate Theme
-  drawKPICard(dashboardSheet, "E6:F6", "E7:F8", "AVAILABLE WAREHOUSE STOCK", availableStock, "#E0F2FE", "#0369A1"); // Sky Blue Theme
-  drawKPICard(dashboardSheet, "H6:I6", "H7:I8", "DISPATCHED / SOLD UNITS", totalSold, "#D1FAE5", "#047857"); // Green Theme
+  // KPI Cards
+  drawKPICard(dashboardSheet, "B6:C6", "B7:C8", "ASSEMBLIES REGISTERED", totalAssembled, "#F1F5F9", "#1E293B");
+  drawKPICard(dashboardSheet, "E6:F6", "E7:F8", "AVAILABLE WAREHOUSE STOCK", availableStock, "#E0F2FE", "#0369A1");
+  drawKPICard(dashboardSheet, "H6:I6", "H7:I8", "TOTAL DISPATCHED / SOLD", totalSold, "#D1FAE5", "#047857");
   
-  // 4. Summary Table - Key Operational Metrics
-  var summaryTitle = dashboardSheet.getRange("B10:C10");
-  summaryTitle.merge();
-  summaryTitle.setValue("EXECUTIVE PERFORMANCE INDICATORS");
-  summaryTitle.setBackground("#334155") // Slate 700
-              .setFontColor("#FFFFFF")
-              .setFontSize(9)
-              .setFontWeight("bold")
-              .setHorizontalAlignment("center")
-              .setVerticalAlignment("middle");
+  // 1. Sales Performance Summary Table (Who Sold How Much)
+  var salesTitle = dashboardSheet.getRange("B10:C10");
+  salesTitle.merge();
+  salesTitle.setValue("🏆 SALESPERSON PERFORMANCE LEADERBOARD");
+  salesTitle.setBackground("#1E293B").setFontColor("#FFFFFF").setFontSize(9).setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
   dashboardSheet.setRowHeight(10, 26);
   
-  var summaryStats = data.summaryStats || [];
-  if (summaryStats.length === 0) {
-    // Generate default fallback stats if empty
-    summaryStats = [
-      { metric: "Total Raw Imported Logs", value: totalImported, description: "Total generic incoming stock logs" },
-      { metric: "Completed Assemblies", value: totalAssembled, description: "Frames with unique serials assigned" },
-      { metric: "Units Available on Floor", value: availableStock, description: "Physical finished units available" },
-      { metric: "Units On Hold / Reserved", value: totalHold, description: "Units allocated for pre-orders" },
-      { metric: "Unassembled Inventory Left", value: Math.max(0, totalImported - totalAssembled), description: "Stock awaiting assembly line" }
-    ];
-  }
+  var salesMap = computeSalespersonPerformance(data);
+  var salesList = Object.keys(salesMap).map(function(k) { return salesMap[k]; });
+  salesList.sort(function(a, b) { return b.totalSold - a.totalSold; });
   
-  // Write Summary Table rows
   var curRow = 11;
-  for (var i = 0; i < summaryStats.length; i++) {
-    dashboardSheet.getRange(curRow, 2).setValue(summaryStats[i].metric).setFontWeight("bold").setFontSize(9).setFontColor("#475569");
-    dashboardSheet.getRange(curRow, 3).setValue(summaryStats[i].value).setFontWeight("bold").setFontSize(10).setFontColor("#0F172A").setHorizontalAlignment("right");
-    
-    // Formatting currency where appropriate
-    if (summaryStats[i].metric.indexOf("Price") !== -1 || summaryStats[i].metric.indexOf("Revenue") !== -1 || summaryStats[i].metric.indexOf("Valuation") !== -1) {
-      dashboardSheet.getRange(curRow, 3).setNumberFormat("$#,##0.00");
-    }
-    
-    // Zebra background styling for key metrics
-    var bg = (curRow % 2 === 0) ? "#FFFFFF" : "#F8FAFC";
-    dashboardSheet.getRange(curRow, 2, 1, 2).setBackground(bg).setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
-    dashboardSheet.setRowHeight(curRow, 22);
+  dashboardSheet.getRange(curRow, 2).setValue("Salesperson").setFontWeight("bold").setFontSize(8).setBackground("#334155").setFontColor("#FFF");
+  dashboardSheet.getRange(curRow, 3).setValue("Units Sold").setFontWeight("bold").setFontSize(8).setBackground("#334155").setFontColor("#FFF").setHorizontalAlignment("right");
+  dashboardSheet.setRowHeight(curRow, 22);
+  curRow++;
+  
+  if (salesList.length === 0) {
+    dashboardSheet.getRange(curRow, 2).setValue("No sales recorded yet").setFontSize(9).setFontColor("#64748B");
+    dashboardSheet.getRange(curRow, 3).setValue(0).setFontSize(9).setHorizontalAlignment("right");
     curRow++;
+  } else {
+    for (var i = 0; i < Math.min(6, salesList.length); i++) {
+      dashboardSheet.getRange(curRow, 2).setValue(salesList[i].name).setFontWeight("bold").setFontSize(9).setFontColor("#334155");
+      dashboardSheet.getRange(curRow, 3).setValue(salesList[i].totalSold).setFontWeight("bold").setFontSize(10).setFontColor("#0F172A").setHorizontalAlignment("right");
+      var bg = (curRow % 2 === 0) ? "#FFFFFF" : "#F8FAFC";
+      dashboardSheet.getRange(curRow, 2, 1, 2).setBackground(bg).setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
+      dashboardSheet.setRowHeight(curRow, 22);
+      curRow++;
+    }
+  }
+
+  // 2. Worker Performance Summary Table (Which Worker Did How Much Work)
+  var workerTitleRow = curRow + 1;
+  var wTitle = dashboardSheet.getRange(workerTitleRow, 2, 1, 2);
+  wTitle.merge();
+  wTitle.setValue("🛠️ WORKER PRODUCTIVITY TRACKER");
+  wTitle.setBackground("#1E293B").setFontColor("#FFFFFF").setFontSize(9).setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
+  dashboardSheet.setRowHeight(workerTitleRow, 26);
+  
+  var workerMap = computeWorkerPerformance(data);
+  var workerList = Object.keys(workerMap).map(function(k) { return workerMap[k]; });
+  workerList.sort(function(a, b) { return b.totalTasks - a.totalTasks; });
+  
+  curRow = workerTitleRow + 1;
+  dashboardSheet.getRange(curRow, 2).setValue("Worker / Employee").setFontWeight("bold").setFontSize(8).setBackground("#334155").setFontColor("#FFF");
+  dashboardSheet.getRange(curRow, 3).setValue("Total Tasks").setFontWeight("bold").setFontSize(8).setBackground("#334155").setFontColor("#FFF").setHorizontalAlignment("right");
+  dashboardSheet.setRowHeight(curRow, 22);
+  curRow++;
+  
+  if (workerList.length === 0) {
+    dashboardSheet.getRange(curRow, 2).setValue("No worker activity logged").setFontSize(9).setFontColor("#64748B");
+    dashboardSheet.getRange(curRow, 3).setValue(0).setFontSize(9).setHorizontalAlignment("right");
+    curRow++;
+  } else {
+    for (var i = 0; i < Math.min(6, workerList.length); i++) {
+      dashboardSheet.getRange(curRow, 2).setValue(workerList[i].name).setFontWeight("bold").setFontSize(9).setFontColor("#334155");
+      dashboardSheet.getRange(curRow, 3).setValue(workerList[i].totalTasks).setFontWeight("bold").setFontSize(10).setFontColor("#0F172A").setHorizontalAlignment("right");
+      var bg = (curRow % 2 === 0) ? "#FFFFFF" : "#F8FAFC";
+      dashboardSheet.getRange(curRow, 2, 1, 2).setBackground(bg).setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
+      dashboardSheet.setRowHeight(curRow, 22);
+      curRow++;
+    }
   }
   
-  // 5. Stock breakdown table (Color & Models Breakdown)
+  // 3. Right Side: Stock Breakdown Table
   var breakdownTitle = dashboardSheet.getRange("E10:J10");
   breakdownTitle.merge();
   breakdownTitle.setValue("PRODUCT & COLOR CONFIGURATION BREAKDOWN");
-  breakdownTitle.setBackground("#334155") // Slate 700
-                .setFontColor("#FFFFFF")
-                .setFontSize(9)
-                .setFontWeight("bold")
-                .setHorizontalAlignment("center")
-                .setVerticalAlignment("middle");
-                
+  breakdownTitle.setBackground("#1E293B").setFontColor("#FFFFFF").setFontSize(9).setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
+  
   var breakdownHeaders = ["Model Name", "Color", "Available", "Sold", "Total Reg.", "Imported"];
   for (var b = 0; b < breakdownHeaders.length; b++) {
     var cell = dashboardSheet.getRange(11, 5 + b);
     cell.setValue(breakdownHeaders[b]);
-    cell.setBackground("#475569") // Slate 600
-        .setFontColor("#FFFFFF")
-        .setFontSize(8)
-        .setFontWeight("bold")
-        .setHorizontalAlignment("center")
-        .setVerticalAlignment("middle");
+    cell.setBackground("#334155").setFontColor("#FFFFFF").setFontSize(8).setFontWeight("bold").setHorizontalAlignment("center").setVerticalAlignment("middle");
   }
   dashboardSheet.setRowHeight(11, 22);
   
@@ -612,12 +767,224 @@ function rebuildExecutiveDashboard(doc, data) {
     
     var bg = (brRow % 2 === 0) ? "#FFFFFF" : "#F8FAFC";
     var rowRange = dashboardSheet.getRange(brRow, 5, 1, 6);
-    rowRange.setBackground(bg)
-            .setFontSize(9)
-            .setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
+    rowRange.setBackground(bg).setFontSize(9).setBorder(true, true, true, true, true, true, "#E2E8F0", SpreadsheetApp.BorderStyle.SOLID);
     dashboardSheet.setRowHeight(brRow, 22);
     brRow++;
   }
+}
+
+// Compute Salesperson Performance ("Who Sold How Much")
+function computeSalespersonPerformance(data) {
+  var map = {};
+  var salesOrders = data.salesOrders || [];
+  salesOrders.forEach(function(o) {
+    var name = o.salespersonName || o.salespersonUsername || "Sales Representative";
+    var username = o.salespersonUsername || "";
+    var key = name.toLowerCase().trim();
+    if (!map[key]) {
+      map[key] = { name: name, username: username, ordersCount: 0, scootersSold: 0, batterySold: 0, chargerSold: 0, totalSold: 0, latestDate: "" };
+    }
+    map[key].ordersCount++;
+    (o.items || []).forEach(function(it) {
+      var qty = Number(it.quantity || 1);
+      if (it.itemType === "scooter") map[key].scootersSold += qty;
+      else if (it.itemType === "battery") map[key].batterySold += qty;
+      else if (it.itemType === "charger") map[key].chargerSold += qty;
+      map[key].totalSold += qty;
+    });
+    var d = o.dispatchedTimestamp || o.createdTimestamp || "";
+    if (d > map[key].latestDate) map[key].latestDate = d;
+  });
+
+  // Include direct scooter sales
+  (data.scooterUnits || []).forEach(function(s) {
+    if (s.status === "sold" && s.lastUpdatedBy) {
+      var name = s.lastUpdatedBy;
+      var key = name.toLowerCase().trim();
+      if (!map[key]) {
+        map[key] = { name: name, username: name, ordersCount: 1, scootersSold: 1, batterySold: 0, chargerSold: 0, totalSold: 1, latestDate: s.lastUpdatedTimestamp || "" };
+      }
+    }
+  });
+
+  return map;
+}
+
+// Build dedicated Sales Performance tab for the Owner
+function rebuildSalesPerformanceSheet(doc, data) {
+  var sheet = getOrCreateSheet(doc, "SalesPerformance", ["Salesperson Name", "Username", "Orders Placed", "Scooters Sold", "Battery Packs Sold", "Chargers Sold", "Total Items Sold", "Latest Sale Date"]);
+  sheet.clearContents();
+  sheet.appendRow(["Salesperson Name", "Username", "Orders Placed", "Scooters Sold", "Battery Packs Sold", "Chargers Sold", "Total Items Sold", "Latest Sale Date"]);
+
+  var salesMap = computeSalespersonPerformance(data);
+  var salesList = Object.keys(salesMap).map(function(k) { return salesMap[k]; });
+  salesList.sort(function(a, b) { return b.totalSold - a.totalSold; });
+
+  salesList.forEach(function(sp) {
+    sheet.appendRow([
+      sp.name,
+      sp.username,
+      sp.ordersCount,
+      sp.scootersSold,
+      sp.batterySold,
+      sp.chargerSold,
+      sp.totalSold,
+      sp.latestDate
+    ]);
+  });
+
+  applyProfessionalFormatting(sheet, true, 0);
+}
+
+// Compute Worker Performance ("Which Worker Is Doing How Much Work")
+function computeWorkerPerformance(data) {
+  var map = {};
+
+  function ensureWorker(name, uname) {
+    var clean = (name || uname || "Worker").trim();
+    if (!clean || clean.toLowerCase() === "system") return null;
+    var key = clean.toLowerCase();
+    if (!map[key]) {
+      map[key] = {
+        name: clean,
+        username: uname || clean,
+        assemblies: 0,
+        customizations: 0,
+        dispatches: 0,
+        batteryChargerOps: 0,
+        warrantyClaims: 0,
+        auditActions: 0,
+        totalTasks: 0,
+        lastActive: ""
+      };
+    }
+    return map[key];
+  }
+
+  // 1. Stage 1 Assemblies & Stage 2 Customizations from ScooterUnits
+  (data.scooterUnits || []).forEach(function(s) {
+    if (s.createdOperator) {
+      var w = ensureWorker(s.createdOperator, s.createdOperator);
+      if (w) {
+        w.assemblies++;
+        w.totalTasks++;
+      }
+    }
+    if (s.preparedBy || (s.lastUpdatedBy && s.lastUpdatedBy !== s.createdOperator)) {
+      var name = s.preparedBy || s.lastUpdatedBy;
+      var w = ensureWorker(name, name);
+      if (w) {
+        w.customizations++;
+        w.totalTasks++;
+        if (s.lastUpdatedTimestamp > w.lastActive) w.lastActive = s.lastUpdatedTimestamp;
+      }
+    }
+  });
+
+  // 2. Sales Orders Preparation & Dispatches
+  (data.salesOrders || []).forEach(function(o) {
+    if (o.preparedBy) {
+      var w = ensureWorker(o.preparedBy, o.preparedBy);
+      if (w) {
+        w.dispatches++;
+        w.totalTasks++;
+        if (o.preparedTimestamp > w.lastActive) w.lastActive = o.preparedTimestamp;
+      }
+    }
+    if (o.dispatchedBy) {
+      var w = ensureWorker(o.dispatchedBy, o.dispatchedBy);
+      if (w) {
+        w.dispatches++;
+        w.totalTasks++;
+        if (o.dispatchedTimestamp > w.lastActive) w.lastActive = o.dispatchedTimestamp;
+      }
+    }
+    if (o.challanFinishedBy) {
+      var w = ensureWorker(o.challanFinishedBy, o.challanFinishedBy);
+      if (w) {
+        w.dispatches++;
+        w.totalTasks++;
+        if (o.challanFinishedTimestamp > w.lastActive) w.lastActive = o.challanFinishedTimestamp;
+      }
+    }
+  });
+
+  // 3. Battery & Charger Sales/Imports
+  (data.batterySales || []).forEach(function(b) {
+    if (b.operator) {
+      var w = ensureWorker(b.operator, b.operator);
+      if (w) {
+        w.batteryChargerOps++;
+        w.totalTasks++;
+        if (b.saleDate > w.lastActive) w.lastActive = b.saleDate;
+      }
+    }
+  });
+  (data.batteryImports || []).forEach(function(b) {
+    if (b.operator) {
+      var w = ensureWorker(b.operator, b.operator);
+      if (w) {
+        w.batteryChargerOps++;
+        w.totalTasks++;
+        if (b.importDate > w.lastActive) w.lastActive = b.importDate;
+      }
+    }
+  });
+
+  // 4. Warranty Claims
+  (data.warrantyClaims || []).forEach(function(c) {
+    if (c.operatorName || c.operatorUsername) {
+      var name = c.operatorName || c.operatorUsername;
+      var w = ensureWorker(name, c.operatorUsername);
+      if (w) {
+        w.warrantyClaims++;
+        w.totalTasks++;
+        if (c.claimDate > w.lastActive) w.lastActive = c.claimDate;
+      }
+    }
+  });
+
+  // 5. Audit Trail Actions
+  (data.auditLogs || []).forEach(function(a) {
+    if (a.operatorName || a.username) {
+      var name = a.operatorName || a.username;
+      var w = ensureWorker(name, a.username);
+      if (w) {
+        w.auditActions++;
+        if (a.timestamp > w.lastActive) w.lastActive = a.timestamp;
+      }
+    }
+  });
+
+  return map;
+}
+
+// Build dedicated Employee Performance tab for the Owner
+function rebuildEmployeePerformanceSheet(doc, data) {
+  var sheet = getOrCreateSheet(doc, "EmployeePerformance", ["Worker / Operator Name", "System Username", "Stage 1 Assemblies", "Stage 2 Customizations", "Dispatches Handled", "Battery/Charger Ops", "Warranty Claims", "Total Audit Actions", "Total Work Output", "Last Active Date"]);
+  sheet.clearContents();
+  sheet.appendRow(["Worker / Operator Name", "System Username", "Stage 1 Assemblies", "Stage 2 Customizations", "Dispatches Handled", "Battery/Charger Ops", "Warranty Claims", "Total Audit Actions", "Total Work Output", "Last Active Date"]);
+
+  var workerMap = computeWorkerPerformance(data);
+  var workerList = Object.keys(workerMap).map(function(k) { return workerMap[k]; });
+  workerList.sort(function(a, b) { return b.totalTasks - a.totalTasks; });
+
+  workerList.forEach(function(w) {
+    sheet.appendRow([
+      w.name,
+      w.username,
+      w.assemblies,
+      w.customizations,
+      w.dispatches,
+      w.batteryChargerOps,
+      w.warrantyClaims,
+      w.auditActions,
+      w.totalTasks,
+      w.lastActive
+    ]);
+  });
+
+  applyProfessionalFormatting(sheet, true, 0);
 }
 
 function drawKPICard(sheet, titleCellRange, valueCellRange, titleText, valueVal, themeColor, textCol) {
@@ -625,13 +992,13 @@ function drawKPICard(sheet, titleCellRange, valueCellRange, titleText, valueVal,
   tRange.merge();
   tRange.setValue(titleText);
   tRange.setBackground(themeColor);
-  tRange.setFontSize(8).setFontWeight("bold").setFontColor(textCol).setFontFamily("Inter").setHorizontalAlignment("center").setVerticalAlignment("middle");
+  tRange.setFontSize(8).setFontWeight("bold").setFontColor(textCol).setFontFamily("Segoe UI").setHorizontalAlignment("center").setVerticalAlignment("middle");
   
   var vRange = sheet.getRange(valueCellRange);
   vRange.merge();
   vRange.setValue(valueVal);
   vRange.setBackground(themeColor);
-  vRange.setFontSize(20).setFontWeight("bold").setFontColor(textCol).setFontFamily("Inter").setHorizontalAlignment("center").setVerticalAlignment("middle");
+  vRange.setFontSize(20).setFontWeight("bold").setFontColor(textCol).setFontFamily("Segoe UI").setHorizontalAlignment("center").setVerticalAlignment("middle");
   
   var startColChar = titleCellRange.split(":")[0].charAt(0);
   var startRow = titleCellRange.split(":")[0].substring(1);

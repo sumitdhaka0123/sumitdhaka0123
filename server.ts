@@ -1,5 +1,5 @@
 import express from 'express';
-import cors from 'cors';
+import { google } from 'googleapis';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
@@ -18,7 +18,6 @@ function hashPassword(password: string): string {
 }
 
 const app = express();
-app.use(cors());
 const PORT = 3000;
 const DB_FILE = path.join(process.cwd(), 'warehouse_db.json');
 
@@ -672,61 +671,70 @@ async function syncCollectionArray<T extends { id: string }>(
   oldList: T[] | undefined
 ) {
   if (!firebaseDb) return;
-  const newArr = newList || [];
-  const oldArr = oldList || [];
+  try {
+    const newArr = newList || [];
+    const oldArr = oldList || [];
 
-  const oldMap = new Map<string, T>();
-  oldArr.forEach(item => {
-    if (item.id) oldMap.set(item.id, item);
-  });
+    const oldMap = new Map<string, T>();
+    oldArr.forEach(item => {
+      if (item.id) oldMap.set(item.id, item);
+    });
 
-  const changedItems: T[] = [];
-  newArr.forEach(item => {
-    if (!item.id) return;
-    const oldItem = oldMap.get(item.id);
-    if (!oldItem || JSON.stringify(item) !== JSON.stringify(oldItem)) {
-      changedItems.push(item);
-    }
-  });
+    const changedItems: T[] = [];
+    newArr.forEach(item => {
+      if (!item.id) return;
+      const oldItem = oldMap.get(item.id);
+      if (!oldItem || JSON.stringify(item) !== JSON.stringify(oldItem)) {
+        changedItems.push(item);
+      }
+    });
 
-  const newIds = new Set(newArr.map(item => item.id).filter(Boolean));
-  const deletedIds: string[] = [];
-  oldArr.forEach(item => {
-    if (item.id && !newIds.has(item.id)) {
-      deletedIds.push(item.id);
-    }
-  });
+    const newIds = new Set(newArr.map(item => item.id).filter(Boolean));
+    const deletedIds: string[] = [];
+    oldArr.forEach(item => {
+      if (item.id && !newIds.has(item.id)) {
+        deletedIds.push(item.id);
+      }
+    });
 
-  if (changedItems.length > 0 || deletedIds.length > 0) {
-    console.log(`[Firestore Sync] Collection ${collectionName}: ${changedItems.length} changed, ${deletedIds.length} deleted.`);
-    
-    let batch = writeBatch(firebaseDb);
-    let count = 0;
+    if (changedItems.length > 0 || deletedIds.length > 0) {
+      console.log(`[Firestore Sync] Collection ${collectionName}: ${changedItems.length} changed, ${deletedIds.length} deleted.`);
+      
+      let batch = writeBatch(firebaseDb);
+      let count = 0;
 
-    for (const item of changedItems) {
-      const docRef = doc(firebaseDb, collectionName, item.id);
-      batch.set(docRef, item, { merge: true });
-      count++;
-      if (count >= 500) {
+      for (const item of changedItems) {
+        const docRef = doc(firebaseDb, collectionName, item.id);
+        batch.set(docRef, item, { merge: true });
+        count++;
+        if (count >= 500) {
+          await batch.commit();
+          batch = writeBatch(firebaseDb);
+          count = 0;
+        }
+      }
+
+      for (const id of deletedIds) {
+        const docRef = doc(firebaseDb, collectionName, id);
+        batch.delete(docRef);
+        count++;
+        if (count >= 500) {
+          await batch.commit();
+          batch = writeBatch(firebaseDb);
+          count = 0;
+        }
+      }
+
+      if (count > 0) {
         await batch.commit();
-        batch = writeBatch(firebaseDb);
-        count = 0;
       }
     }
-
-    for (const id of deletedIds) {
-      const docRef = doc(firebaseDb, collectionName, id);
-      batch.delete(docRef);
-      count++;
-      if (count >= 500) {
-        await batch.commit();
-        batch = writeBatch(firebaseDb);
-        count = 0;
-      }
-    }
-
-    if (count > 0) {
-      await batch.commit();
+  } catch (err: any) {
+    if (err && (String(err).includes('does not exist') || String(err).includes('NOT_FOUND') || String(err).includes('setup'))) {
+      console.warn(`Firestore collection sync failed (${collectionName}): database does not exist. Disabling Firestore sync.`);
+      firebaseDb = null;
+    } else {
+      console.warn(`Firestore collection sync warning (${collectionName}):`, err?.message || err);
     }
   }
 }
@@ -736,53 +744,62 @@ async function syncUsers(
   oldUsers: { [username: string]: any } | undefined
 ) {
   if (!firebaseDb) return;
-  const newMap = newUsers || {};
-  const oldMap = oldUsers || {};
+  try {
+    const newMap = newUsers || {};
+    const oldMap = oldUsers || {};
 
-  const changedUsers: { username: string; data: any }[] = [];
-  for (const [username, userData] of Object.entries(newMap)) {
-    const oldUserData = oldMap[username];
-    if (!oldUserData || JSON.stringify(userData) !== JSON.stringify(oldUserData)) {
-      changedUsers.push({ username, data: userData });
-    }
-  }
-
-  const deletedUsernames: string[] = [];
-  for (const username of Object.keys(oldMap)) {
-    if (!newMap[username]) {
-      deletedUsernames.push(username);
-    }
-  }
-
-  if (changedUsers.length > 0 || deletedUsernames.length > 0) {
-    console.log(`[Firestore Sync] Users: ${changedUsers.length} changed, ${deletedUsernames.length} deleted.`);
-    let batch = writeBatch(firebaseDb);
-    let count = 0;
-
-    for (const u of changedUsers) {
-      const docRef = doc(firebaseDb, 'users', u.username.toLowerCase());
-      batch.set(docRef, u.data, { merge: true });
-      count++;
-      if (count >= 500) {
-        await batch.commit();
-        batch = writeBatch(firebaseDb);
-        count = 0;
+    const changedUsers: { username: string; data: any }[] = [];
+    for (const [username, userData] of Object.entries(newMap)) {
+      const oldUserData = oldMap[username];
+      if (!oldUserData || JSON.stringify(userData) !== JSON.stringify(oldUserData)) {
+        changedUsers.push({ username, data: userData });
       }
     }
 
-    for (const username of deletedUsernames) {
-      const docRef = doc(firebaseDb, 'users', username.toLowerCase());
-      batch.delete(docRef);
-      count++;
-      if (count >= 500) {
-        await batch.commit();
-        batch = writeBatch(firebaseDb);
-        count = 0;
+    const deletedUsernames: string[] = [];
+    for (const username of Object.keys(oldMap)) {
+      if (!newMap[username]) {
+        deletedUsernames.push(username);
       }
     }
 
-    if (count > 0) {
-      await batch.commit();
+    if (changedUsers.length > 0 || deletedUsernames.length > 0) {
+      console.log(`[Firestore Sync] Users: ${changedUsers.length} changed, ${deletedUsernames.length} deleted.`);
+      let batch = writeBatch(firebaseDb);
+      let count = 0;
+
+      for (const u of changedUsers) {
+        const docRef = doc(firebaseDb, 'users', u.username.toLowerCase());
+        batch.set(docRef, u.data, { merge: true });
+        count++;
+        if (count >= 500) {
+          await batch.commit();
+          batch = writeBatch(firebaseDb);
+          count = 0;
+        }
+      }
+
+      for (const username of deletedUsernames) {
+        const docRef = doc(firebaseDb, 'users', username.toLowerCase());
+        batch.delete(docRef);
+        count++;
+        if (count >= 500) {
+          await batch.commit();
+          batch = writeBatch(firebaseDb);
+          count = 0;
+        }
+      }
+
+      if (count > 0) {
+        await batch.commit();
+      }
+    }
+  } catch (err: any) {
+    if (err && (String(err).includes('does not exist') || String(err).includes('NOT_FOUND') || String(err).includes('setup'))) {
+      console.warn('Firestore users sync failed: database does not exist. Disabling Firestore sync.');
+      firebaseDb = null;
+    } else {
+      console.warn('Firestore users sync warning:', err?.message || err);
     }
   }
 }
@@ -790,10 +807,17 @@ async function syncUsers(
 async function syncSheetConfig(newConfig: any, oldConfig: any) {
   if (!firebaseDb) return;
   if (!newConfig) return;
-  if (!oldConfig || JSON.stringify(newConfig) !== JSON.stringify(oldConfig)) {
-    console.log(`[Firestore Sync] config/sheetConfig updated.`);
-    const docRef = doc(firebaseDb, 'config', 'sheetConfig');
-    await setDoc(docRef, newConfig, { merge: true });
+  try {
+    if (!oldConfig || JSON.stringify(newConfig) !== JSON.stringify(oldConfig)) {
+      console.log(`[Firestore Sync] config/sheetConfig updated.`);
+      const docRef = doc(firebaseDb, 'config', 'sheetConfig');
+      await setDoc(docRef, newConfig, { merge: true });
+    }
+  } catch (err: any) {
+    if (err && (String(err).includes('does not exist') || String(err).includes('NOT_FOUND') || String(err).includes('setup'))) {
+      console.warn('Firestore sheetConfig sync failed: database does not exist. Disabling Firestore sync.');
+      firebaseDb = null;
+    }
   }
 }
 
@@ -807,12 +831,19 @@ async function syncLists(
   const changedBattery = !oldBatterySeries || JSON.stringify(newBatterySeries) !== JSON.stringify(oldBatterySeries);
   const changedCharger = !oldChargerTypes || JSON.stringify(newChargerTypes) !== JSON.stringify(oldChargerTypes);
   if (changedBattery || changedCharger) {
-    console.log(`[Firestore Sync] config/lists updated.`);
-    const docRef = doc(firebaseDb, 'config', 'lists');
-    await setDoc(docRef, {
-      batterySeriesList: newBatterySeries || [],
-      chargerTypeList: newChargerTypes || []
-    }, { merge: true });
+    try {
+      console.log(`[Firestore Sync] config/lists updated.`);
+      const docRef = doc(firebaseDb, 'config', 'lists');
+      await setDoc(docRef, {
+        batterySeriesList: newBatterySeries || [],
+        chargerTypeList: newChargerTypes || []
+      }, { merge: true });
+    } catch (err: any) {
+      if (err && (String(err).includes('does not exist') || String(err).includes('NOT_FOUND') || String(err).includes('setup'))) {
+        console.warn('Firestore lists sync failed: database does not exist. Disabling Firestore sync.');
+        firebaseDb = null;
+      }
+    }
   }
 }
 
@@ -839,25 +870,42 @@ async function syncToFirestore(state: DBState, oldState: DBState | null) {
     };
 
     await syncUsers(state.users, baseState.users);
+    if (!firebaseDb) return;
     await syncCollectionArray('products', state.products, baseState.products);
+    if (!firebaseDb) return;
     await syncCollectionArray('buyers', state.buyers, baseState.buyers);
+    if (!firebaseDb) return;
     await syncCollectionArray('scooterUnits', state.scooterUnits, baseState.scooterUnits);
+    if (!firebaseDb) return;
     await syncCollectionArray('stockLogs', state.stockLogs, baseState.stockLogs);
+    if (!firebaseDb) return;
     await syncCollectionArray('batterySales', state.batterySales, baseState.batterySales);
+    if (!firebaseDb) return;
     await syncCollectionArray('batteryImports', state.batteryImports, baseState.batteryImports);
+    if (!firebaseDb) return;
     await syncCollectionArray('chargerSales', state.chargerSales, baseState.chargerSales);
+    if (!firebaseDb) return;
     await syncCollectionArray('chargerImports', state.chargerImports, baseState.chargerImports);
+    if (!firebaseDb) return;
     await syncCollectionArray('auditLogs', state.auditLogs, baseState.auditLogs);
+    if (!firebaseDb) return;
     await syncCollectionArray('warrantyClaims', state.warrantyClaims, baseState.warrantyClaims);
+    if (!firebaseDb) return;
     await syncSheetConfig(state.sheetConfig, baseState.sheetConfig);
+    if (!firebaseDb) return;
     await syncLists(
       state.batterySeriesList,
       baseState.batterySeriesList,
       state.chargerTypeList,
       baseState.chargerTypeList
     );
-  } catch (error) {
-    console.error('Error during Firestore background sync:', error);
+  } catch (error: any) {
+    if (error && (String(error).includes('does not exist') || String(error).includes('NOT_FOUND') || String(error).includes('setup'))) {
+      console.warn('Firestore sync failed because database does not exist. Disabling Firestore sync.');
+      firebaseDb = null;
+    } else {
+      console.error('Error during Firestore background sync:', error?.message || error);
+    }
   }
 }
 
@@ -947,8 +995,13 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
     };
 
     return finalState;
-  } catch (error) {
-    console.error('Error hydrating database from Firestore:', error);
+  } catch (error: any) {
+    if (error && (String(error).includes('does not exist') || String(error).includes('NOT_FOUND') || String(error).includes('setup'))) {
+      console.warn('Firestore database does not exist for this project. Disabling Firestore sync and continuing with local storage mode.');
+      firebaseDb = null;
+    } else {
+      console.warn('Firestore hydration failed or unavailable, continuing with local storage mode:', error?.message || error);
+    }
     return null;
   }
 }
@@ -1035,16 +1088,8 @@ function writeDB(state: DBState) {
   const oldState = globalDBState ? JSON.parse(JSON.stringify(globalDBState)) : null;
   globalDBState = state;
   try {
-    const tempFile = `${DB_FILE}.tmp`;
-    const data = JSON.stringify(state, null, 2);
-    fs.writeFile(tempFile, data, 'utf8', (err) => {
-      if (err) {
-        console.error('Error writing temp database file:', err);
-        return;
-      }
-      fs.rename(tempFile, DB_FILE, (renameErr) => {
-        if (renameErr) console.error('Error renaming temp database file:', renameErr);
-      });
+    fs.writeFile(DB_FILE, JSON.stringify(state, null, 2), 'utf8', (err) => {
+      if (err) console.error('Error writing backup database file:', err);
     });
     // Trigger automated rolling 14-day backup check
     checkAutoBackupTrigger(state);
@@ -1824,7 +1869,7 @@ app.post('/api/auth/login', authIpRateLimiter, validateBody(loginSchema), (req, 
       return res.status(401).json({ error: 'This account is locked. Please contact the warehouse owner to unlock it.' });
     }
 
-    if (user.passwordHash !== password) {
+    if (user.passwordHash !== hashPassword(password)) {
       // Record failed attempt to trigger/increase exponential backoff
       recordAuthFailure(normalizedUserKey);
 
@@ -4606,8 +4651,19 @@ app.post('/api/sheet-config/sync-all', validateBody(emptySchema), async (req, re
       buyers: db.buyers,
       scooterUnits: db.scooterUnits,
       stockLogs: db.stockLogs,
+      salesOrders: db.salesOrders || [],
       batterySales: db.batterySales || [],
       batteryImports: db.batteryImports || [],
+      chargerSales: db.chargerSales || [],
+      chargerImports: db.chargerImports || [],
+      warrantyClaims: db.warrantyClaims || [],
+      auditLogs: db.auditLogs || [],
+      users: (db.users ? Object.values(db.users) : []).map((u: any) => ({
+        username: u.username,
+        name: u.name,
+        role: u.role,
+        approved: u.approved
+      })),
       ...getSummaryData(db)
     }
   };
@@ -4647,6 +4703,18 @@ app.post('/api/sheet-config/pull-all', validateBody(emptySchema), async (req, re
     }
     if (data.batteryImports && Array.isArray(data.batteryImports) && data.batteryImports.length > 0) {
       db.batteryImports = data.batteryImports;
+    }
+    if (data.salesOrders && Array.isArray(data.salesOrders) && data.salesOrders.length > 0) {
+      db.salesOrders = data.salesOrders;
+    }
+    if (data.chargerSales && Array.isArray(data.chargerSales) && data.chargerSales.length > 0) {
+      db.chargerSales = data.chargerSales;
+    }
+    if (data.chargerImports && Array.isArray(data.chargerImports) && data.chargerImports.length > 0) {
+      db.chargerImports = data.chargerImports;
+    }
+    if (data.warrantyClaims && Array.isArray(data.warrantyClaims) && data.warrantyClaims.length > 0) {
+      db.warrantyClaims = data.warrantyClaims;
     }
 
     db.sheetConfig.webhookUrl = webhookUrl;
@@ -5426,7 +5494,211 @@ async function startServer() {
   // Initialize local DB cache synchronously first so server is instantly ready
   globalDBState = readDBFromFile();
 
+
+// ==========================================
+// GOOGLE DRIVE CLOUD BACKUP ROUTES
+// ==========================================
+
+const getDriveAuth = (db) => {
+  const config = db.driveConfig || {};
+  return new google.auth.OAuth2(
+    config.clientId,
+    config.clientSecret,
+    (process.env.APP_URL || 'http://localhost:3000') + '/api/drive/callback'
+  );
+};
+
+app.get('/api/drive-config', (req, res) => {
+  const db = readDB();
+  const config = db.driveConfig || { clientId: '', clientSecret: '', refreshToken: '', connectedEmail: '', autoSync: false, folderId: '' };
+  res.json({
+    clientId: config.clientId,
+    connectedEmail: config.connectedEmail,
+    autoSync: config.autoSync
+  });
+});
+
+app.post('/api/drive-config', (req, res) => {
+  const db = readDB();
+  const { clientId, clientSecret, autoSync } = req.body;
+  if (!db.driveConfig) db.driveConfig = { clientId: '', clientSecret: '', refreshToken: '', connectedEmail: '', autoSync: false, folderId: '' };
+  
+  if (clientId !== undefined) db.driveConfig.clientId = clientId.trim();
+  if (clientSecret !== undefined) db.driveConfig.clientSecret = clientSecret.trim();
+  if (autoSync !== undefined) db.driveConfig.autoSync = !!autoSync;
+  
+  writeDB(db);
+  res.json({ success: true });
+});
+
+app.get('/api/drive/auth-url', (req, res) => {
+  const db = readDB();
+  if (!db.driveConfig?.clientId || !db.driveConfig?.clientSecret) {
+    return res.status(400).json({ error: 'Please configure Google OAuth Client ID and Secret first.' });
+  }
+  const oauth2Client = getDriveAuth(db);
+  const url = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent select_account',
+    scope: ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/userinfo.email']
+  });
+  res.json({ url });
+});
+
+app.post('/api/drive/callback', async (req, res) => {
+  const { code } = req.body;
+  const db = readDB();
+  try {
+    const oauth2Client = getDriveAuth(db);
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+    
+    const oauth2 = google.oauth2({ auth: oauth2Client, version: 'v2' });
+    const userInfo = await oauth2.userinfo.get();
+    
+    if (!db.driveConfig) db.driveConfig = { clientId: '', clientSecret: '', refreshToken: '', connectedEmail: '', autoSync: false, folderId: '' };
+    db.driveConfig.refreshToken = tokens.refresh_token || db.driveConfig.refreshToken;
+    db.driveConfig.connectedEmail = userInfo.data.email || 'Unknown Email';
+    
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    const q = "mimeType='application/vnd.google-apps.folder' and name='Inventory_Database_Backups' and trashed=false";
+    const { data: { files } } = await drive.files.list({ q, fields: 'files(id, name)' });
+    
+    if (files && files.length > 0) {
+      db.driveConfig.folderId = files[0].id;
+    } else {
+      const folderMetadata = { name: 'Inventory_Database_Backups', mimeType: 'application/vnd.google-apps.folder' };
+      const folder = await drive.files.create({ resource: folderMetadata, fields: 'id' });
+      db.driveConfig.folderId = folder.data.id;
+    }
+    
+    writeDB(db);
+    res.json({ success: true, email: db.driveConfig.connectedEmail });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/drive/disconnect', (req, res) => {
+  const db = readDB();
+  if (db.driveConfig) {
+    db.driveConfig.refreshToken = '';
+    db.driveConfig.connectedEmail = '';
+    writeDB(db);
+  }
+  res.json({ success: true });
+});
+
+async function uploadToDrive(db, backupItem, filePath) {
+  if (!db.driveConfig?.refreshToken || !db.driveConfig?.folderId) return false;
+  try {
+    const oauth2Client = getDriveAuth(db);
+    oauth2Client.setCredentials({ refresh_token: db.driveConfig.refreshToken });
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    
+    const fileMetadata = { name: backupItem.filename, parents: [db.driveConfig.folderId] };
+    const media = { mimeType: 'application/json', body: fs.createReadStream(filePath) };
+    
+    await drive.files.create({ resource: fileMetadata, media: media, fields: 'id' });
+    return true;
+  } catch (error) {
+    console.error('Drive Upload Error:', error);
+    return false;
+  }
+}
+
+// Modify existing create backup to hook into uploadToDrive if autoSync is enabled
+app.post('/api/backups/drive/sync', async (req, res) => {
+  const db = readDB();
+  if (!db.driveConfig?.refreshToken) return res.status(400).json({ error: 'Google Drive is not connected.' });
+  
+  const timestamp = new Date();
+  const safeDateString = timestamp.toISOString().replace(/[:.]/g, '-');
+  const filename = `backup-manual-${safeDateString}.json`;
+  const backupPath = path.join(process.cwd(), 'backups', filename);
+  
+  if (!fs.existsSync(path.join(process.cwd(), 'backups'))) fs.mkdirSync(path.join(process.cwd(), 'backups'), { recursive: true });
+  fs.writeFileSync(backupPath, JSON.stringify(db, null, 2), 'utf8');
+  
+  const stats = fs.statSync(backupPath);
+  const backupItem = {
+    filename,
+    createdTimestamp: timestamp.toISOString(),
+    sizeBytes: stats.size,
+    isAuto: false,
+    label: 'Manual Drive Sync',
+    counts: { scooterUnits: db.scooterUnits?.length || 0, salesOrders: db.salesOrders?.length || 0, buyers: db.buyers?.length || 0, products: db.products?.length || 0, warrantyClaims: db.warrantyClaims?.length || 0, batterySales: db.batterySales?.length || 0, chargerSales: db.chargerSales?.length || 0, stockLogs: db.stockLogs?.length || 0 }
+  };
+  
+  const success = await uploadToDrive(db, backupItem, backupPath);
+  if (success) {
+    res.json({ success: true, message: 'Snapshot created and synced to Google Drive.' });
+  } else {
+    res.status(500).json({ error: 'Failed to upload to Google Drive.' });
+  }
+});
+
+app.get('/api/backups/drive/list', async (req, res) => {
+  const db = readDB();
+  if (!db.driveConfig?.refreshToken || !db.driveConfig?.folderId) return res.status(400).json({ error: 'Google Drive is not connected.' });
+  
+  try {
+    const oauth2Client = getDriveAuth(db);
+    oauth2Client.setCredentials({ refresh_token: db.driveConfig.refreshToken });
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    
+    const response = await drive.files.list({
+      q: `'${db.driveConfig.folderId}' in parents and trashed=false`,
+      fields: 'files(id, name, createdTime, size, webViewLink)',
+      orderBy: 'createdTime desc'
+    });
+    
+    res.json({ files: response.data.files });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/backups/drive/restore', async (req, res) => {
+  const { fileId } = req.body;
+  const db = readDB();
+  
+  if (!db.driveConfig?.refreshToken) return res.status(400).json({ error: 'Google Drive is not connected.' });
+  
+  try {
+    const oauth2Client = getDriveAuth(db);
+    oauth2Client.setCredentials({ refresh_token: db.driveConfig.refreshToken });
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    
+    const timestamp = new Date();
+    const safeDateString = timestamp.toISOString().replace(/[:.]/g, '-');
+    const safetyFilename = `backup-safety-pre-restore-${safeDateString}.json`;
+    const safetyPath = path.join(process.cwd(), 'backups', safetyFilename);
+    if (!fs.existsSync(path.join(process.cwd(), 'backups'))) fs.mkdirSync(path.join(process.cwd(), 'backups'), { recursive: true });
+    fs.writeFileSync(safetyPath, JSON.stringify(db, null, 2), 'utf8');
+    
+    const response = await drive.files.get({ fileId: fileId, alt: 'media' }, { responseType: 'stream' });
+    
+    let dbData = '';
+    response.data.on('data', chunk => dbData += chunk);
+    response.data.on('end', () => {
+      try {
+        const parsed = JSON.parse(dbData);
+        parsed.driveConfig = db.driveConfig;
+        parsed.sheetConfig = db.sheetConfig;
+        writeDB(parsed);
+        res.json({ success: true, message: 'Database successfully restored from Google Drive.' });
+      } catch (e) {
+        res.status(500).json({ error: 'Downloaded file was not valid JSON.' });
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
   if (process.env.NODE_ENV !== 'production') {
+
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

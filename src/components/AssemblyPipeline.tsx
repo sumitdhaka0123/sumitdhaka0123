@@ -1,3 +1,4 @@
+import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -79,6 +80,7 @@ interface AssemblyPipelineProps {
   onFinalizeChargerHold?: (id: string) => Promise<boolean>;
   onSelectDetailScooter?: (scooter: ScooterUnit) => void;
   onShowMobileNotification?: (message: string) => void;
+  initialTab?: 'stage1' | 'stage3' | 'stage2';
 }
 
 export default function AssemblyPipeline({ 
@@ -104,7 +106,8 @@ export default function AssemblyPipeline({
   onReleaseChargerHold,
   onFinalizeChargerHold,
   onSelectDetailScooter,
-  onShowMobileNotification
+  onShowMobileNotification,
+  initialTab
 }: AssemblyPipelineProps) {
   
   // Helper to pre-calculate default future dates
@@ -136,11 +139,19 @@ export default function AssemblyPipeline({
 
   // Nav tabs: Stage 1 (Production), Stage 3 (Sell / POS), Stage 2 (Optional Retrofit)
   const [activeStepTab, setActiveStepTab] = useState<'stage1' | 'stage3' | 'stage2'>(
-    currentUser.role === 'salesperson' ? 'stage3' : 'stage1'
+    initialTab || (currentUser.role === 'salesperson' ? 'stage3' : 'stage1')
   );
 
+  useEffect(() => {
+    if (initialTab) {
+      setActiveStepTab(initialTab);
+    }
+  }, [initialTab]);
+
   // Sub-navigation inside Stage 3 (Sell) tab: B2B Sales Orders (Salesman Terminal) vs Retail POS
-  const [sellTabMode, setSellTabMode] = useState<'b2b' | 'retail'>('b2b');
+  const [sellTabMode, setSellTabMode] = useState<'b2b' | 'retail'>(
+    currentUser.role === 'salesperson' ? 'retail' : 'b2b'
+  );
 
 
   
@@ -159,20 +170,34 @@ export default function AssemblyPipeline({
   const [tireFilter, setTireFilter] = useState<'all' | '10-inch' | '12-inch'>('all');
   const [registryViewMode, setRegistryViewMode] = useState<'list' | 'grid' | 'board'>('list');
 
-  // --- STAGE 1A FORM STATE: CORE FRAME ASSEMBLY ---
-  const [s1Model, setS1Model] = useState('');
-  const [s1Color, setS1Color] = useState('');
-  const [s1Chassis, setS1Chassis] = useState('');
-  const [s1Motor, setS1Motor] = useState('');
-  const [s1Controller, setS1Controller] = useState('');
-  const [s1FrontTireSize, setS1FrontTireSize] = useState<'10-inch' | '12-inch'>('12-inch');
-  const [s1RearTireSize, setS1RearTireSize] = useState<'10-inch' | '12-inch'>('12-inch');
-  const [s1Source, setS1Source] = useState<'container_freight' | 'local_seller'>('container_freight');
+  // --- LOCAL DRAFT PERSISTENCE MECHANISM ---
+  // Guarantees filled chassis, motor, and form data survive location checks, re-renders, and page refreshes
+  const initialDraft = React.useMemo(() => {
+    try {
+      const saved = localStorage.getItem('voltstock_assembly_draft_v2');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {}
+    return null;
+  }, []);
 
-  // Dynamic list of bulk scooter slots
-  const [s1BulkScooters, setS1BulkScooters] = useState<{ chassisNo: string; motorNo: string; controllerNo: string }[]>([
-    { chassisNo: '', motorNo: '', controllerNo: '' }
-  ]);
+  // --- STAGE 1A FORM STATE: CORE FRAME ASSEMBLY ---
+  const [s1Model, setS1Model] = useState<string>(initialDraft?.s1Model || '');
+  const [s1Color, setS1Color] = useState<string>(initialDraft?.s1Color || '');
+  const [s1Chassis, setS1Chassis] = useState<string>(initialDraft?.s1Chassis || '');
+  const [s1Motor, setS1Motor] = useState<string>(initialDraft?.s1Motor || '');
+  const [s1Controller, setS1Controller] = useState<string>(initialDraft?.s1Controller || '');
+  const [s1FrontTireSize, setS1FrontTireSize] = useState<'10-inch' | '12-inch'>(initialDraft?.s1FrontTireSize || '12-inch');
+  const [s1RearTireSize, setS1RearTireSize] = useState<'10-inch' | '12-inch'>(initialDraft?.s1RearTireSize || '12-inch');
+  const [s1Source, setS1Source] = useState<'container_freight' | 'local_seller'>(initialDraft?.s1Source || 'container_freight');
+
+  // Dynamic list of bulk scooter slots (persisted in draft)
+  const [s1BulkScooters, setS1BulkScooters] = useState<{ chassisNo: string; motorNo: string; controllerNo: string }[]>(
+    initialDraft?.s1BulkScooters && Array.isArray(initialDraft.s1BulkScooters) && initialDraft.s1BulkScooters.length > 0
+      ? initialDraft.s1BulkScooters
+      : [{ chassisNo: '', motorNo: '', controllerNo: '' }]
+  );
 
   const handleBulkScooterChange = (index: number, field: 'chassisNo' | 'motorNo' | 'controllerNo', value: string) => {
     const updated = [...s1BulkScooters];
@@ -209,11 +234,11 @@ export default function AssemblyPipeline({
 
   // --- STAGE 3 FORM STATE: SALES POS CHECKOUT ---
   const [selectedPOSScooterId, setSelectedPOSScooterId] = useState('');
-  const [s3BuyerName, setS3BuyerName] = useState('');
-  const [s3BuyerContact, setS3BuyerContact] = useState('');
-  const [s3BuyerAddress, setS3BuyerAddress] = useState('');
-  const [s3BillNo, setS3BillNo] = useState('');
-  const [s3DeliveryChallanNo, setS3DeliveryChallanNo] = useState('');
+  const [s3BuyerName, setS3BuyerName] = useState<string>(initialDraft?.s3BuyerName || '');
+  const [s3BuyerContact, setS3BuyerContact] = useState<string>(initialDraft?.s3BuyerContact || '');
+  const [s3BuyerAddress, setS3BuyerAddress] = useState<string>(initialDraft?.s3BuyerAddress || '');
+  const [s3BillNo, setS3BillNo] = useState<string>(initialDraft?.s3BillNo || '');
+  const [s3DeliveryChallanNo, setS3DeliveryChallanNo] = useState<string>(initialDraft?.s3DeliveryChallanNo || '');
   const [s3DispatchMode, setS3DispatchMode] = useState<'sold' | 'hold'>('sold');
 
   // Inspect Stage 3 Delivery Challan Number
@@ -497,10 +522,72 @@ export default function AssemblyPipeline({
   // Bulk Production Registration (Stage 1)
   const [s1IsBulk, setS1IsBulk] = useState(false);
   const [s1BulkModeType, setS1BulkModeType] = useState<'csv' | 'separate'>('csv');
-  const [s1BulkCSV, setS1BulkCSV] = useState('');
-  const [s1BulkChassisList, setS1BulkChassisList] = useState('');
-  const [s1BulkMotorList, setS1BulkMotorList] = useState('');
-  const [s1BulkControllerList, setS1BulkControllerList] = useState('');
+  const [s1BulkCSV, setS1BulkCSV] = useState<string>(initialDraft?.s1BulkCSV || '');
+  const [s1BulkChassisList, setS1BulkChassisList] = useState<string>(initialDraft?.s1BulkChassisList || '');
+  const [s1BulkMotorList, setS1BulkMotorList] = useState<string>(initialDraft?.s1BulkMotorList || '');
+  const [s1BulkControllerList, setS1BulkControllerList] = useState<string>(initialDraft?.s1BulkControllerList || '');
+
+  // Auto-save form draft to localStorage whenever fields change
+  React.useEffect(() => {
+    try {
+      const hasAnyData = s1Model || s1Color || s1Chassis || s1Motor || s1Controller ||
+        s1BulkScooters.some(s => s.chassisNo || s.motorNo || s.controllerNo) ||
+        s1BulkCSV || s1BulkChassisList || s1BulkMotorList || s1BulkControllerList ||
+        s3BuyerName || s3BuyerContact || s3BuyerAddress || s3BillNo || s3DeliveryChallanNo;
+
+      if (hasAnyData) {
+        const draft = {
+          s1Model,
+          s1Color,
+          s1Chassis,
+          s1Motor,
+          s1Controller,
+          s1FrontTireSize,
+          s1RearTireSize,
+          s1Source,
+          s1BulkScooters,
+          s1BulkCSV,
+          s1BulkChassisList,
+          s1BulkMotorList,
+          s1BulkControllerList,
+          s3BuyerName,
+          s3BuyerContact,
+          s3BuyerAddress,
+          s3BillNo,
+          s3DeliveryChallanNo
+        };
+        localStorage.setItem('voltstock_assembly_draft_v2', JSON.stringify(draft));
+      }
+    } catch (e) {
+      console.error('Failed to auto-save assembly draft:', e);
+    }
+  }, [
+    s1Model, s1Color, s1Chassis, s1Motor, s1Controller,
+    s1FrontTireSize, s1RearTireSize, s1Source, s1BulkScooters,
+    s1BulkCSV, s1BulkChassisList, s1BulkMotorList, s1BulkControllerList,
+    s3BuyerName, s3BuyerContact, s3BuyerAddress, s3BillNo, s3DeliveryChallanNo
+  ]);
+
+  const handleClearAssemblyDraft = () => {
+    try {
+      localStorage.removeItem('voltstock_assembly_draft_v2');
+    } catch (e) {}
+    setS1Model('');
+    setS1Color('');
+    setS1Chassis('');
+    setS1Motor('');
+    setS1Controller('');
+    setS1BulkScooters([{ chassisNo: '', motorNo: '', controllerNo: '' }]);
+    setS1BulkCSV('');
+    setS1BulkChassisList('');
+    setS1BulkMotorList('');
+    setS1BulkControllerList('');
+    setS3BuyerName('');
+    setS3BuyerContact('');
+    setS3BuyerAddress('');
+    setS3BillNo('');
+    setS3DeliveryChallanNo('');
+  };
 
   // Bulk POS Sales Checkout (Stage 3)
   const [s3IsBulk, setS3IsBulk] = useState(false);
@@ -754,7 +841,7 @@ export default function AssemblyPipeline({
           batteryWarrantyMonths: alloc.preassigned ? [] : alloc.batteries.map(() => 12)
         }));
 
-        const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/bulk-pos', {
+        const res = await fetch(getApiBaseUrl() + '/api/scooter-units/bulk-pos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -831,7 +918,7 @@ export default function AssemblyPipeline({
           if (batOk) dispatchedSummary.push(`${parsedQty} Battery Packs`);
           else overallSuccess = false;
         } else {
-          const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales', {
+          const res = await fetch(getApiBaseUrl() + '/api/battery-sales', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...batPayload, operator: currentUser.username })
@@ -892,7 +979,7 @@ export default function AssemblyPipeline({
           if (chgOk) dispatchedSummary.push(`${parsedChgQty} Chargers`);
           else overallSuccess = false;
         } else {
-          const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales', {
+          const res = await fetch(getApiBaseUrl() + '/api/charger-sales', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...chgPayload, operator: currentUser.username })
@@ -1070,6 +1157,7 @@ export default function AssemblyPipeline({
       setS1Chassis('');
       setS1Motor('');
       setS1Controller('');
+      try { localStorage.removeItem('voltstock_assembly_draft_v2'); } catch(e) {}
       onRefresh();
     } else {
       triggerAlert('error', 'Chassis registration failed. Verify that the Chassis number is unique.');
@@ -1099,7 +1187,7 @@ export default function AssemblyPipeline({
 
     setLoading(true);
     try {
-      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/bulk-create', {
+      const res = await fetch(getApiBaseUrl() + '/api/scooter-units/bulk-create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1121,6 +1209,7 @@ export default function AssemblyPipeline({
       if (res.ok) {
         triggerAlert('success', `Bulk Assembly Success! Registered ${data.count} units of ${s1Model} (${s1Color}) in warehouse inventory.`);
         setS1BulkScooters([{ chassisNo: '', motorNo: '', controllerNo: '' }]);
+        try { localStorage.removeItem('voltstock_assembly_draft_v2'); } catch(e) {}
         onRefresh();
       } else {
         triggerAlert('error', data.error || 'Bulk assembly failed.');
@@ -1356,7 +1445,7 @@ export default function AssemblyPipeline({
           if (!batSuccess) overallSuccess = false;
         } else {
           try {
-            const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales', {
+            const res = await fetch(getApiBaseUrl() + '/api/battery-sales', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ ...batPayload, operator: currentUser.username })
@@ -1410,7 +1499,7 @@ export default function AssemblyPipeline({
           if (!chgSuccess) overallSuccess = false;
         } else {
           try {
-            const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales', {
+            const res = await fetch(getApiBaseUrl() + '/api/charger-sales', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ ...chgPayload, operator: currentUser.username })
@@ -1737,7 +1826,21 @@ export default function AssemblyPipeline({
               </h3>
             </div>
             
-
+            <div className="flex items-center gap-2">
+              <span className="hidden sm:inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-full">
+                🛡️ Form Safe (Auto-Saved)
+              </span>
+              {(s1Chassis || s1Motor || s1Controller || s1Model || s1BulkScooters.some(s => s.chassisNo || s.motorNo || s.controllerNo) || s1BulkCSV) && (
+                <button
+                  type="button"
+                  onClick={handleClearAssemblyDraft}
+                  className="text-[10px] font-bold text-slate-500 hover:text-rose-600 bg-slate-100 hover:bg-rose-50 px-2.5 py-1 rounded-lg transition-colors cursor-pointer"
+                  title="Clear auto-saved form draft"
+                >
+                  Clear Form Draft
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Messages */}
