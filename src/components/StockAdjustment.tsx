@@ -641,32 +641,33 @@ export default function StockAdjustment({
                   </div>
                 )}
 
-                {/* Bill Number & Stock IN Number (Only for IN Operations) */}
+                {/* Container & Invoice Auto Codes for Stock IN */}
                 {type === 'in' && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-slate-50 border border-slate-200 rounded-2xl p-4">
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                        Bill Number <span className="text-red-500">*</span>
+                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-mono">
+                        Container Bill Number
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. BILL-12345"
                         value={scooterBillNo}
-                        onChange={(e) => setScooterBillNo(e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
+                        onChange={(e) => setScooterBillNo(e.target.value.toUpperCase())}
+                        placeholder="e.g. BILL-2026-880"
+                        className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-mono font-bold text-slate-900 focus:border-amber-500 outline-none"
                         required
                       />
                     </div>
+
                     <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                        Stock IN Number <span className="text-red-500">*</span>
+                      <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-mono">
+                        Stock IN / Invoice No
                       </label>
                       <input
                         type="text"
-                        placeholder="e.g. STKIN-9876"
                         value={scooterStockInNo}
-                        onChange={(e) => setScooterStockInNo(e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
+                        onChange={(e) => setScooterStockInNo(e.target.value.toUpperCase())}
+                        placeholder="e.g. STKIN-9902"
+                        className="w-full bg-white border border-slate-300 rounded-xl p-2.5 text-xs font-mono font-bold text-slate-900 focus:border-amber-500 outline-none"
                         required
                       />
                     </div>
