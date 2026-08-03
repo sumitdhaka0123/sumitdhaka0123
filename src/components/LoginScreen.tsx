@@ -108,7 +108,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
         if (!regRes.ok) throw new Error(regData?.error || 'Registration failed');
 
         // Registration successful - show positive guidance and switch back to login mode
-        setSuccess(`Registration successful! Account "@${loginUser}" has been registered and is pending approval from the Warehouse Owner. Please wait for the owner to grant access.`);
+        setSuccess(`Registration submitted! Account "@${loginUser}" has been created and is pending approval from the Warehouse Owner / Admin. Please ask your administrator to grant access in the Staff Directory.`);
         setIsRegistering(false);
         setPassword('');
         setLoading(false);

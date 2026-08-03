@@ -1836,8 +1836,22 @@ app.post('/api/auth/login', authIpRateLimiter, validateBody(loginSchema), (req, 
     const { username, password } = req.body;
 
     const db = readDB();
-    const normalizedUserKey = username; // Already normalized by the schema
-    const user = db.users[normalizedUserKey];
+    const cleanInputUsername = username ? username.toLowerCase().trim() : '';
+    
+    let normalizedUserKey = cleanInputUsername; // Already normalized by the schema normally, but enforcing here
+    let user = db.users[normalizedUserKey];
+    
+    if (!user) {
+      // Search case-insensitively in db.users keys and u.username as a fallback
+      const entry = Object.entries(db.users).find(([k, u]) => 
+        k.toLowerCase().trim() === cleanInputUsername || 
+        (u.username && u.username.toLowerCase().trim() === cleanInputUsername)
+      );
+      if (entry) {
+        normalizedUserKey = entry[0];
+        user = entry[1];
+      }
+    }
 
     // Check account-specific exponential backoff BEFORE executing login attempt
     const backoffStatus = checkAccountBackoff(normalizedUserKey);
@@ -1973,8 +1987,13 @@ app.post('/api/users/update', validateBody(userUpdateSchema), (req, res) => {
     name,
     role: role as 'admin' | 'manufacturer' | 'salesperson' | 'manager',
     locked: locked !== undefined ? !!locked : oldUser.locked,
-    failedAttempts: locked === false ? 0 : oldUser.failedAttempts
+    failedAttempts: 0
   };
+
+  // Always reset backoff tracker when admin modifies user or changes password
+  recordAuthSuccess(oldKey);
+  recordAuthSuccess(newNormalizedUsername);
+  if (oldUser.username) recordAuthSuccess(oldUser.username);
 
   if (locked === false) {
     recordAuthSuccess(newNormalizedUsername);
@@ -2165,6 +2184,10 @@ app.post('/api/users/approve', validateBody(userApproveSchema), (req, res) => {
 
   const [key, user] = userEntry;
   user.approved = true;
+  user.failedAttempts = 0;
+  recordAuthSuccess(key);
+  if (user.username) recordAuthSuccess(user.username);
+  
   db.users[key] = user;
 
   addAuditLog(db, 'admin', operator, 'user_approved', `Approved and granted access to employee account @${user.username} (${user.name}).`);
