@@ -123,6 +123,7 @@ export interface StockLog {
   notes?: string;
   billNo?: string;
   stockInNo?: string;
+  shortageDetails?: string;
 }
 
 export interface SheetConfig {

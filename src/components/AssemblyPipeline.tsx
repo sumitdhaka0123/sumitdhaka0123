@@ -1210,9 +1210,9 @@ export default function AssemblyPipeline({
           frontTireSize: s1FrontTireSize,
           rearTireSize: s1RearTireSize,
           items: activeItems.map(item => ({
-            chassisNo: item.chassisNo.trim().toUpperCase(),
-            motorNo: item.motorNo.trim().toUpperCase(),
-            controllerNo: item.controllerNo.trim().toUpperCase()
+            chassisNo: combineWithPrefix(s1ChassisPrefix, item.chassisNo),
+            motorNo: combineWithPrefix(s1MotorPrefix, item.motorNo),
+            controllerNo: combineWithPrefix(s1ControllerPrefix, item.controllerNo)
           })),
           operator: currentUser.username
         })

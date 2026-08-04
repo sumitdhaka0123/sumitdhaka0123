@@ -4098,7 +4098,7 @@ app.get('/api/stock-logs', (req, res) => {
 
 // StockLogs: Add (Bulk adjustment / generic logging)
 app.post('/api/stock-logs', validateBody(stockLogSchema), (req, res) => {
-  const { modelName, color, type, sourceChannel, quantity, buyerName, operator, notes, billNo, stockInNo } = req.body;
+  const { modelName, color, type, sourceChannel, quantity, buyerName, supplierName, operator, notes, billNo, stockInNo } = req.body;
 
   const db = readDB();
   const timestamp = new Date().toISOString();
@@ -4111,6 +4111,7 @@ app.post('/api/stock-logs', validateBody(stockLogSchema), (req, res) => {
     sourceChannel: sourceChannel || (type === 'in' ? 'container_freight' : 'customer_sale'),
     quantity,
     buyerName: type === 'out' ? buyerName : undefined,
+    supplierName: type === 'in' ? (supplierName || undefined) : undefined,
     timestamp,
     operator,
     notes: notes || '',

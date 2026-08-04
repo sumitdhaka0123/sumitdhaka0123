@@ -8,4 +8,3 @@ coverage/
 !.env.example
 
 warehouse_db.json
-firebase-applet-config.json
