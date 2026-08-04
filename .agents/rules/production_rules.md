@@ -19,12 +19,17 @@ CRITICAL INSTRUCTIONS FOR MY PRODUCTION APP (Render + Firebase / Database + Goog
    - Use dynamic API base URL resolution so the client connects seamlessly to the hosted Render server.
    - Ensure login authenticates valid password credentials immediately without blocking legit users.
 
-3. PRESERVE THE PURCHASE SECTION:
+5. PRESERVE THE PURCHASE SECTION:
    - The Purchase Section (StockAdjustment.tsx and SearchConsole.tsx Container Search) is as critical as the assembly section.
    - The Bill Numbers, Invoice Numbers, and Shortage Data are recorded via the server into warehouse_db.json and backed up to Google Drive.
    - NEVER modify or delete the Purchase Section features, and NEVER tamper with how the purchase data is routed through the server to the Google Drive backup system.
 
-4. DECOUPLE DATA FROM EPHEMERAL FILESYSTEM:
+6. DECOUPLE DATA FROM EPHEMERAL FILESYSTEM:
    - Render restarts wipe local files (like warehouse_db.json). If the server falls back to hardcoded DEFAULT arrays, deleted data will magically reappear and overwrite user intent.
    - ALL master data (Models, Chassis, Assembly, Inventory) must eventually be read from and written to a persistent external database (Firebase Firestore).
    - Never rely on server.ts hardcoded fallback arrays for production database state.
+
+7. SUPPLIER NAME & ASSEMBLY PREFIXING:
+   - Always ensure supplierName is preserved in StockLog and Inventory data.
+   - The Assembly section uses 3-column prefixing (Chassis, Motor, Controller). Do not remove or alter this prefixing logic.
+   - All data must automatically sync to Firebase, which acts as the Single Source of Truth.
