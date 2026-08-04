@@ -5852,31 +5852,24 @@ async function cleanupDriveBackups(db: any) {
   }
 }
 
-let lastDailyCronDate = new Date().toDateString();
-function setupBackgroundCron() {
-  setInterval(() => {
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentDate = now.toDateString();
-    
-    // Check if it is 2 AM or later and we haven't fired today
-    if (currentHour >= 2 && lastDailyCronDate !== currentDate) {
-      console.log(`[Cron] Triggering 2 AM Daily Background Backup...`);
-      lastDailyCronDate = currentDate;
-      
-      try {
-        const db = readDB();
-        if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
-           createBackupSnapshot(db, true, 'Auto-2AM-Snapshot');
-           // Clean up old drive backups asynchronously
-           cleanupDriveBackups(db);
-        }
-      } catch (err) {
-        console.error('[Cron] Error running daily background backup:', err);
-      }
+app.get('/api/backups/drive/webhook-cron', async (req, res) => {
+  console.log(`[Cron Webhook] External trigger received for Google Drive backup.`);
+  try {
+    const db = readDB();
+    if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
+       await createBackupSnapshot(db, true, 'Auto-Webhook-Snapshot');
+       // Clean up old drive backups asynchronously
+       cleanupDriveBackups(db);
+       return res.json({ success: true, message: 'Cron backup completed successfully.' });
+    } else {
+       return res.status(400).json({ error: 'Drive auto-sync is disabled or not configured.' });
     }
-  }, 60 * 1000); // Check every minute
-}
+  } catch (err) {
+    console.error('[Cron Webhook] Error running webhook background backup:', err);
+    return res.status(500).json({ error: 'Internal server error during backup.' });
+  }
+});
 
-setupBackgroundCron();
+// Internal setInterval removed to save Render server costs.
+// Use an external free service (like cron-job.org) to ping /api/backups/drive/webhook-cron daily.
 startServer();
