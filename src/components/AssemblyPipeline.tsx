@@ -540,6 +540,47 @@ export default function AssemblyPipeline({
     return v;
   };
 
+  // Helper to generate incremented serial numbers preserving letters/prefixes and padding
+  const generateSequentialSerial = (startStr: string, index: number): string => {
+    if (!startStr || !startStr.trim()) return '';
+    const str = startStr.trim().toUpperCase();
+    const match = str.match(/^(.*?)(0*(\d+))$/);
+    if (!match) {
+      return index === 0 ? str : `${str}-${index + 1}`;
+    }
+    const prefix = match[1]; // e.g. "MTR-" or "CTL-"
+    const fullNumStr = match[2]; // e.g. "5001"
+    const startNum = parseInt(match[3], 10);
+    const targetNum = startNum + index;
+    const numLength = fullNumStr.length;
+    const newNumStr = targetNum.toString().padStart(numLength, '0');
+    return `${prefix}${newNumStr}`;
+  };
+
+  const autoSequenceAllSlots = () => {
+    const startChassis = s1ChassisPrefix || (s1BulkScooters[0] ? s1BulkScooters[0].chassisNo : '');
+    const startMotor = s1MotorPrefix || (s1BulkScooters[0] ? s1BulkScooters[0].motorNo : '');
+    const startController = s1ControllerPrefix || (s1BulkScooters[0] ? s1BulkScooters[0].controllerNo : '');
+
+    if (!startChassis && !startMotor && !startController) {
+      triggerAlert('error', 'Please enter a starting number in at least one column (or Slot #1) to auto-generate sequence.');
+      return;
+    }
+
+    const updated = s1BulkScooters.map((scoot, idx) => {
+      const newChassis = startChassis ? generateSequentialSerial(startChassis, idx) : scoot.chassisNo;
+      const newMotor = startMotor ? generateSequentialSerial(startMotor, idx) : scoot.motorNo;
+      const newController = startController ? generateSequentialSerial(startController, idx) : scoot.controllerNo;
+      return {
+        chassisNo: newChassis,
+        motorNo: newMotor,
+        controllerNo: newController
+      };
+    });
+    setS1BulkScooters(updated);
+    triggerAlert('success', `Auto-generated sequential numbers for Chassis, Motor & Controller across all ${s1BulkScooters.length} slots!`);
+  };
+
   // Auto-save form draft to localStorage whenever fields change
   React.useEffect(() => {
     try {
@@ -2057,43 +2098,75 @@ export default function AssemblyPipeline({
                     </div>
 
                     {/* Dynamic Scooter Parts Assembled Slots */}
-                                        {/* Prefix Assistant Bar */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-indigo-50/50 border border-indigo-100 rounded-2xl mb-2">
-                      <div>
-                        <label className="block text-[9px] font-bold text-indigo-700 uppercase tracking-wide mb-1 font-sans">
-                          Starting Chassis Prefix
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. ME4CH"
-                          value={s1ChassisPrefix}
-                          onChange={(e) => setS1ChassisPrefix(e.target.value)}
-                          className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-xs text-indigo-900 font-sans uppercase focus:border-indigo-500 outline-none"
-                        />
+                                        {/* 3 Column Prefix & Starting Series Assistant Bar */}
+                    <div className="p-3.5 bg-cyan-50/80 border border-cyan-200 rounded-2xl space-y-2.5 mb-2">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <span className="text-[11px] font-black uppercase text-cyan-900 font-sans tracking-wide flex items-center gap-1.5">
+                          <span>🚀 Batch Starting Series & Prefix Assistant (3-Column Hardware Fast-Entry)</span>
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={autoSequenceAllSlots}
+                            className="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 text-white text-[11px] font-bold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1 font-sans"
+                          >
+                            <span>⚡ Auto-Sequence All Units</span>
+                          </button>
+                          {(s1ChassisPrefix || s1MotorPrefix || s1ControllerPrefix) && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setS1ChassisPrefix('');
+                                setS1MotorPrefix('');
+                                setS1ControllerPrefix('');
+                              }}
+                              className="text-[10px] font-bold text-cyan-700 hover:text-cyan-900 underline cursor-pointer"
+                            >
+                              Clear
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <div>
-                        <label className="block text-[9px] font-bold text-indigo-700 uppercase tracking-wide mb-1 font-sans">
-                          Starting Motor Prefix
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. MOT"
-                          value={s1MotorPrefix}
-                          onChange={(e) => setS1MotorPrefix(e.target.value)}
-                          className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-xs text-indigo-900 font-sans uppercase focus:border-indigo-500 outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[9px] font-bold text-indigo-700 uppercase tracking-wide mb-1 font-sans">
-                          Starting Controller Prefix
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. CTRL"
-                          value={s1ControllerPrefix}
-                          onChange={(e) => setS1ControllerPrefix(e.target.value)}
-                          className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-xs text-indigo-900 font-sans uppercase focus:border-indigo-500 outline-none"
-                        />
+                      <p className="text-[10px] text-cyan-800 font-sans">
+                        Enter starting serial numbers or prefixes (e.g. Chassis: <strong>CHS-1001</strong>, Motor: <strong>MTR-5001</strong>, Controller: <strong>CTL-8001</strong>). Click <strong>⚡ Auto-Sequence All Units</strong> to automatically fill incrementing serial numbers across all active hardware slots!
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1">
+                        <div>
+                          <label className="block text-[9px] font-extrabold text-cyan-900 uppercase mb-1 font-sans">
+                            Starting Chassis Series / Prefix
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. CHS-1001 or CHS-2026-"
+                            value={s1ChassisPrefix}
+                            onChange={(e) => setS1ChassisPrefix(e.target.value.toUpperCase())}
+                            className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 focus:border-cyan-600 outline-none uppercase"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-extrabold text-cyan-900 uppercase mb-1 font-sans">
+                            Starting Motor Series / Prefix
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. MTR-5001 or MTR-8899-"
+                            value={s1MotorPrefix}
+                            onChange={(e) => setS1MotorPrefix(e.target.value.toUpperCase())}
+                            className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 focus:border-cyan-600 outline-none uppercase"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] font-extrabold text-cyan-900 uppercase mb-1 font-sans">
+                            Starting Controller Series / Prefix
+                          </label>
+                          <input
+                            type="text"
+                            placeholder="e.g. CTL-8001 or CTL-3322-"
+                            value={s1ControllerPrefix}
+                            onChange={(e) => setS1ControllerPrefix(e.target.value.toUpperCase())}
+                            className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 focus:border-cyan-600 outline-none uppercase"
+                          />
+                        </div>
                       </div>
                     </div>
                     <div className="space-y-3.5 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
