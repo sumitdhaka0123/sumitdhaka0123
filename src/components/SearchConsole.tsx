@@ -114,6 +114,7 @@ export default function SearchConsole({
         shortages: string[];
         dateLogged: string;
         operator: string;
+        supplierName: string;
       }>;
     }>();
 
@@ -2093,6 +2094,11 @@ export default function SearchConsole({
                         </h3>
                       </div>
                       <div className="flex items-center gap-2 text-xs">
+                        {b.stockInList[0]?.supplierName && b.stockInList[0].supplierName !== 'Unknown' && (
+                          <span className="font-bold text-slate-700 bg-indigo-100 px-3 py-1 rounded-xl border border-indigo-200 font-sans">
+                            {b.stockInList[0].supplierName}
+                          </span>
+                        )}
                         <span className="font-bold text-slate-600 bg-white px-3 py-1 rounded-xl border border-slate-200 font-mono">
                           {b.stockInList.length} Stock IN / Invoices
                         </span>

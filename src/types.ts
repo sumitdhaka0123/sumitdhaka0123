@@ -113,10 +113,11 @@ export interface StockLog {
   id: string;
   modelName: string;
   color: string;
-  type: 'in' | 'out';
+  type: 'in' | 'out' | 'adjustment';
   sourceChannel: 'container_freight' | 'local_seller' | 'customer_sale' | 'adjustment';
   quantity: number;
   buyerName?: string;
+  supplierName?: string; // Added Supplier Name field
   timestamp: string;
   operator: string;
   notes?: string;

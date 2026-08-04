@@ -1649,10 +1649,11 @@ const scooterBulkPosSchema = z.object({
 const stockLogSchema = z.object({
   modelName: z.string().min(1, "Model is required").max(150).trim(),
   color: z.string().min(1, "Color is required").max(100).trim(),
-  type: z.enum(['in', 'out']),
+  type: z.enum(['in', 'out', 'adjustment']),
   sourceChannel: z.string().max(100).optional(),
   quantity: z.coerce.number().int().positive().max(100000),
   buyerName: z.string().max(150).optional(),
+  supplierName: z.string().max(150).optional().or(z.literal('')),
   operator: z.string().min(1, "Operator is required").max(150),
   notes: z.string().max(1000).optional(),
   billNo: z.string().max(100).optional().or(z.literal('')),

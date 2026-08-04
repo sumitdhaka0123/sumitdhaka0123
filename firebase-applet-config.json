@@ -1,11 +1,9 @@
 {
-  "projectId": "heroic-operation-n40ks",
-  "appId": "1:34462068611:web:bfde9de986822ef72490b6",
-  "apiKey": "AIzaSyA5S8Fc5T3Srq6wRoejluoRtpV4AcRHilQ",
-  "authDomain": "heroic-operation-n40ks.firebaseapp.com",
-  "storageBucket": "heroic-operation-n40ks.firebasestorage.app",
-  "messagingSenderId": "34462068611",
-  "measurementId": "",
-  "oAuthClientId": "34462068611-4i9g4k9130f7qmu8qfpgubgel6m671t7.apps.googleusercontent.com",
-  "recaptchaSiteKey": ""
+  "apiKey": "AIzaSyCdwa6qFipM-4S3lx1DptvZeBc711IT-uQ",
+  "authDomain": "senzo-electric-sndia.firebaseapp.com",
+  "projectId": "senzo-electric-sndia",
+  "storageBucket": "senzo-electric-sndia.firebasestorage.app",
+  "messagingSenderId": "511120877886",
+  "appId": "1:511120877886:web:744c8f30689d65a123a46f",
+  "measurementId": "G-H7QVCC9H43"
 }
