@@ -5409,6 +5409,17 @@ app.post('/api/backups/create', (req, res) => {
     // Auto-sync to Drive if configured
     if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
       const backupPath = path.join(process.cwd(), 'backups', result.filename);
+      const stats = fs.statSync(backupPath);
+      const backupItem = {
+        filename: result.filename,
+        createdTimestamp: new Date().toISOString(),
+        sizeBytes: stats.size,
+        isAuto: false,
+        label: label || 'Manual User Snapshot',
+        counts: { scooterUnits: db.scooterUnits?.length || 0, salesOrders: db.salesOrders?.length || 0, buyers: db.buyers?.length || 0, products: db.products?.length || 0, warrantyClaims: db.warrantyClaims?.length || 0, batterySales: db.batterySales?.length || 0, chargerSales: db.chargerSales?.length || 0, stockLogs: db.stockLogs?.length || 0 }
+      };
+      // actually call uploadToDrive
+      uploadToDrive(db, backupItem, backupPath).catch(err => console.error("Drive upload failed in create backup endpoint", err));
     }
     
     res.json({ success: true, message: 'Backup snapshot created successfully!', filename: result.filename });
