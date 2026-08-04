@@ -5852,17 +5852,20 @@ async function cleanupDriveBackups(db: any) {
   }
 }
 
-app.get('/api/backups/drive/webhook-cron', async (req, res) => {
+app.all('/api/backups/drive/webhook-cron', async (req, res) => {
   console.log(`[Cron Webhook] External trigger received for Google Drive backup.`);
   try {
     const db = readDB();
     if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
-       await createBackupSnapshot(db, true, 'Auto-Webhook-Snapshot');
-       // Clean up old drive backups asynchronously
-       cleanupDriveBackups(db);
+       // createBackupSnapshot is synchronous but fires the Drive upload in the background
+       createBackupSnapshot(db, true, 'Auto-Webhook-Snapshot');
+       
+       // Clean up old drive backups
+       await cleanupDriveBackups(db);
        return res.json({ success: true, message: 'Cron backup completed successfully.' });
     } else {
-       return res.status(400).json({ error: 'Drive auto-sync is disabled or not configured.' });
+       // Return 200 OK instead of 400 so external cron services don't mark the job as failed
+       return res.status(200).json({ success: true, message: 'Drive auto-sync is currently disabled or not configured. Backup skipped.' });
     }
   } catch (err) {
     console.error('[Cron Webhook] Error running webhook background backup:', err);
