@@ -5821,6 +5821,35 @@ app.post('/api/backups/drive/restore', async (req, res) => {
   }
 }
 
+async function cleanupDriveBackups(db: any) {
+  if (!db.driveConfig?.refreshToken || !db.driveConfig?.folderId) return;
+  try {
+    const oauth2Client = getDriveAuth(db);
+    oauth2Client.setCredentials({ refresh_token: db.driveConfig.refreshToken });
+    const drive = google.drive({ version: 'v3', auth: oauth2Client });
+    
+    const q = `'${db.driveConfig.folderId}' in parents and trashed=false`;
+    const response = await drive.files.list({ q, fields: 'files(id, name, createdTime)' });
+    const files = response.data.files;
+    if (!files || files.length === 0) return;
+    
+    const now = Date.now();
+    const RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+    
+    for (const file of files) {
+      if (file.createdTime) {
+        const fileTime = new Date(file.createdTime).getTime();
+        if (now - fileTime > RETENTION_MS) {
+          console.log(`[Drive Retention] Auto-purging Drive backup older than 14 days: ${file.name}`);
+          await drive.files.delete({ fileId: file.id as string });
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Drive Retention] Error cleaning up old Drive backups:', err);
+  }
+}
+
 let lastDailyCronDate = new Date().toDateString();
 function setupBackgroundCron() {
   setInterval(() => {
@@ -5837,6 +5866,8 @@ function setupBackgroundCron() {
         const db = readDB();
         if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
            createBackupSnapshot(db, true, 'Auto-2AM-Snapshot');
+           // Clean up old drive backups asynchronously
+           cleanupDriveBackups(db);
         }
       } catch (err) {
         console.error('[Cron] Error running daily background backup:', err);
