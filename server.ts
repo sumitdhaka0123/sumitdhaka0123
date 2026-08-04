@@ -1068,8 +1068,28 @@ function createBackupSnapshot(db: DBState, isAuto = false, customLabel = ''): { 
     cleanupOldBackups();
     console.log(`[Backup System] Created snapshot: ${filename}`);
 
+    if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
+      const stats = fs.statSync(filePath);
+      const backupItem = {
+        filename,
+        createdTimestamp: now.toISOString(),
+        sizeBytes: stats.size,
+        isAuto,
+        label: customLabel || (isAuto ? 'Automated Rolling Snapshot' : 'Manual User Snapshot'),
+        counts: { scooterUnits: db.scooterUnits?.length || 0, salesOrders: db.salesOrders?.length || 0, buyers: db.buyers?.length || 0, products: db.products?.length || 0, warrantyClaims: db.warrantyClaims?.length || 0, batterySales: db.batterySales?.length || 0, chargerSales: db.chargerSales?.length || 0, stockLogs: db.stockLogs?.length || 0 }
+      };
+      
+      // Fire and forget so we don't block synchronous callers
+      uploadToDrive(db, backupItem, filePath).then(success => {
+        if (success) console.log(`[Backup System] Successfully synced ${filename} to Google Drive.`);
+        else console.warn(`[Backup System] Failed to sync ${filename} to Google Drive.`);
+      }).catch(err => {
+        console.error(`[Backup System] Exception during Drive sync for ${filename}:`, err);
+      });
+    }
+
     return { filename, filePath };
-  } catch (err) {
+  } catch (err: any) {
     console.error('Error creating backup snapshot:', err);
     return { filename: '', filePath: '' };
   }
@@ -5801,4 +5821,29 @@ app.post('/api/backups/drive/restore', async (req, res) => {
   }
 }
 
+let lastDailyCronDate = new Date().toDateString();
+function setupBackgroundCron() {
+  setInterval(() => {
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentDate = now.toDateString();
+    
+    // Check if it is 2 AM or later and we haven't fired today
+    if (currentHour >= 2 && lastDailyCronDate !== currentDate) {
+      console.log(`[Cron] Triggering 2 AM Daily Background Backup...`);
+      lastDailyCronDate = currentDate;
+      
+      try {
+        const db = readDB();
+        if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
+           createBackupSnapshot(db, true, 'Auto-2AM-Snapshot');
+        }
+      } catch (err) {
+        console.error('[Cron] Error running daily background backup:', err);
+      }
+    }
+  }, 60 * 1000); // Check every minute
+}
+
+setupBackgroundCron();
 startServer();
