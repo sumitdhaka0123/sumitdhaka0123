@@ -1081,7 +1081,7 @@ function createBackupSnapshot(db: DBState, isAuto = false, customLabel = ''): { 
     cleanupOldBackups();
     console.log(`[Backup System] Created snapshot: ${filename}`);
 
-    let uploadPromise: Promise<boolean> | undefined;
+    let uploadPromise: Promise<{ success: boolean; link?: string; error?: string }> | undefined;
 
     if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
       const stats = fs.statSync(filePath);
@@ -1096,9 +1096,12 @@ function createBackupSnapshot(db: DBState, isAuto = false, customLabel = ''): { 
       
       // Execute upload and attach listeners, but also export the promise for callers who need to wait
       uploadPromise = uploadToDrive(db, backupItem, filePath);
-      uploadPromise.then(success => {
-        if (success) console.log(`[Backup System] Successfully synced ${filename} to Google Drive.`);
-        else console.warn(`[Backup System] Failed to sync ${filename} to Google Drive. Check logs for missing folderId or permissions.`);
+      uploadPromise.then(res => {
+        if (res.success) {
+          console.log(`[Backup System] Successfully synced ${filename} to Google Drive.`);
+        } else {
+          console.warn(`[Backup System] Failed to sync ${filename} to Google Drive. Check logs for missing folderId or permissions.`);
+        }
       }).catch(err => {
         console.error(`[Backup System] Exception during Drive sync for ${filename}:`, err);
       });
@@ -5668,32 +5671,32 @@ app.post('/api/drive/disconnect', (req, res) => {
   res.json({ success: true });
 });
 
-async function uploadToDrive(db: any, backupItem: any, filePath: string) {
+async function uploadToDrive(db: any, backupItem: any, filePath: string): Promise<{ success: boolean; link?: string; error?: string }> {
   const refreshToken = db.driveConfig?.refreshToken;
   const folderId = db.driveConfig?.folderId;
 
   if (!refreshToken) {
     console.warn('[Drive Upload] Aborted: No refresh token.');
-    return false;
+    return { success: false, error: 'No refresh token available.' };
   }
   if (!folderId) {
     console.warn('[Drive Upload] Aborted: No destination folderId set in driveConfig.');
-    return false;
+    return { success: false, error: 'No destination folder ID set.' };
   }
   
   try {
     const oauth2Client = getDriveAuth(db);
-    oauth2Client.setCredentials({ refresh_token: db.driveConfig.refreshToken });
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
     const drive = google.drive({ version: 'v3', auth: oauth2Client });
     
-    const fileMetadata = { name: backupItem.filename, parents: [db.driveConfig.folderId] };
+    const fileMetadata = { name: backupItem.filename, parents: [folderId] };
     const media = { mimeType: 'application/json', body: fs.createReadStream(filePath) };
     
-    await drive.files.create({ requestBody: fileMetadata, media: media, fields: 'id' });
-    return true;
-  } catch (error) {
+    const uploadRes = await drive.files.create({ requestBody: fileMetadata, media: media, fields: 'id, webViewLink' });
+    return { success: true, link: uploadRes.data.webViewLink };
+  } catch (error: any) {
     console.error('[Drive Upload Error]:', error);
-    return false;
+    return { success: false, error: error.message || String(error) };
   }
 }
 
@@ -5902,15 +5905,19 @@ app.all('/api/backups/drive/webhook-cron', async (req, res) => {
        const result = createBackupSnapshot(db, true, 'Auto-Webhook-Snapshot');
        
        if (result.uploadPromise) {
-           const uploadSuccess = await result.uploadPromise;
-           if (!uploadSuccess) {
-               return res.status(200).json({ success: false, message: 'Backup file created, but upload to Google Drive failed. Check server logs.' });
+           const uploadResult = await result.uploadPromise;
+           if (!uploadResult.success) {
+               return res.status(200).json({ success: false, message: `Backup file created, but upload to Google Drive failed: ${uploadResult.error}` });
            }
+           
+           // Clean up old drive backups
+           await cleanupDriveBackups(db);
+           return res.json({ success: true, message: 'Cron backup completed successfully and uploaded to Google Drive.', link: uploadResult.link });
        }
        
        // Clean up old drive backups
        await cleanupDriveBackups(db);
-       return res.json({ success: true, message: 'Cron backup completed successfully and uploaded to Google Drive.' });
+       return res.json({ success: true, message: 'Cron backup completed successfully, but drive upload was skipped (uploadPromise was undefined).' });
     } else {
        // Return 200 OK instead of 400 so external cron services don't mark the job as failed
        return res.status(200).json({ success: true, message: 'Drive auto-sync is currently disabled or not configured. Backup skipped.' });
