@@ -1083,7 +1083,10 @@ function createBackupSnapshot(db: DBState, isAuto = false, customLabel = ''): { 
 
     let uploadPromise: Promise<{ success: boolean; link?: string; error?: string }> | undefined;
 
-    if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
+    const refreshToken = process.env.GOOGLE_REFRESH_TOKEN || db.driveConfig?.refreshToken;
+    const autoSync = db.driveConfig?.autoSync !== undefined ? db.driveConfig?.autoSync : true;
+
+    if (autoSync && refreshToken) {
       const stats = fs.statSync(filePath);
       const backupItem = {
         filename,
@@ -5577,11 +5580,11 @@ async function startServer() {
 // GOOGLE DRIVE CLOUD BACKUP ROUTES
 // ==========================================
 
-const getDriveAuth = (db) => {
+const getDriveAuth = (db: any) => {
   const config = db.driveConfig || {};
   return new google.auth.OAuth2(
-    config.clientId,
-    config.clientSecret,
+    process.env.GOOGLE_CLIENT_ID || config.clientId,
+    process.env.GOOGLE_CLIENT_SECRET || config.clientSecret,
     (process.env.APP_URL || 'https://sumitdhaka0123.onrender.com') + '/api/drive/callback'
   );
 };
@@ -5672,8 +5675,8 @@ app.post('/api/drive/disconnect', (req, res) => {
 });
 
 async function uploadToDrive(db: any, backupItem: any, filePath: string): Promise<{ success: boolean; link?: string; error?: string }> {
-  const refreshToken = db.driveConfig?.refreshToken;
-  const folderId = db.driveConfig?.folderId;
+  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN || db.driveConfig?.refreshToken;
+  const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID || db.driveConfig?.folderId;
 
   if (!refreshToken) {
     console.warn('[Drive Upload] Aborted: No refresh token.');
@@ -5892,8 +5895,8 @@ app.all('/api/backups/drive/webhook-cron', async (req, res) => {
     const db = readDB();
     
     const autoSync = db.driveConfig?.autoSync !== undefined ? db.driveConfig?.autoSync : true;
-    const refreshToken = db.driveConfig?.refreshToken;
-    const folderId = db.driveConfig?.folderId;
+    const refreshToken = process.env.GOOGLE_REFRESH_TOKEN || db.driveConfig?.refreshToken;
+    const folderId = process.env.GOOGLE_DRIVE_FOLDER_ID || db.driveConfig?.folderId;
 
     if (autoSync && refreshToken) {
        if (!folderId) {
