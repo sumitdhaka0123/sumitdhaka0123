@@ -5564,9 +5564,9 @@ async function startServer() {
 const getDriveAuth = (db) => {
   const config = db.driveConfig || {};
   return new google.auth.OAuth2(
-    config.clientId,
-    config.clientSecret,
-    (process.env.APP_URL || 'http://localhost:3000') + '/api/drive/callback'
+    config.clientId || process.env.DRIVE_CLIENT_ID,
+    config.clientSecret || process.env.DRIVE_CLIENT_SECRET,
+    (process.env.APP_URL || 'https://sumitdhaka0123.onrender.com') + '/api/drive/callback'
   );
 };
 
@@ -5626,16 +5626,35 @@ app.get('/api/drive/callback', async (req, res) => {
     const q = "mimeType='application/vnd.google-apps.folder' and name='Inventory_Database_Backups' and trashed=false";
     const { data: { files } } = await drive.files.list({ q, fields: 'files(id, name)' });
     
+    let folderId = '';
     if (files && files.length > 0) {
-      db.driveConfig.folderId = files[0].id;
+      folderId = files[0].id;
+      db.driveConfig.folderId = folderId;
     } else {
       const folderMetadata = { name: 'Inventory_Database_Backups', mimeType: 'application/vnd.google-apps.folder' };
       const folder = await drive.files.create({ requestBody: folderMetadata, fields: 'id' });
-      db.driveConfig.folderId = folder.data.id;
+      folderId = folder.data.id;
+      db.driveConfig.folderId = folderId;
     }
     
     writeDB(db);
-    res.redirect('/');
+    
+    // Send the user a page with the critical tokens to copy into Render Environment Variables!
+    res.send(`
+      <html>
+        <body style="background: #0f172a; color: white; font-family: sans-serif; padding: 40px; line-height: 1.6;">
+          <h2>Authentication Successful!</h2>
+          <p>Because your Render server resets its files every 15 minutes, you MUST securely save these two values in your Render.com Dashboard (Under Environment Variables).</p>
+          <p><strong>Please COPY the text below and PASTE it back into the AI chat so I can give you instructions:</strong></p>
+          <div style="background: #1e293b; padding: 20px; border-radius: 8px; border: 2px solid #38bdf8; font-family: monospace; word-break: break-all;">
+            DRIVE_REFRESH_TOKEN: ${db.driveConfig.refreshToken}<br/><br/>
+            DRIVE_FOLDER_ID: ${folderId}
+          </div>
+          <br/>
+          <a href="/" style="color: #38bdf8;">Return to Dashboard</a>
+        </body>
+      </html>
+    `);
   } catch (error) {
     console.error('OAuth Callback Error:', error);
     res.redirect('/?error=AuthenticationFailed');
@@ -5653,12 +5672,15 @@ app.post('/api/drive/disconnect', (req, res) => {
 });
 
 async function uploadToDrive(db: any, backupItem: any, filePath: string) {
-  if (!db.driveConfig?.refreshToken) {
+  const refreshToken = db.driveConfig?.refreshToken || process.env.DRIVE_REFRESH_TOKEN;
+  const folderId = db.driveConfig?.folderId || process.env.DRIVE_FOLDER_ID;
+
+  if (!refreshToken) {
     console.warn('[Drive Upload] Aborted: No refresh token.');
     return false;
   }
-  if (!db.driveConfig?.folderId) {
-    console.warn('[Drive Upload] Aborted: No destination folderId set in driveConfig. The user must select a folder in the Settings UI.');
+  if (!folderId) {
+    console.warn('[Drive Upload] Aborted: No destination folderId set in driveConfig.');
     return false;
   }
   
@@ -5868,8 +5890,13 @@ app.all('/api/backups/drive/webhook-cron', async (req, res) => {
   console.log(`[Cron Webhook] External trigger received for Google Drive backup.`);
   try {
     const db = readDB();
-    if (db.driveConfig?.autoSync && db.driveConfig?.refreshToken) {
-       if (!db.driveConfig?.folderId) {
+    
+    const autoSync = db.driveConfig?.autoSync !== undefined ? db.driveConfig?.autoSync : true;
+    const refreshToken = db.driveConfig?.refreshToken || process.env.DRIVE_REFRESH_TOKEN;
+    const folderId = db.driveConfig?.folderId || process.env.DRIVE_FOLDER_ID;
+
+    if (autoSync && refreshToken) {
+       if (!folderId) {
           console.warn('[Cron Webhook] Missing Google Drive folder ID.');
           return res.status(200).json({ success: false, message: 'Google Drive connected, but no destination folder is set. Please go to Settings in the app and select a backup folder.' });
        }
