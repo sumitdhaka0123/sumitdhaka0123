@@ -5657,7 +5657,22 @@ app.get('/api/drive/callback', async (req, res) => {
     }
     
     writeDB(db);
-    res.redirect('/?driveConnected=true');
+    
+    // Intercept to display the variables so the user can populate their .env file on Render
+    res.send(`
+      <html>
+        <body style="background: #0f172a; color: white; font-family: sans-serif; padding: 40px; line-height: 1.6;">
+          <h2>Google Drive Connected Successfully!</h2>
+          <p>Please copy these final two variables and paste them into your Render.com Environment Variables (or your local .env file) to lock them in permanently:</p>
+          <div style="background: #1e293b; padding: 20px; border-radius: 8px; border: 2px solid #38bdf8; font-family: monospace; word-break: break-all;">
+            GOOGLE_REFRESH_TOKEN=${db.driveConfig.refreshToken}<br/><br/>
+            GOOGLE_DRIVE_FOLDER_ID=${folderId}
+          </div>
+          <br/>
+          <a href="/" style="color: #38bdf8;">Return to Dashboard</a>
+        </body>
+      </html>
+    `);
   } catch (error) {
     console.error('OAuth Callback Error:', error);
     res.redirect('/?error=AuthenticationFailed');
