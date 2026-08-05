@@ -1,4 +1,3 @@
-import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -13,10 +12,12 @@ import {
   SalesOrder, ChargerSale, ChargerImport, WarrantyClaim 
 } from '../types';
 import { formatUserMessage } from '../utils/errorHelper';
+import { getApiBaseUrl } from '../utils/apiConfig';
 import SheetSyncPanel from './SheetSyncPanel';
 import EmployeeMap from './EmployeeMap';
 import StaffUnifiedMap from './StaffUnifiedMap';
 import LocationTrailsMap from './LocationTrailsMap';
+import BackupRecoveryPanel from './BackupRecoveryPanel';
 
 interface SettingsPanelProps {
   sheetConfig: SheetConfig;
@@ -75,7 +76,7 @@ export default function SettingsPanel({
   warrantyClaims = [],
   currentUser
 }: SettingsPanelProps) {
-  const [subTab, setSubTab] = useState<'employees' | 'performance' | 'sheets' | 'audit' | 'tracking' | 'trails'>('employees');
+  const [subTab, setSubTab] = useState<'employees' | 'performance' | 'sheets' | 'audit' | 'tracking' | 'trails' | 'backups'>('employees');
   
   // Owner Performance System Filters & States
   const [perfSearch, setPerfSearch] = useState('');
@@ -112,7 +113,7 @@ export default function SettingsPanel({
     setIsPullingLocation(true);
     setSuccessMsg(`Sending satellite ping to @${username}'s device...`);
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/users/pull-location', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/pull-location', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username }),
@@ -381,7 +382,7 @@ export default function SettingsPanel({
 
     setSubmittingForm(true);
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/users/update', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -423,7 +424,7 @@ export default function SettingsPanel({
 
     setDeletingUser(true);
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/users/delete', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id })
@@ -1300,6 +1301,16 @@ export default function SettingsPanel({
         >
           <Cloud className="h-4 w-4" />
           <span>☁️ Sheets</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('backups')}
+          className={`flex-shrink-0 min-h-[44px] px-4 py-2.5 text-xs font-extrabold rounded-xl font-sans uppercase transition-all cursor-pointer flex items-center justify-center gap-1.5 active:scale-[0.98] ${
+            subTab === 'backups' ? 'bg-slate-900 text-white shadow-sm' : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          <Database className="h-4 w-4 text-amber-400" />
+          <span>💾 Backup & Recovery</span>
         </button>
       </div>
 
@@ -2294,6 +2305,13 @@ export default function SettingsPanel({
             onSaveConfig={onSaveConfig}
             onTriggerSyncAll={onTriggerSyncAll}
             onTriggerPullAll={onTriggerPullAll}
+          />
+        </div>
+      ) : subTab === 'backups' ? (
+        <div className="bg-white rounded-3xl border border-slate-200 p-6 shadow-sm no-print animate-fade-in">
+          <BackupRecoveryPanel
+            currentUser={currentUser}
+            onRefreshData={onTriggerSyncAll}
           />
         </div>
       ) : subTab === 'tracking' ? (

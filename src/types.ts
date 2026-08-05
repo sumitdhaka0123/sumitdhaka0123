@@ -102,6 +102,9 @@ export interface ScooterUnit {
   challanFinishedBy?: string;
   challanFinishedTimestamp?: string;
 
+  // Purchase & Supplier Metadata
+  supplierName?: string;
+
   // Audit Trail Metadata
   createdOperator: string;
   createdTimestamp: string;
@@ -113,17 +116,16 @@ export interface StockLog {
   id: string;
   modelName: string;
   color: string;
-  type: 'in' | 'out' | 'adjustment';
+  type: 'in' | 'out';
   sourceChannel: 'container_freight' | 'local_seller' | 'customer_sale' | 'adjustment';
   quantity: number;
   buyerName?: string;
-  supplierName?: string; // Added Supplier Name field
+  supplierName?: string;
   timestamp: string;
   operator: string;
   notes?: string;
   billNo?: string;
   stockInNo?: string;
-  shortageDetails?: string;
 }
 
 export interface SheetConfig {

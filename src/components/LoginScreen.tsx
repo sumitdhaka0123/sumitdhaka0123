@@ -1,9 +1,9 @@
-import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import { Shield, User as UserIcon, Lock, Key, Battery, Compass, ShoppingCart, Truck } from 'lucide-react';
 import { User } from '../types';
 import SenzoLogo from './SenzoLogo';
+import { getApiBaseUrl } from '../utils/apiConfig';
 
 interface LoginScreenProps {
   onLoginSuccess: (user: User, token: string) => void;
@@ -21,9 +21,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
 
   // Server URL State for Capacitor / Android Native deployment
   const [showServerConfig, setShowServerConfig] = useState(false);
-  const [serverUrl, setServerUrl] = useState(() => {
-    return localStorage.getItem('SENZO_API_SERVER_URL') || 'https://sumitdhaka0123.onrender.com';
-  });
+  const [serverUrl, setServerUrl] = useState(() => getApiBaseUrl());
   const [tempServerUrl, setTempServerUrl] = useState(serverUrl);
 
   const handleSaveServerUrl = () => {
@@ -43,11 +41,11 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
 
   const handleResetServerUrl = () => {
     localStorage.removeItem('SENZO_API_SERVER_URL');
-    const defaultUrl = 'https://sumitdhaka0123.onrender.com';
+    const defaultUrl = getApiBaseUrl();
     setServerUrl(defaultUrl);
     setTempServerUrl(defaultUrl);
     setShowServerConfig(false);
-    setSuccess('API Server connection reset to default production server.');
+    setSuccess('API Server connection reset to current active server.');
     setError('');
   };
 
@@ -90,7 +88,8 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           return;
         }
 
-        const regRes = await fetch(getApiBaseUrl() + '/api/auth/register', {
+        const baseUrl = getApiBaseUrl();
+        const regRes = await fetch(baseUrl + '/api/auth/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: loginUser, password: loginPass, role, name }),
@@ -107,7 +106,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
 
         if (!regRes.ok) throw new Error(regData?.error || 'Registration failed');
 
-        // Registration successful - show positive guidance and switch back to login mode
+        // Registration successful - pending owner approval
         setSuccess(`Registration submitted! Account "@${loginUser}" has been created and is pending approval from the Warehouse Owner / Admin. Please ask your administrator to grant access in the Staff Directory.`);
         setIsRegistering(false);
         setPassword('');
@@ -116,7 +115,8 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
       }
 
       // Perform Login
-      const loginRes = await fetch(getApiBaseUrl() + '/api/auth/login', {
+      const baseUrl = getApiBaseUrl();
+      const loginRes = await fetch(baseUrl + '/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: loginUser, password: loginPass }),
@@ -362,7 +362,7 @@ export default function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
                   onClick={() => {
                     setShowServerConfig(false);
                     if (!tempServerUrl.trim()) {
-                      setTempServerUrl('https://sumitdhaka0123.onrender.com');
+                      setTempServerUrl('https://ais-pre-ok3o3tltxmte4gbcr2v3di-403794027483.asia-east1.run.app');
                     }
                   }}
                   className="text-[10px] font-bold text-rose-500 hover:underline"

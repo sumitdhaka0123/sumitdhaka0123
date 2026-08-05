@@ -1,4 +1,3 @@
-import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   ShieldCheck, Search, PlusCircle, FileText, CheckCircle, Wrench, 
@@ -388,7 +387,7 @@ export default function WarrantyClaimsManager({
     setFormStatus(null);
 
     try {
-      const response = await fetch(getApiBaseUrl() + '/api/warranty-claims', {
+      const response = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -468,7 +467,7 @@ export default function WarrantyClaimsManager({
 
     setIsUpdating(true);
     try {
-      const response = await fetch(getApiBaseUrl() + '/api/warranty-claims', {
+      const response = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

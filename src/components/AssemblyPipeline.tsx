@@ -1,4 +1,3 @@
-import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -188,6 +187,10 @@ export default function AssemblyPipeline({
   const [s1Chassis, setS1Chassis] = useState<string>(initialDraft?.s1Chassis || '');
   const [s1Motor, setS1Motor] = useState<string>(initialDraft?.s1Motor || '');
   const [s1Controller, setS1Controller] = useState<string>(initialDraft?.s1Controller || '');
+  // Serial Number Prefix Bar / Starting Series for fast entry
+  const [s1ChassisPrefix, setS1ChassisPrefix] = useState<string>(initialDraft?.s1ChassisPrefix || '');
+  const [s1MotorPrefix, setS1MotorPrefix] = useState<string>(initialDraft?.s1MotorPrefix || '');
+  const [s1ControllerPrefix, setS1ControllerPrefix] = useState<string>(initialDraft?.s1ControllerPrefix || '');
   const [s1FrontTireSize, setS1FrontTireSize] = useState<'10-inch' | '12-inch'>(initialDraft?.s1FrontTireSize || '12-inch');
   const [s1RearTireSize, setS1RearTireSize] = useState<'10-inch' | '12-inch'>(initialDraft?.s1RearTireSize || '12-inch');
   const [s1Source, setS1Source] = useState<'container_freight' | 'local_seller'>(initialDraft?.s1Source || 'container_freight');
@@ -213,6 +216,47 @@ export default function AssemblyPipeline({
     if (s1BulkScooters.length > 1) {
       setS1BulkScooters(s1BulkScooters.filter((_, i) => i !== index));
     }
+  };
+
+  // Helper to generate incremented serial numbers preserving letters/prefixes and padding
+  const generateSequentialSerial = (startStr: string, index: number): string => {
+    if (!startStr || !startStr.trim()) return '';
+    const str = startStr.trim().toUpperCase();
+    const match = str.match(/^(.*?)(0*(\d+))$/);
+    if (!match) {
+      return index === 0 ? str : `${str}-${index + 1}`;
+    }
+    const prefix = match[1];
+    const fullNumStr = match[2];
+    const startNum = parseInt(match[3], 10);
+    const targetNum = startNum + index;
+    const numLength = fullNumStr.length;
+    const newNumStr = targetNum.toString().padStart(numLength, '0');
+    return `${prefix}${newNumStr}`;
+  };
+
+  const autoSequenceAllSlots = () => {
+    const startChassis = s1ChassisPrefix || (s1BulkScooters[0] ? s1BulkScooters[0].chassisNo : '');
+    const startMotor = s1MotorPrefix || (s1BulkScooters[0] ? s1BulkScooters[0].motorNo : '');
+    const startController = s1ControllerPrefix || (s1BulkScooters[0] ? s1BulkScooters[0].controllerNo : '');
+
+    if (!startChassis && !startMotor && !startController) {
+      triggerAlert('error', 'Please enter a starting number in at least one column (or Slot #1) to auto-generate sequence.');
+      return;
+    }
+
+    const updated = s1BulkScooters.map((scoot, idx) => {
+      const newChassis = startChassis ? generateSequentialSerial(startChassis, idx) : scoot.chassisNo;
+      const newMotor = startMotor ? generateSequentialSerial(startMotor, idx) : scoot.motorNo;
+      const newController = startController ? generateSequentialSerial(startController, idx) : scoot.controllerNo;
+      return {
+        chassisNo: newChassis,
+        motorNo: newMotor,
+        controllerNo: newController
+      };
+    });
+    setS1BulkScooters(updated);
+    triggerAlert('success', `Auto-generated sequential numbers for Chassis, Motor & Controller across all ${s1BulkScooters.length} slots!`);
   };
 
   // --- STAGE 1B FORM STATE: POST-ASSEMBLY WAREHOUSE BATTERIES PREP ---
@@ -526,21 +570,6 @@ export default function AssemblyPipeline({
   const [s1BulkChassisList, setS1BulkChassisList] = useState<string>(initialDraft?.s1BulkChassisList || '');
   const [s1BulkMotorList, setS1BulkMotorList] = useState<string>(initialDraft?.s1BulkMotorList || '');
   const [s1BulkControllerList, setS1BulkControllerList] = useState<string>(initialDraft?.s1BulkControllerList || '');
-  const [s1ChassisPrefix, setS1ChassisPrefix] = useState<string>('');
-  const [s1MotorPrefix, setS1MotorPrefix] = useState<string>('');
-  const [s1ControllerPrefix, setS1ControllerPrefix] = useState<string>('');
-
-  const combineWithPrefix = (prefix: string, rawVal: string) => {
-    // We intentionally don't trim the prefix so users can leave trailing spaces (e.g. "SENZO ")
-    const p = prefix.toUpperCase();
-    const v = rawVal.trim().toUpperCase();
-    if (!v) return '';
-    // If the input doesn't already start with the prefix, prepend it.
-    if (p && !v.startsWith(p.trim())) {
-      return `${p}${v}`;
-    }
-    return v;
-  };
 
   // Auto-save form draft to localStorage whenever fields change
   React.useEffect(() => {
@@ -557,6 +586,9 @@ export default function AssemblyPipeline({
           s1Chassis,
           s1Motor,
           s1Controller,
+          s1ChassisPrefix,
+          s1MotorPrefix,
+          s1ControllerPrefix,
           s1FrontTireSize,
           s1RearTireSize,
           s1Source,
@@ -856,7 +888,7 @@ export default function AssemblyPipeline({
           batteryWarrantyMonths: alloc.preassigned ? [] : alloc.batteries.map(() => 12)
         }));
 
-        const res = await fetch(getApiBaseUrl() + '/api/scooter-units/bulk-pos', {
+        const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/bulk-pos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -933,7 +965,7 @@ export default function AssemblyPipeline({
           if (batOk) dispatchedSummary.push(`${parsedQty} Battery Packs`);
           else overallSuccess = false;
         } else {
-          const res = await fetch(getApiBaseUrl() + '/api/battery-sales', {
+          const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...batPayload, operator: currentUser.username })
@@ -994,7 +1026,7 @@ export default function AssemblyPipeline({
           if (chgOk) dispatchedSummary.push(`${parsedChgQty} Chargers`);
           else overallSuccess = false;
         } else {
-          const res = await fetch(getApiBaseUrl() + '/api/charger-sales', {
+          const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ ...chgPayload, operator: currentUser.username })
@@ -1202,7 +1234,17 @@ export default function AssemblyPipeline({
 
     setLoading(true);
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/scooter-units/bulk-create', {
+      const combineWithPrefix = (prefix: string, rawVal: string) => {
+        const p = prefix.trim().toUpperCase();
+        const v = rawVal.trim().toUpperCase();
+        if (!v) return '';
+        if (p && !v.startsWith(p)) {
+          return `${p}${v}`;
+        }
+        return v;
+      };
+
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/bulk-create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1460,7 +1502,7 @@ export default function AssemblyPipeline({
           if (!batSuccess) overallSuccess = false;
         } else {
           try {
-            const res = await fetch(getApiBaseUrl() + '/api/battery-sales', {
+            const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ ...batPayload, operator: currentUser.username })
@@ -1514,7 +1556,7 @@ export default function AssemblyPipeline({
           if (!chgSuccess) overallSuccess = false;
         } else {
           try {
-            const res = await fetch(getApiBaseUrl() + '/api/charger-sales', {
+            const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ ...chgPayload, operator: currentUser.username })
@@ -2059,46 +2101,80 @@ export default function AssemblyPipeline({
                     </div>
 
                     {/* Dynamic Scooter Parts Assembled Slots */}
-                    {/* Prefix Assistant Bar */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-indigo-50/50 border border-indigo-100 rounded-2xl mb-2">
-                      <div>
-                        <label className="block text-[9px] font-bold text-indigo-700 uppercase tracking-wide mb-1 font-sans">
-                          Global Chassis Prefix
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. SENZO 2627 XYZ "
-                          value={s1ChassisPrefix}
-                          onChange={(e) => setS1ChassisPrefix(e.target.value)}
-                          className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-xs text-indigo-900 font-sans uppercase focus:border-indigo-500 outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[9px] font-bold text-indigo-700 uppercase tracking-wide mb-1 font-sans">
-                          Global Motor Prefix
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. MOT"
-                          value={s1MotorPrefix}
-                          onChange={(e) => setS1MotorPrefix(e.target.value)}
-                          className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-xs text-indigo-900 font-sans uppercase focus:border-indigo-500 outline-none"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[9px] font-bold text-indigo-700 uppercase tracking-wide mb-1 font-sans">
-                          Global Controller Prefix
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. CTRL"
-                          value={s1ControllerPrefix}
-                          onChange={(e) => setS1ControllerPrefix(e.target.value)}
-                          className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-xs text-indigo-900 font-sans uppercase focus:border-indigo-500 outline-none"
-                        />
-                      </div>
-                    </div>
                     <div className="space-y-3.5 p-4 bg-slate-50 border border-slate-100 rounded-2xl">
+                      
+                      {/* 3 Column Prefix & Starting Series Assistant Bar */}
+                      <div className="p-3.5 bg-cyan-50/80 border border-cyan-200 rounded-2xl space-y-2.5">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <span className="text-[11px] font-black uppercase text-cyan-900 font-sans tracking-wide flex items-center gap-1.5">
+                            <span>🚀 Batch Starting Series & Prefix Assistant (3-Column Hardware Fast-Entry)</span>
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={autoSequenceAllSlots}
+                              className="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 active:bg-cyan-800 text-white text-[11px] font-bold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1 font-sans"
+                            >
+                              <span>⚡ Auto-Sequence All Units</span>
+                            </button>
+                            {(s1ChassisPrefix || s1MotorPrefix || s1ControllerPrefix) && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setS1ChassisPrefix('');
+                                  setS1MotorPrefix('');
+                                  setS1ControllerPrefix('');
+                                }}
+                                className="text-[10px] font-bold text-cyan-700 hover:text-cyan-900 underline cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                        <p className="text-[10px] text-cyan-800 font-sans">
+                          Enter starting serial numbers or prefixes (e.g. Chassis: <strong>CHS-1001</strong>, Motor: <strong>MTR-5001</strong>, Controller: <strong>CTL-8001</strong>). Click <strong>⚡ Auto-Sequence All Units</strong> to automatically fill incrementing serial numbers across all active hardware slots!
+                        </p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-1">
+                          <div>
+                            <label className="block text-[9px] font-extrabold text-cyan-900 uppercase mb-1 font-sans">
+                              Starting Chassis Series / Prefix
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="e.g. CHS-1001 or CHS-2026-"
+                              value={s1ChassisPrefix}
+                              onChange={(e) => setS1ChassisPrefix(e.target.value.toUpperCase())}
+                              className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 focus:border-cyan-600 outline-none uppercase"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-extrabold text-cyan-900 uppercase mb-1 font-sans">
+                              Starting Motor Series / Prefix
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="e.g. MTR-5001 or MTR-8899-"
+                              value={s1MotorPrefix}
+                              onChange={(e) => setS1MotorPrefix(e.target.value.toUpperCase())}
+                              className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 focus:border-cyan-600 outline-none uppercase"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-extrabold text-cyan-900 uppercase mb-1 font-sans">
+                              Starting Controller Series / Prefix
+                            </label>
+                            <input
+                              type="text"
+                              placeholder="e.g. CTL-8001 or CTL-3322-"
+                              value={s1ControllerPrefix}
+                              onChange={(e) => setS1ControllerPrefix(e.target.value.toUpperCase())}
+                              className="w-full bg-white border border-cyan-300 rounded-xl px-3 py-2 text-xs font-mono font-bold text-slate-800 focus:border-cyan-600 outline-none uppercase"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="flex justify-between items-center mb-1">
                         <span className="block text-[10px] font-bold text-cyan-600 font-sans tracking-widest uppercase">
                           ⚡ Assembled Scooter Hardware Slots
@@ -2132,61 +2208,76 @@ export default function AssemblyPipeline({
                                 <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
                                   Chassis Number (Unique)
                                 </label>
-                                <div className="flex rounded-xl shadow-sm">
+                                <div className="relative flex items-center">
                                   {s1ChassisPrefix && (
-                                    <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-200 bg-slate-100 text-slate-500 text-xs font-bold uppercase whitespace-pre">
+                                    <span className="bg-cyan-100 text-cyan-900 text-[10px] font-black font-mono px-2 py-2 sm:py-1.5 rounded-l-xl border-y border-l border-cyan-300 shrink-0">
                                       {s1ChassisPrefix}
                                     </span>
                                   )}
                                   <input
                                     type="text"
-                                    placeholder={`CHASSIS-${1001 + idx}`}
+                                    placeholder={s1ChassisPrefix ? "Last 4-6 digits" : `CHASSIS-${1001 + idx}`}
                                     value={scoot.chassisNo}
                                     onChange={(e) => handleBulkScooterChange(idx, 'chassisNo', e.target.value)}
-                                    className={`w-full bg-slate-50 border border-slate-200 px-3 py-3 sm:py-2 text-base sm:text-xs text-slate-800 font-sans uppercase focus:border-cyan-500 outline-none ${s1ChassisPrefix ? 'rounded-r-xl' : 'rounded-xl'}`}
+                                    className={`w-full bg-slate-50 border border-slate-200 ${s1ChassisPrefix ? 'rounded-r-xl border-l-0' : 'rounded-xl'} px-3 py-3 sm:py-2 text-base sm:text-xs text-slate-800 font-sans uppercase focus:border-cyan-500 outline-none`}
                                     required
                                   />
                                 </div>
+                                {scoot.chassisNo.trim() && (
+                                  <span className="text-[10px] text-cyan-700 font-mono font-bold mt-1 block">
+                                    Full: {s1ChassisPrefix && !scoot.chassisNo.toUpperCase().startsWith(s1ChassisPrefix) ? `${s1ChassisPrefix}${scoot.chassisNo.toUpperCase()}` : scoot.chassisNo.toUpperCase()}
+                                  </span>
+                                )}
                               </div>
                               <div>
                                 <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
                                   Motor Number
                                 </label>
-                                <div className="flex rounded-xl shadow-sm">
+                                <div className="relative flex items-center">
                                   {s1MotorPrefix && (
-                                    <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-200 bg-slate-100 text-slate-500 text-xs font-bold uppercase whitespace-pre">
+                                    <span className="bg-cyan-100 text-cyan-900 text-[10px] font-black font-mono px-2 py-2 sm:py-1.5 rounded-l-xl border-y border-l border-cyan-300 shrink-0">
                                       {s1MotorPrefix}
                                     </span>
                                   )}
                                   <input
                                     type="text"
-                                    placeholder={`MOTOR-${1001 + idx}`}
+                                    placeholder={s1MotorPrefix ? "Last 4-6 digits" : `MOTOR-${1001 + idx}`}
                                     value={scoot.motorNo}
                                     onChange={(e) => handleBulkScooterChange(idx, 'motorNo', e.target.value)}
-                                    className={`w-full bg-slate-50 border border-slate-200 px-3 py-3 sm:py-2 text-base sm:text-xs text-slate-800 font-sans uppercase focus:border-cyan-500 outline-none ${s1MotorPrefix ? 'rounded-r-xl' : 'rounded-xl'}`}
+                                    className={`w-full bg-slate-50 border border-slate-200 ${s1MotorPrefix ? 'rounded-r-xl border-l-0' : 'rounded-xl'} px-3 py-3 sm:py-2 text-base sm:text-xs text-slate-800 font-sans uppercase focus:border-cyan-500 outline-none`}
                                     required
                                   />
                                 </div>
+                                {scoot.motorNo.trim() && (
+                                  <span className="text-[10px] text-cyan-700 font-mono font-bold mt-1 block">
+                                    Full: {s1MotorPrefix && !scoot.motorNo.toUpperCase().startsWith(s1MotorPrefix) ? `${s1MotorPrefix}${scoot.motorNo.toUpperCase()}` : scoot.motorNo.toUpperCase()}
+                                  </span>
+                                )}
                               </div>
                               <div>
                                 <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
                                   Controller Number
                                 </label>
-                                <div className="flex rounded-xl shadow-sm">
+                                <div className="relative flex items-center">
                                   {s1ControllerPrefix && (
-                                    <span className="inline-flex items-center px-3 rounded-l-xl border border-r-0 border-slate-200 bg-slate-100 text-slate-500 text-xs font-bold uppercase whitespace-pre">
+                                    <span className="bg-cyan-100 text-cyan-900 text-[10px] font-black font-mono px-2 py-2 sm:py-1.5 rounded-l-xl border-y border-l border-cyan-300 shrink-0">
                                       {s1ControllerPrefix}
                                     </span>
                                   )}
                                   <input
                                     type="text"
-                                    placeholder={`CTRL-${1001 + idx}`}
+                                    placeholder={s1ControllerPrefix ? "Last 4-6 digits" : `CTRL-${1001 + idx}`}
                                     value={scoot.controllerNo}
                                     onChange={(e) => handleBulkScooterChange(idx, 'controllerNo', e.target.value)}
-                                    className={`w-full bg-slate-50 border border-slate-200 px-3 py-3 sm:py-2 text-base sm:text-xs text-slate-800 font-sans uppercase focus:border-cyan-500 outline-none ${s1ControllerPrefix ? 'rounded-r-xl' : 'rounded-xl'}`}
+                                    className={`w-full bg-slate-50 border border-slate-200 ${s1ControllerPrefix ? 'rounded-r-xl border-l-0' : 'rounded-xl'} px-3 py-3 sm:py-2 text-base sm:text-xs text-slate-800 font-sans uppercase focus:border-cyan-500 outline-none`}
                                     required
                                   />
                                 </div>
+                                {scoot.controllerNo.trim() && (
+                                  <span className="text-[10px] text-cyan-700 font-mono font-bold mt-1 block">
+                                    Full: {s1ControllerPrefix && !scoot.controllerNo.toUpperCase().startsWith(s1ControllerPrefix) ? `${s1ControllerPrefix}${scoot.controllerNo.toUpperCase()}` : scoot.controllerNo.toUpperCase()}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>

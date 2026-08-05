@@ -106,15 +106,16 @@ export default function SearchConsole({
     const map = new Map<string, {
       billNo: string;
       totalUnits: number;
+      supplierNames: Set<string>;
       stockInGroups: Map<string, {
         stockInNo: string;
         totalQty: number;
+        supplierName?: string;
         logs: StockLog[];
         variantBreakdown: Record<string, number>;
         shortages: string[];
         dateLogged: string;
         operator: string;
-        supplierName: string;
       }>;
     }>();
 
@@ -126,17 +127,22 @@ export default function SearchConsole({
         map.set(bNo, {
           billNo: bNo,
           totalUnits: 0,
+          supplierNames: new Set(),
           stockInGroups: new Map()
         });
       }
 
       const bEntry = map.get(bNo)!;
       bEntry.totalUnits += Number(log.quantity) || 1;
+      if (log.supplierName) {
+        bEntry.supplierNames.add(log.supplierName);
+      }
 
       if (!bEntry.stockInGroups.has(sInNo)) {
         bEntry.stockInGroups.set(sInNo, {
           stockInNo: sInNo,
           totalQty: 0,
+          supplierName: log.supplierName,
           logs: [],
           variantBreakdown: {},
           shortages: [],
@@ -147,6 +153,9 @@ export default function SearchConsole({
 
       const sEntry = bEntry.stockInGroups.get(sInNo)!;
       sEntry.totalQty += Number(log.quantity) || 1;
+      if (!sEntry.supplierName && log.supplierName) {
+        sEntry.supplierName = log.supplierName;
+      }
       sEntry.logs.push(log);
 
       const vKey = `${log.modelName} (${log.color})`;
@@ -159,6 +168,7 @@ export default function SearchConsole({
 
     const result = Array.from(map.values()).map(b => ({
       ...b,
+      supplierList: Array.from(b.supplierNames),
       stockInList: Array.from(b.stockInGroups.values())
     }));
 
@@ -168,12 +178,14 @@ export default function SearchConsole({
     const q = purchaseQuery.toLowerCase().trim();
     return result.filter(b => {
       const matchesBill = b.billNo.toLowerCase().includes(q);
+      const matchesSupplier = b.supplierList.some(sup => sup.toLowerCase().includes(q));
       const matchesStockIn = b.stockInList.some(s => 
         s.stockInNo.toLowerCase().includes(q) ||
+        (s.supplierName && s.supplierName.toLowerCase().includes(q)) ||
         Object.keys(s.variantBreakdown).some(k => k.toLowerCase().includes(q)) ||
         s.shortages.some(sh => sh.toLowerCase().includes(q))
       );
-      return matchesBill || matchesStockIn;
+      return matchesBill || matchesSupplier || matchesStockIn;
     });
   }, [stockLogs, purchaseQuery]);
 
@@ -2085,20 +2097,21 @@ export default function SearchConsole({
                   <div key={b.billNo} className="border border-slate-200 rounded-2xl p-4 bg-slate-50/50 space-y-3">
                     {/* Bill Level Header */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200/80 pb-2.5">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 border border-amber-300 font-mono">
                           BILL NO
                         </span>
                         <h3 className="text-base font-black text-slate-900 font-mono tracking-tight">
                           {b.billNo}
                         </h3>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs">
-                        {b.stockInList[0]?.supplierName && b.stockInList[0].supplierName !== 'Unknown' && (
-                          <span className="font-bold text-slate-700 bg-indigo-100 px-3 py-1 rounded-xl border border-indigo-200 font-sans">
-                            {b.stockInList[0].supplierName}
+                        {b.supplierList.length > 0 && (
+                          <span className="text-[11px] font-bold px-2.5 py-0.5 rounded-md bg-blue-50 text-blue-800 border border-blue-200 flex items-center gap-1 font-sans">
+                            <span>🏢 Supplier:</span>
+                            <strong>{b.supplierList.join(', ')}</strong>
                           </span>
                         )}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs">
                         <span className="font-bold text-slate-600 bg-white px-3 py-1 rounded-xl border border-slate-200 font-mono">
                           {b.stockInList.length} Stock IN / Invoices
                         </span>
@@ -2179,8 +2192,8 @@ export default function SearchConsole({
                                 )}
 
                                 {/* Logging Info */}
-                                <div className="text-[10px] font-mono text-slate-500 flex items-center justify-between pt-1 border-t border-slate-200/60">
-                                  <span>Logged by: {stk.operator}</span>
+                                <div className="text-[10px] font-mono text-slate-500 flex flex-wrap items-center justify-between gap-1 pt-1 border-t border-slate-200/60">
+                                  <span>Logged by: {stk.operator} {stk.supplierName ? `| Supplier: ${stk.supplierName}` : ''}</span>
                                   <span>Date: {stk.dateLogged ? new Date(stk.dateLogged).toLocaleString() : 'N/A'}</span>
                                 </div>
                               </div>

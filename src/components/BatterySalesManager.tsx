@@ -1,4 +1,3 @@
-import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -417,7 +416,7 @@ export default function BatterySalesManager({
     setActingOnId(id);
     setStatus(null);
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/battery-sales/release', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/release', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || currentUser?.username || 'system' })
@@ -440,7 +439,7 @@ export default function BatterySalesManager({
     setActingOnId(id);
     setStatus(null);
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/battery-sales/finalize', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || currentUser?.username || 'system' })

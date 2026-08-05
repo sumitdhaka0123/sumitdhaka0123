@@ -1,4 +1,3 @@
-import { getApiBaseUrl } from '../utils/apiConfig';
 import React, { useState } from 'react';
 import { ShoppingCart, Plus, Trash2, CheckCircle2, Clock, User, Phone, MapPin, Package, Shield, AlertCircle, ArrowRight, XCircle } from 'lucide-react';
 import { User as UserType, Product, Buyer, SalesOrder, SalesOrderItem } from '../types';
@@ -155,7 +154,7 @@ export const SalesOrderTerminal: React.FC<SalesOrderTerminalProps> = ({
     setStatusMessage(null);
 
     try {
-      const baseUrl = getApiBaseUrl();
+      const baseUrl = (import.meta as any).env.VITE_API_BASE_URL || '';
       const res = await fetch(`${baseUrl}/api/sales-orders`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -201,7 +200,7 @@ export const SalesOrderTerminal: React.FC<SalesOrderTerminalProps> = ({
     setStatusMessage(null);
 
     try {
-      const baseUrl = getApiBaseUrl();
+      const baseUrl = (import.meta as any).env.VITE_API_BASE_URL || '';
       const res = await fetch(`${baseUrl}/api/sales-orders/${orderId}/cancel`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },

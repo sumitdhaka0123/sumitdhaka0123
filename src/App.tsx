@@ -1,4 +1,3 @@
-import { getApiBaseUrl } from './utils/apiConfig';
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
@@ -6,6 +5,7 @@ import {
 } from 'lucide-react';
 
 import { User, Product, Buyer, ScooterUnit, StockLog, SheetConfig, BatterySale, BatteryImport, ChargerSale, ChargerImport, WarrantyClaim, SalesOrder } from './types';
+import { getApiBaseUrl } from './utils/apiConfig';
 import LoginScreen from './components/LoginScreen';
 import DashboardStats from './components/DashboardStats';
 import AssemblyPipeline from './components/AssemblyPipeline';
@@ -120,20 +120,21 @@ export default function App() {
     };
 
     try {
+      const baseUrl = getApiBaseUrl();
       const [pRes, bRes, sUnitRes, sLogRes, cRes, batRes, batImpRes, chgRes, chgImpRes, batTypeRes, chgTypeRes, claimsRes, salesOrdersRes] = await Promise.all([
-        fetch(getApiBaseUrl() + '/api/products'),
-        fetch(getApiBaseUrl() + '/api/buyers'),
-        fetch(getApiBaseUrl() + '/api/scooter-units'),
-        fetch(getApiBaseUrl() + '/api/stock-logs'),
-        fetch(getApiBaseUrl() + '/api/sheet-config'),
-        fetch(getApiBaseUrl() + '/api/battery-sales'),
-        fetch(getApiBaseUrl() + '/api/battery-imports'),
-        fetch(getApiBaseUrl() + '/api/charger-sales'),
-        fetch(getApiBaseUrl() + '/api/charger-imports'),
-        fetch(getApiBaseUrl() + '/api/battery-types'),
-        fetch(getApiBaseUrl() + '/api/charger-types'),
-        fetch(getApiBaseUrl() + '/api/warranty-claims'),
-        fetch(getApiBaseUrl() + '/api/sales-orders')
+        fetch(baseUrl + '/api/products'),
+        fetch(baseUrl + '/api/buyers'),
+        fetch(baseUrl + '/api/scooter-units'),
+        fetch(baseUrl + '/api/stock-logs'),
+        fetch(baseUrl + '/api/sheet-config'),
+        fetch(baseUrl + '/api/battery-sales'),
+        fetch(baseUrl + '/api/battery-imports'),
+        fetch(baseUrl + '/api/charger-sales'),
+        fetch(baseUrl + '/api/charger-imports'),
+        fetch(baseUrl + '/api/battery-types'),
+        fetch(baseUrl + '/api/charger-types'),
+        fetch(baseUrl + '/api/warranty-claims'),
+        fetch(baseUrl + '/api/sales-orders')
       ]);
 
       await Promise.all([
@@ -170,7 +171,7 @@ export default function App() {
 
     const reportLocation = async (lat: number, lng: number) => {
       try {
-        await fetch(getApiBaseUrl() + '/api/users/location', {
+        await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -259,7 +260,7 @@ export default function App() {
 
     const checkPullRequestAndRespond = async () => {
       try {
-        const res = await fetch(getApiBaseUrl() + `/api/users/check-pull?username=${encodeURIComponent(currentUser.username)}`);
+        const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + `/api/users/check-pull?username=${encodeURIComponent(currentUser.username)}`);
         if (res.ok) {
           const contentType = res.headers.get('content-type');
           if (contentType && contentType.includes('application/json')) {
@@ -267,7 +268,7 @@ export default function App() {
             if (data && data.pullRequested) {
             const reportPullResult = async (lat: number, lng: number) => {
               try {
-                await fetch(getApiBaseUrl() + '/api/users/location', {
+                await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({
@@ -352,15 +353,15 @@ export default function App() {
     const refreshData = async () => {
       try {
         const [pRes, bRes, sUnitRes, sLogRes, batRes, batImpRes, chgRes, chgImpRes, wClaimRes] = await Promise.all([
-          fetch(getApiBaseUrl() + '/api/products'),
-          fetch(getApiBaseUrl() + '/api/buyers'),
-          fetch(getApiBaseUrl() + '/api/scooter-units'),
-          fetch(getApiBaseUrl() + '/api/stock-logs'),
-          fetch(getApiBaseUrl() + '/api/battery-sales'),
-          fetch(getApiBaseUrl() + '/api/battery-imports'),
-          fetch(getApiBaseUrl() + '/api/charger-sales'),
-          fetch(getApiBaseUrl() + '/api/charger-imports'),
-          fetch(getApiBaseUrl() + '/api/warranty-claims')
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/stock-logs'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-imports'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-imports'),
+          fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/warranty-claims')
         ]);
 
         await Promise.all([
@@ -405,7 +406,7 @@ export default function App() {
     setBatterySaving(true);
     setBatteryStatus(null);
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/battery-sales', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -451,7 +452,7 @@ export default function App() {
     heldFor?: string;
   }): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/battery-sales', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -479,7 +480,7 @@ export default function App() {
     warrantyDurationMonths?: number;
   }): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/battery-imports', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-imports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -495,7 +496,7 @@ export default function App() {
 
   const handleAddProduct = async (name: string, colors: string[]): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/products', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, colors }),
@@ -508,7 +509,7 @@ export default function App() {
 
   const handleBulkSeedProducts = async (mode: 'replace' | 'append'): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/products/bulk-seed', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products/bulk-seed', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode, operator: currentUser?.name || currentUser?.username || 'system' }),
@@ -528,7 +529,7 @@ export default function App() {
     buyerType?: 'retail' | 'wholesale'
   ): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/buyers', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, contact, address, gstNo, addressProof, buyerType }),
@@ -541,7 +542,7 @@ export default function App() {
 
   const handleSubmitScooterUnit = async (payload: any): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/scooter-units', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -554,7 +555,7 @@ export default function App() {
 
   const handleSubmitStockLog = async (payload: any): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/stock-logs', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/stock-logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -567,7 +568,7 @@ export default function App() {
 
   const handleSaveSheetConfig = async (webhookUrl: string, enabled: boolean): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/sheet-config', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/sheet-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ webhookUrl, enabled }),
@@ -584,7 +585,7 @@ export default function App() {
 
   const handleTriggerSyncAll = async () => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/sheet-config/sync-all', { method: 'POST' });
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/sheet-config/sync-all', { method: 'POST' });
       return await res.json();
     } catch (e) {
       return { success: false, error: 'Network error communicating with warehouse server.' };
@@ -593,7 +594,7 @@ export default function App() {
 
   const handleTriggerPullAll = async () => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/sheet-config/pull-all', { method: 'POST' });
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/sheet-config/pull-all', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
         await fetchAllData();
@@ -606,7 +607,7 @@ export default function App() {
 
   const handleUpdateProduct = async (id: string, name: string, colors: string[]): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/products/update', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, name, colors, operator: currentUser?.name || 'system' }),
@@ -623,7 +624,7 @@ export default function App() {
 
   const handleUpdateBuyer = async (id: string, name: string, contact?: string): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/buyers/update', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, name, contact, operator: currentUser?.name || 'system' }),
@@ -640,7 +641,7 @@ export default function App() {
 
   const handleDeleteProduct = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/products/delete', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/products/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
@@ -657,7 +658,7 @@ export default function App() {
 
   const handleDeleteBuyer = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/buyers/delete', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/buyers/delete', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
@@ -674,7 +675,7 @@ export default function App() {
 
   const handleUpdateBatteryTypes = async (newList: string[]): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/battery-types', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-types', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ list: newList, operator: currentUser?.name || 'system' }),
@@ -691,7 +692,7 @@ export default function App() {
 
   const handleUpdateChargerTypes = async (newList: string[]): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/charger-types', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-types', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ list: newList, operator: currentUser?.name || 'system' }),
@@ -708,7 +709,7 @@ export default function App() {
 
   const handleDirectChargerSale = async (data: any): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/charger-sales', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...data, operator: currentUser?.name || 'system' }),
@@ -725,7 +726,7 @@ export default function App() {
 
   const handleDirectChargerImport = async (data: any): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/charger-imports', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-imports', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...data, operator: currentUser?.name || 'system' }),
@@ -742,7 +743,7 @@ export default function App() {
 
   const handleReleaseChargerHold = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/charger-sales/release', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales/release', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
@@ -759,7 +760,7 @@ export default function App() {
 
   const handleFinalizeChargerHold = async (id: string, extraData?: any): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/charger-sales/finalize', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, ...extraData, operator: currentUser?.name || 'system' }),
@@ -776,7 +777,7 @@ export default function App() {
 
   const handleReleaseBatteryHold = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/battery-sales/release', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/release', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
@@ -793,7 +794,7 @@ export default function App() {
 
   const handleFinalizeBatteryHold = async (id: string, extraData?: any): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/battery-sales/finalize', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, ...extraData, operator: currentUser?.name || 'system' }),
@@ -810,7 +811,7 @@ export default function App() {
 
   const handleReleaseScooterHold = async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/scooter-units/release-hold', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/release-hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id, operator: currentUser?.name || 'system' }),
@@ -832,7 +833,7 @@ export default function App() {
     chargerIds?: string[];
   }): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/wholesale-package/release', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/wholesale-package/release', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
@@ -849,7 +850,7 @@ export default function App() {
 
   const handleFinalizeScooterHold = async (payload: any): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/scooter-units/finalize-hold', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/scooter-units/finalize-hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
@@ -866,7 +867,7 @@ export default function App() {
 
   const handleUpdateBatteryHold = async (payload: any): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/battery-sales/update-hold', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/battery-sales/update-hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
@@ -883,7 +884,7 @@ export default function App() {
 
   const handleUpdateChargerHold = async (payload: any): Promise<boolean> => {
     try {
-      const res = await fetch(getApiBaseUrl() + '/api/charger-sales/update-hold', {
+      const res = await fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/charger-sales/update-hold', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, operator: currentUser?.name || 'system' }),
@@ -983,7 +984,7 @@ export default function App() {
                       setLocationCheckError(null);
                       
                       // Report verified location
-                      fetch(getApiBaseUrl() + '/api/users/location', {
+                      fetch(((import.meta as any).env.VITE_API_BASE_URL || '') + '/api/users/location', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({

@@ -75,22 +75,19 @@ export default function StockAdjustment({
   const [localSuccessMsg, setLocalSuccessMsg] = useState('');
   const [localLoading, setLocalLoading] = useState(false);
 
-  // Bill No & Stock In No for various forms
+  // Bill No, Stock In No & Supplier Name for various forms
   const [scooterBillNo, setScooterBillNo] = useState('');
   const [scooterStockInNo, setScooterStockInNo] = useState('');
   const [scooterSupplierName, setScooterSupplierName] = useState('');
 
   const [batteryBillNo, setBatteryBillNo] = useState('');
   const [batteryStockInNo, setBatteryStockInNo] = useState('');
-  const [batterySupplierName, setBatterySupplierName] = useState('');
 
   const [chargerBillNo, setChargerBillNo] = useState('');
   const [chargerStockInNo, setChargerStockInNo] = useState('');
-  const [chargerSupplierName, setChargerSupplierName] = useState('');
 
   const [localBillNo, setLocalBillNo] = useState('');
   const [localStockInNo, setLocalStockInNo] = useState('');
-  const [localSupplierName, setLocalSupplierName] = useState('');
 
   // Scooter Stock States
   const [modelName, setModelName] = useState('');
@@ -231,12 +228,6 @@ export default function StockAdjustment({
     setType(newType);
     if (newType === 'in') {
       setSourceChannel('container_freight');
-      if (!scooterBillNo) {
-        setScooterBillNo(`BILL-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
-      }
-      if (!scooterStockInNo) {
-        setScooterStockInNo(`STKIN-${Math.floor(10000 + Math.random() * 90000)}`);
-      }
     } else {
       setSourceChannel('customer_sale');
     }
@@ -281,6 +272,7 @@ export default function StockAdjustment({
           operator: currentUser.username,
           billNo: scooterBillNo.trim().toUpperCase(),
           stockInNo: scooterStockInNo.trim().toUpperCase(),
+          supplierName: scooterSupplierName.trim() || undefined,
         };
 
         const ok = await onSubmitStockLog(payload);
@@ -297,8 +289,8 @@ export default function StockAdjustment({
         setNotes('');
         setShortageDetails('');
         setHasShortage(false);
-        setScooterBillNo(`BILL-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
-        setScooterStockInNo(`STKIN-${Math.floor(10000 + Math.random() * 90000)}`);
+        setScooterBillNo('');
+        setScooterStockInNo('');
         onRefresh();
       } else {
         setErrorMsg('One or more variant rows failed to log. Please verify backend state.');
@@ -338,6 +330,7 @@ export default function StockAdjustment({
       operator: currentUser.username,
       billNo: type === 'in' ? scooterBillNo.trim().toUpperCase() : undefined,
       stockInNo: type === 'in' ? scooterStockInNo.trim().toUpperCase() : undefined,
+      supplierName: type === 'in' ? (scooterSupplierName.trim() || undefined) : undefined,
     };
 
     const ok = await onSubmitStockLog(payload);
@@ -349,14 +342,8 @@ export default function StockAdjustment({
       setNotes('');
       setShortageDetails('');
       setHasShortage(false);
-      if (type === 'in') {
-        setScooterBillNo(`BILL-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`);
-        setScooterStockInNo(`STKIN-${Math.floor(10000 + Math.random() * 90000)}`);
-      } else {
-        setScooterBillNo('');
-        setScooterSupplierName('');
-        setScooterStockInNo('');
-      }
+      setScooterBillNo('');
+      setScooterStockInNo('');
       onRefresh();
     } else {
       setErrorMsg('Failed to record stock log. Verify backend connection.');
@@ -410,7 +397,6 @@ export default function StockAdjustment({
       setImpContainerId('');
       setImpNotes('');
       setBatteryBillNo('');
-        setBatterySupplierName('');
       setBatteryStockInNo('');
       setImpStartNo('');
       setImpEndNo('');
@@ -453,7 +439,6 @@ export default function StockAdjustment({
       setImpChargerContainerId('');
       setImpChargerNotes('');
       setChargerBillNo('');
-        setChargerSupplierName('');
       setChargerStockInNo('');
       onRefresh();
     } else {
@@ -499,7 +484,6 @@ export default function StockAdjustment({
           setLocalController('');
           setLocalNotes('');
           setLocalBillNo('');
-        setLocalSupplierName('');
           setLocalStockInNo('');
           onRefresh();
         } else {
@@ -629,7 +613,7 @@ export default function StockAdjustment({
                   </div>
                 </div>
 
-                {/* Bill Number & Stock IN Number (Only for IN Operations) */}
+                {/* Bill Number, Stock IN Number & Supplier Name (Only for IN Operations) */}
                 {type === 'in' && (
                   <div className="space-y-4 bg-slate-50 border border-slate-200 rounded-2xl p-4">
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -645,7 +629,7 @@ export default function StockAdjustment({
                           className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-800 focus:border-cyan-500 outline-none font-sans font-mono"
                           required
                         />
-                        <span className="text-[10px] text-slate-500 font-sans mt-0.5 block">Shared container/supplier bill ID</span>
+                        <span className="text-[10px] text-slate-500 font-sans mt-0.5 block">Shared container bill ID</span>
                       </div>
                       <div>
                         <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 font-sans">
@@ -659,21 +643,22 @@ export default function StockAdjustment({
                           className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-800 focus:border-cyan-500 outline-none font-sans font-mono"
                           required
                         />
-                        <span className="text-[10px] text-amber-700 font-bold font-sans mt-0.5 block">🔒 Unique & Immutable Once Saved</span>
+                        <span className="text-[10px] text-amber-700 font-bold font-sans mt-0.5 block">🔒 Unique & Immutable</span>
                       </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                      Supplier / Vendor
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Senzo Main"
-                      value={scooterSupplierName}
-                      onChange={(e) => setScooterSupplierName(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-indigo-500 outline-none font-sans"
-                    />
-                  </div>
-                </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-700 uppercase tracking-wide mb-1 font-sans">
+                          Supplier / Vendor Name
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Zhejiang Senzo EV Co."
+                          value={scooterSupplierName}
+                          onChange={(e) => setScooterSupplierName(e.target.value)}
+                          className="w-full bg-white border border-slate-200 rounded-xl p-3 text-xs font-bold text-slate-800 focus:border-cyan-500 outline-none font-sans"
+                        />
+                        <span className="text-[10px] text-slate-500 font-sans mt-0.5 block">Buyer / Manufacturer Supplier Name</span>
+                      </div>
+                    </div>
 
                     {/* Toggle Multi-Variant Unpacking Mode */}
                     <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between">
@@ -737,7 +722,7 @@ export default function StockAdjustment({
                     </div>
 
                     {/* Channel & Qty Grid */}
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
                           Source Channel
@@ -1316,7 +1301,7 @@ export default function StockAdjustment({
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
                       Bill Number <span className="text-red-500">*</span>
@@ -1341,18 +1326,6 @@ export default function StockAdjustment({
                       onChange={(e) => setBatteryStockInNo(e.target.value)}
                       className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
                       required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                      Supplier / Vendor
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Acme Batteries"
-                      value={batterySupplierName}
-                      onChange={(e) => setBatterySupplierName(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-cyan-500 outline-none font-sans"
                     />
                   </div>
                 </div>
@@ -1523,7 +1496,7 @@ export default function StockAdjustment({
                   />
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
                       Bill Number <span className="text-red-500">*</span>
@@ -1548,18 +1521,6 @@ export default function StockAdjustment({
                       onChange={(e) => setChargerStockInNo(e.target.value)}
                       className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-red-500 outline-none font-sans"
                       required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5 font-sans">
-                      Supplier / Vendor
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. PowerCorp"
-                      value={chargerSupplierName}
-                      onChange={(e) => setChargerSupplierName(e.target.value)}
-                      className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-xs text-slate-800 focus:border-red-500 outline-none font-sans"
                     />
                   </div>
                 </div>
@@ -1771,7 +1732,7 @@ export default function StockAdjustment({
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
                         Motor Number
@@ -1825,18 +1786,6 @@ export default function StockAdjustment({
                         onChange={(e) => setLocalStockInNo(e.target.value)}
                         className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-base sm:text-xs text-slate-800 focus:border-amber-500 outline-none font-sans"
                         required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wide mb-1 font-sans">
-                        Supplier
-                      </label>
-                      <input
-                        type="text"
-                        placeholder="e.g. Local Auto"
-                        value={localSupplierName}
-                        onChange={(e) => setLocalSupplierName(e.target.value)}
-                        className="w-full bg-white border border-slate-200 rounded-2xl p-3 text-base sm:text-xs text-slate-800 focus:border-amber-500 outline-none font-sans"
                       />
                     </div>
                   </div>
