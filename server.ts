@@ -5585,11 +5585,11 @@ const getDriveAuth = (db) => {
 
 app.get('/api/drive-config', (req, res) => {
   const db = readDB();
-  const config = db.driveConfig || { clientId: '', clientSecret: '', refreshToken: '', connectedEmail: '', autoSync: false, folderId: '' };
   res.json({
-    clientId: config.clientId,
-    connectedEmail: config.connectedEmail,
-    autoSync: config.autoSync
+    clientId: db.driveConfig?.clientId || '',
+    connectedEmail: db.driveConfig?.connectedEmail || '',
+    autoSync: db.driveConfig?.autoSync || false,
+    folderId: db.driveConfig?.folderId || 'MISSING'
   });
 });
 
