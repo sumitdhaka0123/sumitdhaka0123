@@ -823,6 +823,23 @@ async function syncSheetConfig(newConfig: any, oldConfig: any) {
   }
 }
 
+async function syncDriveConfig(newConfig: any, oldConfig: any) {
+  if (!firebaseDb) return;
+  if (!newConfig) return;
+  try {
+    if (!oldConfig || JSON.stringify(newConfig) !== JSON.stringify(oldConfig)) {
+      console.log(`[Firestore Sync] config/driveConfig updated.`);
+      const docRef = doc(firebaseDb, 'config', 'driveConfig');
+      await setDoc(docRef, newConfig, { merge: true });
+    }
+  } catch (err: any) {
+    if (err && (String(err).includes('does not exist') || String(err).includes('NOT_FOUND') || String(err).includes('setup'))) {
+      console.warn('Firestore driveConfig sync failed: database does not exist. Disabling Firestore sync.');
+      firebaseDb = null;
+    }
+  }
+}
+
 async function syncLists(
   newBatterySeries: string[] | undefined,
   oldBatterySeries: string[] | undefined,
@@ -895,6 +912,8 @@ async function syncToFirestore(state: DBState, oldState: DBState | null) {
     if (!firebaseDb) return;
     await syncSheetConfig(state.sheetConfig, baseState.sheetConfig);
     if (!firebaseDb) return;
+    await syncDriveConfig(state.driveConfig, baseState.driveConfig);
+    if (!firebaseDb) return;
     await syncLists(
       state.batterySeriesList,
       baseState.batterySeriesList,
@@ -965,6 +984,11 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
     const sheetConfigSnap = await getDoc(doc(firebaseDb, 'config', 'sheetConfig'));
     if (sheetConfigSnap.exists()) {
       state.sheetConfig = sheetConfigSnap.data() as SheetConfig;
+    }
+
+    const driveConfigSnap = await getDoc(doc(firebaseDb, 'config', 'driveConfig'));
+    if (driveConfigSnap.exists()) {
+      state.driveConfig = driveConfigSnap.data() as any;
     }
 
     const isEmpty = (!state.users || Object.keys(state.users).length === 0) &&
@@ -5564,8 +5588,8 @@ async function startServer() {
 const getDriveAuth = (db) => {
   const config = db.driveConfig || {};
   return new google.auth.OAuth2(
-    config.clientId || process.env.DRIVE_CLIENT_ID,
-    config.clientSecret || process.env.DRIVE_CLIENT_SECRET,
+    config.clientId,
+    config.clientSecret,
     (process.env.APP_URL || 'https://sumitdhaka0123.onrender.com') + '/api/drive/callback'
   );
 };
@@ -5638,23 +5662,7 @@ app.get('/api/drive/callback', async (req, res) => {
     }
     
     writeDB(db);
-    
-    // Send the user a page with the critical tokens to copy into Render Environment Variables!
-    res.send(`
-      <html>
-        <body style="background: #0f172a; color: white; font-family: sans-serif; padding: 40px; line-height: 1.6;">
-          <h2>Authentication Successful!</h2>
-          <p>Because your Render server resets its files every 15 minutes, you MUST securely save these two values in your Render.com Dashboard (Under Environment Variables).</p>
-          <p><strong>Please COPY the text below and PASTE it back into the AI chat so I can give you instructions:</strong></p>
-          <div style="background: #1e293b; padding: 20px; border-radius: 8px; border: 2px solid #38bdf8; font-family: monospace; word-break: break-all;">
-            DRIVE_REFRESH_TOKEN: ${db.driveConfig.refreshToken}<br/><br/>
-            DRIVE_FOLDER_ID: ${folderId}
-          </div>
-          <br/>
-          <a href="/" style="color: #38bdf8;">Return to Dashboard</a>
-        </body>
-      </html>
-    `);
+    res.redirect('/?driveConnected=true');
   } catch (error) {
     console.error('OAuth Callback Error:', error);
     res.redirect('/?error=AuthenticationFailed');
@@ -5672,8 +5680,8 @@ app.post('/api/drive/disconnect', (req, res) => {
 });
 
 async function uploadToDrive(db: any, backupItem: any, filePath: string) {
-  const refreshToken = db.driveConfig?.refreshToken || process.env.DRIVE_REFRESH_TOKEN;
-  const folderId = db.driveConfig?.folderId || process.env.DRIVE_FOLDER_ID;
+  const refreshToken = db.driveConfig?.refreshToken;
+  const folderId = db.driveConfig?.folderId;
 
   if (!refreshToken) {
     console.warn('[Drive Upload] Aborted: No refresh token.');
@@ -5892,8 +5900,8 @@ app.all('/api/backups/drive/webhook-cron', async (req, res) => {
     const db = readDB();
     
     const autoSync = db.driveConfig?.autoSync !== undefined ? db.driveConfig?.autoSync : true;
-    const refreshToken = db.driveConfig?.refreshToken || process.env.DRIVE_REFRESH_TOKEN;
-    const folderId = db.driveConfig?.folderId || process.env.DRIVE_FOLDER_ID;
+    const refreshToken = db.driveConfig?.refreshToken;
+    const folderId = db.driveConfig?.folderId;
 
     if (autoSync && refreshToken) {
        if (!folderId) {
