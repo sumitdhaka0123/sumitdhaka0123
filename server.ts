@@ -19,7 +19,7 @@ function hashPassword(password: string): string {
 }
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 const DB_FILE = path.join(process.cwd(), 'warehouse_db.json');
 
 // Initialize Firebase using the config file
