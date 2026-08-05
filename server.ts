@@ -5607,12 +5607,12 @@ app.get('/api/drive/auth-url', (req, res) => {
   res.json({ url });
 });
 
-app.post('/api/drive/callback', async (req, res) => {
-  const { code } = req.body;
+app.get('/api/drive/callback', async (req, res) => {
+  const { code } = req.query;
   const db = readDB();
   try {
     const oauth2Client = getDriveAuth(db);
-    const { tokens } = await oauth2Client.getToken(code);
+    const { tokens } = await oauth2Client.getToken(code as string);
     oauth2Client.setCredentials(tokens);
     
     const oauth2 = google.oauth2({ auth: oauth2Client, version: 'v2' });
@@ -5635,9 +5635,10 @@ app.post('/api/drive/callback', async (req, res) => {
     }
     
     writeDB(db);
-    res.json({ success: true, email: db.driveConfig.connectedEmail });
+    res.redirect('/');
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('OAuth Callback Error:', error);
+    res.redirect('/?error=AuthenticationFailed');
   }
 });
 
