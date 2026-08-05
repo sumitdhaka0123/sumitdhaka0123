@@ -991,17 +991,6 @@ async function hydrateFromFirestore(): Promise<DBState | null> {
       state.driveConfig = driveConfigSnap.data() as any;
     }
 
-    const isEmpty = (!state.users || Object.keys(state.users).length === 0) &&
-                    (!state.products || state.products.length === 0) &&
-                    (!state.scooterUnits || state.scooterUnits.length === 0);
-
-    if (isEmpty) {
-      console.log('Cloud Firestore database appears empty. Seeding with local backup file contents...');
-      const localState = readDBFromFile();
-      await seedFirestore(localState);
-      return localState;
-    }
-
     const finalState: DBState = {
       users: state.users || DEFAULT_USERS,
       products: state.products && state.products.length > 0 ? state.products : DEFAULT_PRODUCTS,
